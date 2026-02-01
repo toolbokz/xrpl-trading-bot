@@ -47,7 +47,7 @@ export const walletFromSecretNumbers = (secretNumbers?: string): Wallet => {
     const formatted = parseSecretNumbers(secretNumbers);
     const account = new Account(formatted);
     const keypair = account.getKeypair();
-    
+
     // Create xrpl Wallet from the keypair
     return new Wallet(keypair.publicKey, keypair.privateKey);
 };
