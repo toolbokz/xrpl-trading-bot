@@ -2,5 +2,19 @@
     "outputDirectory": "web/.next",
     "framework": "nextjs",
     "installCommand": "npm install",
-    "buildCommand": "npm run build"
+    "buildCommand": "npm run build",
+    "env": {
+        "XRPL_NETWORK": "mainnet",
+        "XRPL_WSS_URL": "wss://s1.ripple.com",
+        "TRADE_ISSUER": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
+        "PAPER_TRADING": "false",
+        "ENABLE_TESTNET_FAUCET": "false",
+        "POSITION_SIZE_XRP": "2",
+        "MAX_SLIPPAGE_BPS": "50",
+        "MAX_TRADE_SIZE": "50",
+        "MAX_DAILY_LOSS_XRP": "100",
+        "RESERVE_FLOOR_XRP": "50",
+        "TRADE_BASE_CURRENCY": "XRP",
+        "TRADE_QUOTE_CURRENCY": "RLUSD"
+    }
 }
