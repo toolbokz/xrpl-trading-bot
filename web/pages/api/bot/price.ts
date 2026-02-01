@@ -1,7 +1,12 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
+import { withBotAuth, type AuthenticatedRequest } from '../../../lib/botAuth';
 import { loadConfig } from '../../../../src/config';
 import { tradingPairs } from '../../../lib/tradingPairs';
 import { getSharedClient, getCachedPrice, setCachedPrice } from '../../../lib/xrplClient';
+
+export const config = {
+    api: { bodyParser: false },
+};
 
 /**
  * Convert a currency code to hex format if needed (for non-standard codes like RLUSD)
@@ -26,9 +31,9 @@ interface PriceData {
     cached?: boolean;
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
     try {
-        const config = loadConfig();
+        const cfg = loadConfig();
 
         // Get pair from query or use default
         const pairKey = typeof req.query.pair === 'string' ? req.query.pair : 'XRP/RLUSD';
@@ -50,7 +55,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         // Get shared client (reuses connection)
-        const client = await getSharedClient(config.xrpl.endpoint);
+        const client = await getSharedClient(cfg.xrpl.endpoint);
 
         const baseCurrency = pair.base.currency;
         const baseIssuer = pair.base.issuer;
@@ -159,3 +164,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(500).json({ error: err?.message || 'Failed to fetch price' });
     }
 }
+
+export default withBotAuth(handler, {
+    permission: 'bot:price_read',
+    methods: ['GET'],
+});

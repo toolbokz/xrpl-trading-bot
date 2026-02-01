@@ -1,7 +1,12 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
+import { withBotAuth, AuthenticatedRequest } from '../../../lib/botAuth';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export const config = {
+    api: { bodyParser: false },
+};
+
+async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
     }
@@ -18,3 +23,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         res.status(400).json({ error: err?.message || 'Failed to update position size' });
     }
 }
+
+export default withBotAuth(handler, {
+    permission: 'bot:position_size',
+    methods: ['POST'],
+});

@@ -1,8 +1,13 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
+import { withBotAuth, type AuthenticatedRequest } from '../../../lib/botAuth';
 import { Client, Wallet } from 'xrpl';
 import { walletFromSecretNumbers } from 'xrpl/dist/npm/Wallet/walletFromSecretNumbers';
 import { loadConfig } from '../../../../src/config';
 import { getSharedClient } from '../../../lib/xrplClient';
+
+export const config = {
+    api: { bodyParser: false },
+};
 
 // Known NZD gateways on mainnet
 const MAINNET_NZD_ISSUERS = [
@@ -103,10 +108,10 @@ async function fetchXrpRate(client: Client, currency: string, issuers: string[])
     return null;
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
     try {
-        const config = loadConfig();
-        const network = config.xrpl.network?.toUpperCase() || 'MAINNET';
+        const cfg = loadConfig();
+        const network = cfg.xrpl.network?.toUpperCase() || 'MAINNET';
 
         // Allow override via query params (from frontend's selected pair)
         const queryBase = typeof req.query.base === 'string' ? req.query.base : null;
@@ -114,18 +119,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const queryIssuer = typeof req.query.issuer === 'string' ? req.query.issuer : null;
 
         // Use shared client to avoid rate limiting
-        const client = await getSharedClient(config.xrpl.endpoint);
+        const client = await getSharedClient(cfg.xrpl.endpoint);
 
         // Get wallet address from seed or secret numbers
         let address: string | null = null;
 
-        if (config.walletSeed) {
-            const wallet = Wallet.fromSeed(config.walletSeed);
+        if (cfg.walletSeed) {
+            const wallet = Wallet.fromSeed(cfg.walletSeed);
             address = wallet.classicAddress;
-        } else if (config.walletSecretNumbers) {
+        } else if (cfg.walletSecretNumbers) {
             // Secret numbers format: "123456,234567,345678,..." (8 numbers)
             try {
-                const secretNums = config.walletSecretNumbers.split(',').map(n => n.trim());
+                const secretNums = cfg.walletSecretNumbers.split(',').map(n => n.trim());
                 const wallet = walletFromSecretNumbers(secretNums);
                 address = wallet.classicAddress;
             } catch (err) {
@@ -163,10 +168,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const trustLines = await fetchAccountLines(client, address);
 
         // Get quote currency info - prefer query params over config
-        const quoteCurrency = queryQuote || config.tradingPair.quoteCurrency || '';
-        const quoteIssuer = queryIssuer || config.tradingPair.quoteIssuer || config.tradingPair.issuer || '';
-        const baseCurrency = queryBase || config.tradingPair.baseCurrency || 'XRP';
-        const baseIssuer = queryIssuer || config.tradingPair.baseIssuer || config.tradingPair.issuer || '';
+        const quoteCurrency = queryQuote || cfg.tradingPair.quoteCurrency || '';
+        const quoteIssuer = queryIssuer || cfg.tradingPair.quoteIssuer || cfg.tradingPair.issuer || '';
+        const baseCurrency = queryBase || cfg.tradingPair.baseCurrency || 'XRP';
+        const baseIssuer = queryIssuer || cfg.tradingPair.baseIssuer || cfg.tradingPair.issuer || '';
 
         // Find the quote currency balance if it's not XRP
         let quoteBalance = 0;
@@ -201,11 +206,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         // Try to get XRP/NZD rate
         let nzdRate = 0.85; // Default fallback rate
-        const isMainnet = config.xrpl.network === 'mainnet';
+        const isMainnet = cfg.xrpl.network === 'mainnet';
 
         // Build list of NZD issuers to try
         const nzdIssuers: string[] = [];
-        const configIssuer = config.tradingPair.quoteIssuer || config.tradingPair.issuer;
+        const configIssuer = cfg.tradingPair.quoteIssuer || cfg.tradingPair.issuer;
         if (configIssuer) {
             nzdIssuers.push(configIssuer);
         }
@@ -257,3 +262,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
     }
 }
+
+export default withBotAuth(handler, {
+    permission: 'bot:wallet_read',
+    methods: ['GET'],
+});

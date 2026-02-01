@@ -1,7 +1,12 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
+import { withBotAuth, type AuthenticatedRequest, hasPermission } from '../../../lib/botAuth';
 import { Client, Wallet } from 'xrpl';
 import { walletFromSecretNumbers } from 'xrpl/dist/npm/Wallet/walletFromSecretNumbers';
 import { loadConfig } from '../../../../src/config';
+
+export const config = {
+    api: { bodyParser: false },
+};
 
 interface ActiveOffer {
     sequence: number;
@@ -25,11 +30,14 @@ if (globalAutoManage._stalenessThresholdSec === undefined) {
     globalAutoManage._stalenessThresholdSec = 60; // default 60 seconds
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-    const config = loadConfig();
+async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
+    const cfg = loadConfig();
 
-    // Handle settings updates (POST)
+    // Handle settings updates (POST) - requires operator
     if (req.method === 'POST') {
+        if (!hasPermission(req.role, 'bot:orders_manage')) {
+            return res.status(403).json({ error: 'Insufficient permission for orders management' });
+        }
         const { autoManageEnabled, stalenessThresholdSec } = req.body;
         if (typeof autoManageEnabled === 'boolean') {
             globalAutoManage._autoManageEnabled = autoManageEnabled;
@@ -43,14 +51,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
     }
 
-    // Handle cancel request (DELETE)
+    // Handle cancel request (DELETE) - requires admin
     if (req.method === 'DELETE') {
+        if (!hasPermission(req.role, 'bot:orders_cancel')) {
+            return res.status(403).json({ error: 'Insufficient permission for order cancellation' });
+        }
         const { sequence } = req.body;
         if (typeof sequence !== 'number') {
             return res.status(400).json({ error: 'Missing sequence number' });
         }
         try {
-            const result = await cancelOffer(config, sequence);
+            const result = await cancelOffer(cfg, sequence);
             return res.status(200).json(result);
         } catch (err: any) {
             return res.status(500).json({ error: err?.message || 'Failed to cancel offer' });
@@ -59,15 +70,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // GET: Fetch active orders and optionally auto-cancel stale ones
     try {
-        const client = new Client(config.xrpl.endpoint);
+        const client = new Client(cfg.xrpl.endpoint);
         await client.connect();
 
         // Get wallet
         let wallet: Wallet | null = null;
-        if (config.walletSeed) {
-            wallet = Wallet.fromSeed(config.walletSeed);
-        } else if (config.walletSecretNumbers) {
-            const secretNums = config.walletSecretNumbers.split(',').map(n => n.trim());
+        if (cfg.walletSeed) {
+            wallet = Wallet.fromSeed(cfg.walletSeed);
+        } else if (cfg.walletSecretNumbers) {
+            const secretNums = cfg.walletSecretNumbers.split(',').map(n => n.trim());
             wallet = walletFromSecretNumbers(secretNums);
         }
 
@@ -228,3 +239,8 @@ async function cancelOffer(config: ReturnType<typeof loadConfig>, sequence: numb
 
     return { success: false, sequence, error: 'Transaction failed' };
 }
+
+export default withBotAuth(handler, {
+    permission: 'bot:orders_read',
+    methods: ['GET', 'POST', 'DELETE'],
+});

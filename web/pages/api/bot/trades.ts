@@ -1,5 +1,10 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
+import { withBotAuth, type AuthenticatedRequest, hasPermission } from '../../../lib/botAuth';
 import { tradeHistory, Trade, TradeStats } from '../../../lib/tradeHistory';
+
+export const config = {
+    api: { bodyParser: false },
+};
 
 interface TradesResponse {
     trades: Trade[];
@@ -10,8 +15,8 @@ interface ErrorResponse {
     error: string;
 }
 
-export default async function handler(
-    req: NextApiRequest,
+async function handler(
+    req: AuthenticatedRequest,
     res: NextApiResponse<TradesResponse | ErrorResponse>
 ): Promise<void> {
     if (req.method === 'GET') {
@@ -32,6 +37,10 @@ export default async function handler(
     }
 
     if (req.method === 'DELETE') {
+        // DELETE requires admin permission (bot:orders_cancel used as proxy for admin actions)
+        if (!hasPermission(req.role, 'bot:orders_cancel')) {
+            return res.status(403).json({ error: 'Insufficient permission for trades clear' });
+        }
         try {
             tradeHistory.clearHistory();
             return res.status(200).json({ trades: [], stats: tradeHistory.getStats() });
@@ -43,3 +52,8 @@ export default async function handler(
 
     return res.status(405).json({ error: 'Method not allowed' });
 }
+
+export default withBotAuth(handler, {
+    permission: 'bot:trades_read',
+    methods: ['GET', 'DELETE'],
+});

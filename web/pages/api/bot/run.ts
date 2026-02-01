@@ -1,8 +1,16 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
+import { withBotAuth, AuthenticatedRequest } from '../../../lib/botAuth';
 import { botController } from '../../../lib/botController';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+// Disable body parser for HMAC signature verification
+export const config = {
+    api: {
+        bodyParser: false,
+    },
+};
+
+async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
     }
@@ -20,3 +28,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
     }
 }
+
+export default withBotAuth(handler, {
+    permission: 'bot:run',
+    methods: ['POST'],
+});

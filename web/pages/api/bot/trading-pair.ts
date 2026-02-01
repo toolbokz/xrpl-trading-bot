@@ -1,8 +1,13 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
+import { withBotAuth, AuthenticatedRequest } from '../../../lib/botAuth';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
 import { findTradingPair, toBotTradingPair } from '../../../lib/tradingPairs';
 
-export default function handler(req: NextApiRequest, res: NextApiResponse) {
+export const config = {
+    api: { bodyParser: false },
+};
+
+function handler(req: AuthenticatedRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
     }
@@ -25,3 +30,8 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
         res.status(400).json({ error: err?.message || 'Failed to update trading pair' });
     }
 }
+
+export default withBotAuth(handler, {
+    permission: 'bot:trading_pair',
+    methods: ['POST'],
+});
