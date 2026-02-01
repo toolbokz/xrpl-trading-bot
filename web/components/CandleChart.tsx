@@ -1,0 +1,77 @@
+"use client";
+
+import { useEffect, useRef } from 'react';
+import { createChart, CandlestickData, IChartApi, ISeriesApi } from 'lightweight-charts';
+
+export type CandleChartProps = {
+    data: CandlestickData[];
+    height?: number;
+};
+
+const BINANCE_COLORS = {
+    up: '#0ECB81',
+    down: '#F6465D',
+    background: '#0B0E11',
+    grid: '#1E2329',
+    text: '#D1D4DC',
+};
+
+export function CandleChart({ data, height = 320 }: CandleChartProps) {
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const chartRef = useRef<IChartApi | null>(null);
+    const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+
+    useEffect(() => {
+        if (!containerRef.current) return;
+
+        const chart = createChart(containerRef.current, {
+            layout: {
+                background: { color: BINANCE_COLORS.background },
+                textColor: BINANCE_COLORS.text,
+            },
+            grid: {
+                vertLines: { color: BINANCE_COLORS.grid },
+                horzLines: { color: BINANCE_COLORS.grid },
+            },
+            timeScale: { borderColor: BINANCE_COLORS.grid },
+            rightPriceScale: { borderColor: BINANCE_COLORS.grid },
+            autoSize: true,
+        });
+
+        const series = chart.addCandlestickSeries({
+            upColor: BINANCE_COLORS.up,
+            downColor: BINANCE_COLORS.down,
+            wickUpColor: BINANCE_COLORS.up,
+            wickDownColor: BINANCE_COLORS.down,
+            borderVisible: false,
+        });
+
+        chartRef.current = chart;
+        seriesRef.current = series;
+
+        const handleResize = () => {
+            if (containerRef.current && chartRef.current) {
+                const { clientWidth } = containerRef.current;
+                chartRef.current.applyOptions({ width: clientWidth });
+            }
+        };
+        handleResize();
+        window.addEventListener('resize', handleResize);
+
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            chart.remove();
+            chartRef.current = null;
+            seriesRef.current = null;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (seriesRef.current && chartRef.current) {
+            seriesRef.current.setData(data);
+            chartRef.current.timeScale().fitContent();
+        }
+    }, [data]);
+
+    return <div ref={containerRef} style={{ width: '100%', height }} />;
+}

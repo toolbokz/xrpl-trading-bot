@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    color-scheme: dark;
+}
+
+body {
+    @apply text-slate-100 antialiased;
+    background-color: #0b1021;
+}
+
+.card {
+    /* Base card styling shared across panels; bg-opacity uses Tailwind alpha utility */
+    @apply bg-card bg-opacity-90 backdrop-blur-sm rounded-2xl shadow-card border border-white/5;
+}
+
+.stat-label {
+    @apply text-xs uppercase tracking-wide text-slate-400;
+}
+
+.stat-value {
+    @apply text-2xl font-semibold text-slate-50;
+}
+
+@layer utilities {
+
+    /* Bridge custom color/shadow tokens into utility classes for @apply usage. */
+    .bg-surface {
+        background-color: #0b1021;
+    }
+
+    .bg-card {
+        background-color: #121933;
+    }
+
+    .shadow-card {
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+    }
+}
+
+@layer components {
+
+    /* Button system used for bot controls */
+    .btn {
+        @apply inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed;
+    }
+
+    .btn-run {
+        @apply bg-success/20 border-success/40 text-success hover:bg-success/30;
+    }
+
+    .btn-pause {
+        @apply bg-white/10 border-white/20 text-slate-100 hover:bg-white/20;
+    }
+
+    .btn-kill {
+        @apply bg-danger/15 border-danger/25 text-danger hover:bg-danger/25;
+    }
+}

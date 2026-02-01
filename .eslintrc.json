@@ -1,0 +1,25 @@
+{
+    "root": true,
+    "extends": [
+        "next/core-web-vitals"
+    ],
+    "settings": {
+        "next": {
+            "rootDir": [
+                "web"
+            ]
+        }
+    },
+    "overrides": [
+        {
+            "files": [
+                "src/**/*.{ts,tsx}",
+                "scripts/**/*.{ts,tsx}"
+            ],
+            "env": {
+                "browser": false,
+                "node": true
+            }
+        }
+    ]
+}
