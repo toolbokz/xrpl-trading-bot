@@ -33,7 +33,6 @@ logs/
 .turbo/
 .cache/
 *.tsbuildinfo
-next-env.d.ts
 
 # Testing
 coverage/
