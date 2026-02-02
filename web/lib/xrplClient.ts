@@ -1,4 +1,5 @@
 import { Client } from 'xrpl';
+import { logger } from '../../src/analytics/logger';
 
 /**
  * Shared XRPL client singleton to avoid rate limiting (429 errors)
@@ -16,7 +17,25 @@ let sharedClient: Client | null = null;
 let connectPromise: Promise<void> | null = null;
 let lastConnectAttempt = 0;
 let currentEndpointIndex = 0;
+let reconnectAttempt = 0;
 const MIN_RECONNECT_INTERVAL = 10000; // 10 seconds between reconnect attempts
+const MAX_RECONNECT_DELAY = 15_000; // Cap reconnect delay at 15 seconds
+const INITIAL_RECONNECT_DELAY = 1_000; // Start with 1 second delay
+
+/**
+ * Calculate exponential backoff with jitter for reconnect attempts.
+ * Prevents reconnect storms when multiple clients try to reconnect.
+ */
+function getReconnectDelay(): number {
+    const baseDelay = Math.min(INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttempt), MAX_RECONNECT_DELAY);
+    const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1); // ±20% jitter
+    return Math.max(100, Math.round(baseDelay + jitter));
+}
+
+/**
+ * Sleep utility for reconnect delays.
+ */
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Price cache to reduce API calls
 interface PriceCache {
@@ -49,12 +68,15 @@ export function setCachedPrice(pair: string, data: PriceCache[string]['data']) {
 export async function getSharedClient(endpoint: string): Promise<Client> {
     // If we have a connected client, return it
     if (sharedClient?.isConnected()) {
+        // Reset reconnect counter on successful connection
+        reconnectAttempt = 0;
         return sharedClient;
     }
 
-    // Rate limit reconnection attempts
+    // Rate limit reconnection attempts with jittered backoff
     const now = Date.now();
-    if (now - lastConnectAttempt < MIN_RECONNECT_INTERVAL) {
+    const reconnectDelay = getReconnectDelay();
+    if (now - lastConnectAttempt < Math.max(MIN_RECONNECT_INTERVAL, reconnectDelay)) {
         throw new Error('Rate limited - please wait before retrying');
     }
 
@@ -67,6 +89,7 @@ export async function getSharedClient(endpoint: string): Promise<Client> {
     }
 
     lastConnectAttempt = now;
+    reconnectAttempt++;
 
     // Try endpoints in order, starting with the provided one or cycling through fallbacks
     const endpointsToTry = endpoint.includes('xrplcluster')
@@ -79,16 +102,27 @@ export async function getSharedClient(endpoint: string): Promise<Client> {
             const ep = endpointsToTry[i];
             if (!ep) continue;
             try {
-                console.log(`[XRPL] Trying endpoint: ${ep}`);
+                logger.debug({ endpoint: ep, attempt: reconnectAttempt }, '[XRPL] Trying endpoint with backoff');
+                
+                // Apply jittered backoff delay before attempting connection
+                if (i > 0) {
+                    const delay = getReconnectDelay();
+                    logger.debug({ delay }, '[XRPL] Backoff delay before next attempt');
+                    await sleep(delay);
+                }
+                
                 sharedClient = new Client(ep, { connectionTimeout: 15000 });
                 await sharedClient.connect();
-                console.log(`[XRPL] Shared client connected to ${ep}`);
+                logger.info({ endpoint: ep }, '[XRPL] Shared client connected');
+                // Reset reconnect attempt on success
+                reconnectAttempt = 0;
                 // Update index for next time
                 currentEndpointIndex = XRPL_ENDPOINTS.indexOf(ep);
                 if (currentEndpointIndex === -1) currentEndpointIndex = 0;
                 return;
-            } catch (err: any) {
-                console.error(`[XRPL] Failed to connect to ${ep}:`, err?.message || err);
+            } catch (err: unknown) {
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                logger.warn({ endpoint: ep, error: errorMessage, attempt: reconnectAttempt }, '[XRPL] Failed to connect');
                 sharedClient = null;
                 // Try next endpoint
             }
@@ -111,4 +145,5 @@ export async function disconnectSharedClient() {
     }
     sharedClient = null;
     connectPromise = null;
+    reconnectAttempt = 0;
 }

@@ -1,8 +1,8 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
+import { withLocalApi, LocalRequest } from '../../lib/localApi';
 import { botController } from '../../lib/botController';
 import { ensureRuntimeHooks } from '../../lib/runtimeHooks';
 import { loadConfig } from '../../../src/config';
-import { v4 as uuidv4 } from 'uuid';
 
 // Start time for uptime calculation
 const startTime = Date.now();
@@ -32,25 +32,8 @@ export interface HealthResponse {
  * 
  * Health check endpoint for monitoring.
  * Returns bot and XRPL connection status.
- * 
- * This endpoint is public (no auth required) as it doesn't expose sensitive data.
  */
-export default async function handler(
-    req: NextApiRequest,
-    res: NextApiResponse<HealthResponse | { error: string }>
-) {
-    // Accept inbound X-REQUEST-ID or generate one
-    const inboundRequestId = req.headers['x-request-id'];
-    const requestId = typeof inboundRequestId === 'string' && inboundRequestId.length > 0
-        ? inboundRequestId
-        : `req_${uuidv4()}`;
-
-    res.setHeader('X-Request-ID', requestId);
-
-    if (req.method !== 'GET') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
-
+function handler(req: LocalRequest, res: NextApiResponse<HealthResponse>) {
     const config = loadConfig();
     const botState = botController.getState();
 
@@ -70,7 +53,7 @@ export default async function handler(
         timestamp: new Date().toISOString(),
         uptimeSec: Math.floor((Date.now() - startTime) / 1000),
         version: packageVersion,
-        requestId,
+        requestId: req.requestId,
         xrpl: {
             connected: xrplConnected,
             endpoint: config.xrpl.endpoint.replace(/wss?:\/\/[^@]*@/, 'wss://***@'), // Redact credentials if any
@@ -89,3 +72,5 @@ export default async function handler(
 
     return res.status(health.ok ? 200 : 503).json(health);
 }
+
+export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });

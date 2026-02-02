@@ -4,6 +4,7 @@
  */
 
 import { z } from 'zod';
+import { isValidPairKey } from '../../../src/config/tradingPairs';
 
 /**
  * /api/bot/position-size POST body
@@ -20,12 +21,16 @@ export type PositionSizeInput = z.infer<typeof positionSizeSchema>;
 
 /**
  * /api/bot/trading-pair POST body
+ * Validates that the pairKey is in the allowed TRADING_PAIRS list.
  */
 export const tradingPairSchema = z.object({
     pairKey: z
         .string({ required_error: 'pairKey is required' })
         .min(1, 'pairKey cannot be empty')
-        .max(100, 'pairKey too long'),
+        .max(100, 'pairKey too long')
+        .refine(isValidPairKey, {
+            message: 'pairKey must be a valid trading pair from the allowed list',
+        }),
 });
 
 export type TradingPairInput = z.infer<typeof tradingPairSchema>;

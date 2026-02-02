@@ -1,9 +1,10 @@
 import type { NextApiResponse } from 'next';
-import { withBotAuth, type AuthenticatedRequest } from '../../../lib/botAuth';
+import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { Client, Wallet } from 'xrpl';
 import { walletFromSecretNumbers } from 'xrpl/dist/npm/Wallet/walletFromSecretNumbers';
 import { loadConfig } from '../../../../src/config';
 import { getSharedClient } from '../../../lib/xrplClient';
+import { logger } from '../../../../src/analytics/logger';
 
 export const config = {
     api: { bodyParser: false },
@@ -75,9 +76,10 @@ async function fetchAccountLines(client: Client, address: string): Promise<Trust
             issuer: line.account,
             balance: parseFloat(line.balance) || 0,
         }));
-    } catch (err: any) {
-        if (err?.data?.error !== 'actNotFound') {
-            console.error('Failed to fetch account lines:', err);
+    } catch (err: unknown) {
+        const errData = (err as any)?.data?.error;
+        if (errData !== 'actNotFound') {
+            logger.error({ err }, 'Failed to fetch account lines');
         }
         return [];
     }
@@ -111,7 +113,7 @@ async function fetchXrpRate(client: Client, currency: string, issuers: string[])
     return null;
 }
 
-async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
+async function handler(req: LocalRequest, res: NextApiResponse) {
     try {
         const cfg = loadConfig();
         const network = cfg.xrpl.network?.toUpperCase() || 'MAINNET';
@@ -137,7 +139,7 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
                 const wallet = walletFromSecretNumbers(secretNums);
                 address = wallet.classicAddress;
             } catch (err) {
-                console.error('Failed to derive wallet from secret numbers:', err);
+                logger.error({ err }, 'Failed to derive wallet from secret numbers');
             }
         }
 
@@ -160,10 +162,11 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
                 ledger_index: 'validated',
             });
             balance = Number(accountInfo.result.account_data.Balance) / 1_000_000;
-        } catch (err: any) {
+        } catch (err: unknown) {
             // Account may not exist yet
-            if (err?.data?.error !== 'actNotFound') {
-                console.error('Failed to fetch account info:', err);
+            const errData = (err as any)?.data?.error;
+            if (errData !== 'actNotFound') {
+                logger.error({ err }, 'Failed to fetch account info');
             }
         }
 
@@ -230,7 +233,7 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
             const usdRate = await fetchXrpRate(client, 'USD', MAINNET_USD_ISSUERS);
             if (usdRate !== null) {
                 nzdRate = usdRate * USD_TO_NZD_RATE;
-                console.log(`Using USD rate ${usdRate} * ${USD_TO_NZD_RATE} = ${nzdRate} NZD`);
+                logger.debug({ usdRate, nzdRate }, 'Using USD rate for NZD conversion');
             }
         }
 
@@ -249,11 +252,13 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
             baseBalance,
             quoteBalance,
             quoteCurrency: quoteCurrencyDisplay,
+            requestId: req.requestId,
         });
-    } catch (err: any) {
-        console.error('Wallet API error:', err);
+    } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to fetch wallet info';
+        logger.error({ err }, '[API /bot/wallet] Error');
         res.status(500).json({
-            error: err?.message || 'Failed to fetch wallet info',
+            error: errorMessage,
             address: null,
             balance: 0,
             nzdRate: 0.85,
@@ -262,11 +267,9 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
             baseBalance: 0,
             quoteBalance: 0,
             quoteCurrency: '',
+            requestId: req.requestId,
         });
     }
 }
 
-export default withBotAuth(handler, {
-    permission: 'bot:wallet_read',
-    methods: ['GET'],
-});
+export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });

@@ -1,5 +1,6 @@
-# Node.js dependencies
+# Node.js dependencies - ONLY root node_modules should exist
 node_modules/
+web/node_modules/
 .pnp
 .pnp.js
 

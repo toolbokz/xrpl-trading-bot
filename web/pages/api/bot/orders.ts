@@ -1,5 +1,5 @@
 import type { NextApiResponse } from 'next';
-import { withBotAuth, type AuthenticatedRequest, hasPermission } from '../../../lib/botAuth';
+import { withLocalApi, LocalRequest, logSensitiveAction } from '../../../lib/localApi';
 import { loadConfig } from '../../../../src/config';
 import { getSharedClient } from '../../../lib/xrplClient';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
@@ -32,22 +32,18 @@ if (globalAutoManage._stalenessThresholdSec === undefined) {
     globalAutoManage._stalenessThresholdSec = 60; // default 60 seconds
 }
 
-async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
+async function handler(req: LocalRequest, res: NextApiResponse) {
     const cfg = loadConfig();
 
-    // Handle settings updates (POST) - requires operator
+    // Handle settings updates (POST)
     if (req.method === 'POST') {
-        if (!hasPermission(req.auth.role, 'bot:orders_manage')) {
-            return res.status(403).json({ error: 'Insufficient permission for orders management', requestId: req.auth.requestId });
-        }
-
         // Validate input with zod
         const validation = validateBody(req.parsedBody, ordersUpdateSchema);
         if (!validation.success) {
             return res.status(400).json({
                 error: 'Invalid input',
                 details: validation.errors,
-                requestId: req.auth.requestId,
+                requestId: req.requestId,
             });
         }
 
@@ -58,27 +54,27 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
         if (typeof stalenessThresholdSec === 'number') {
             globalAutoManage._stalenessThresholdSec = stalenessThresholdSec;
         }
+
+        // Audit log sensitive action
+        await logSensitiveAction(req.requestId, 'bot:orders_settings', { autoManageEnabled, stalenessThresholdSec });
+
         return res.status(200).json({
             autoManageEnabled: globalAutoManage._autoManageEnabled,
             stalenessThresholdSec: globalAutoManage._stalenessThresholdSec,
-            requestId: req.auth.requestId,
+            requestId: req.requestId,
         });
     }
 
-    // Handle cancel request (DELETE) - requires admin
+    // Handle cancel request (DELETE)
     // Routes through TradingRuntime to use proper signing via executor
     if (req.method === 'DELETE') {
-        if (!hasPermission(req.auth.role, 'bot:orders_cancel')) {
-            return res.status(403).json({ error: 'Insufficient permission for order cancellation', requestId: req.auth.requestId });
-        }
-
         // Validate input with zod
         const validation = validateBody(req.parsedBody, ordersCancelSchema);
         if (!validation.success) {
             return res.status(400).json({
                 error: 'Invalid input',
                 details: validation.errors,
-                requestId: req.auth.requestId,
+                requestId: req.requestId,
             });
         }
 
@@ -88,23 +84,28 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
             if (!runtime.isStarted()) {
                 return res.status(400).json({
                     error: 'Bot must be running to cancel offers',
-                    requestId: req.auth.requestId,
+                    requestId: req.requestId,
                 });
             }
             const result = await runtime.cancelOffer(sequence);
-            logger.info({ sequence, result, requestId: req.auth.requestId }, 'Offer cancel result');
+            logger.info({ sequence, result, requestId: req.requestId }, 'Offer cancel result');
+
+            // Audit log sensitive action
+            await logSensitiveAction(req.requestId, 'bot:orders_cancel', { sequence, success: result.accepted });
+
             return res.status(200).json({
                 success: result.accepted,
                 sequence,
                 hash: result.hash,
                 reason: result.reason,
-                requestId: req.auth.requestId,
+                requestId: req.requestId,
             });
-        } catch (err: any) {
-            logger.error({ err, sequence, requestId: req.auth.requestId }, 'Failed to cancel offer');
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : 'Failed to cancel offer';
+            logger.error({ err, sequence, requestId: req.requestId }, 'Failed to cancel offer');
             return res.status(500).json({
-                error: err?.message || 'Failed to cancel offer',
-                requestId: req.auth.requestId,
+                error: errorMessage,
+                requestId: req.requestId,
             });
         }
     }
@@ -130,7 +131,7 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
                 autoManageEnabled: globalAutoManage._autoManageEnabled,
                 stalenessThresholdSec: globalAutoManage._stalenessThresholdSec,
                 cancelledCount: 0,
-                requestId: req.auth.requestId,
+                requestId: req.requestId,
                 message: 'Bot not running or wallet not configured',
             });
         }
@@ -230,21 +231,19 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
             autoManageEnabled: globalAutoManage._autoManageEnabled,
             stalenessThresholdSec: globalAutoManage._stalenessThresholdSec,
             cancelledCount,
-            requestId: req.auth.requestId,
+            requestId: req.requestId,
         });
-    } catch (err: any) {
-        logger.error({ err, requestId: req.auth.requestId }, 'Orders API error');
+    } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to fetch orders';
+        logger.error({ err, requestId: req.requestId }, 'Orders API error');
         res.status(500).json({
-            error: err?.message || 'Failed to fetch orders',
+            error: errorMessage,
             orders: [],
             autoManageEnabled: globalAutoManage._autoManageEnabled,
             stalenessThresholdSec: globalAutoManage._stalenessThresholdSec,
-            requestId: req.auth.requestId,
+            requestId: req.requestId,
         });
     }
 }
 
-export default withBotAuth(handler, {
-    permission: 'bot:orders_read',
-    methods: ['GET', 'POST', 'DELETE'],
-});
+export default withLocalApi(handler, { methods: ['GET', 'POST', 'DELETE'] });

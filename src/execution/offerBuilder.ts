@@ -18,6 +18,8 @@ export interface TradeIntent {
     amount: number; // base amount
     price: number; // quote per base
     invertPair?: boolean;
+    /** Expected execution price for slippage calculation */
+    expectedPrice?: number;
 }
 
 export interface NormalizedTradeIntent {

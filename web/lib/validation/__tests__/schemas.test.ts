@@ -68,9 +68,22 @@ describe('Input Validation Schemas', () => {
     });
 
     describe('tradingPairSchema', () => {
-        it('accepts valid pairKey', () => {
-            const result = validateBody({ pairKey: 'XRP/USD' }, tradingPairSchema);
+        it('accepts valid pairKey from TRADING_PAIRS', () => {
+            const result = validateBody({ pairKey: 'XRP/RLUSD' }, tradingPairSchema);
             expect(result.success).toBe(true);
+        });
+
+        it('accepts another valid pairKey', () => {
+            const result = validateBody({ pairKey: 'XRP/USDC' }, tradingPairSchema);
+            expect(result.success).toBe(true);
+        });
+
+        it('rejects invalid pairKey not in TRADING_PAIRS', () => {
+            const result = validateBody({ pairKey: 'XRP/INVALID' }, tradingPairSchema);
+            expect(result.success).toBe(false);
+            if (!result.success) {
+                expect(result.errors[0]?.message).toContain('valid trading pair');
+            }
         });
 
         it('rejects empty pairKey', () => {

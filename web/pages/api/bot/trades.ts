@@ -1,6 +1,7 @@
 import type { NextApiResponse } from 'next';
-import { withBotAuth, type AuthenticatedRequest, hasPermission } from '../../../lib/botAuth';
+import { withLocalApi, LocalRequest, logSensitiveAction } from '../../../lib/localApi';
 import { tradeHistory, Trade, TradeStats } from '../../../lib/tradeHistory';
+import { logger } from '../../../../src/analytics/logger';
 
 export const config = {
     api: { bodyParser: false },
@@ -9,14 +10,16 @@ export const config = {
 interface TradesResponse {
     trades: Trade[];
     stats: TradeStats;
+    requestId?: string;
 }
 
 interface ErrorResponse {
     error: string;
+    requestId?: string;
 }
 
 async function handler(
-    req: AuthenticatedRequest,
+    req: LocalRequest,
     res: NextApiResponse<TradesResponse | ErrorResponse>
 ): Promise<void> {
     if (req.method === 'GET') {
@@ -29,31 +32,30 @@ async function handler(
                 : tradeHistory.getRecentTrades(limit);
             const stats = tradeHistory.getStats();
 
-            return res.status(200).json({ trades, stats });
-        } catch (err: any) {
-            console.error('Error fetching trades:', err);
-            return res.status(500).json({ error: err?.message || 'Failed to fetch trades' });
+            return res.status(200).json({ trades, stats, requestId: req.requestId });
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : 'Failed to fetch trades';
+            logger.error({ err }, '[API /bot/trades] Error fetching trades');
+            return res.status(500).json({ error: errorMessage, requestId: req.requestId });
         }
     }
 
     if (req.method === 'DELETE') {
-        // DELETE requires admin permission (bot:orders_cancel used as proxy for admin actions)
-        if (!hasPermission(req.auth.role, 'bot:orders_cancel')) {
-            return res.status(403).json({ error: 'Insufficient permission for trades clear' });
-        }
         try {
             tradeHistory.clearHistory();
-            return res.status(200).json({ trades: [], stats: tradeHistory.getStats() });
-        } catch (err: any) {
-            console.error('Error clearing trades:', err);
-            return res.status(500).json({ error: err?.message || 'Failed to clear trades' });
+
+            // Audit log sensitive action
+            await logSensitiveAction(req.requestId, 'bot:trades_clear', {});
+
+            return res.status(200).json({ trades: [], stats: tradeHistory.getStats(), requestId: req.requestId });
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : 'Failed to clear trades';
+            logger.error({ err }, '[API /bot/trades] Error clearing trades');
+            return res.status(500).json({ error: errorMessage, requestId: req.requestId });
         }
     }
 
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ error: 'Method not allowed', requestId: req.requestId });
 }
 
-export default withBotAuth(handler, {
-    permission: 'bot:trades_read',
-    methods: ['GET', 'DELETE'],
-});
+export default withLocalApi(handler, { methods: ['GET', 'DELETE'] });

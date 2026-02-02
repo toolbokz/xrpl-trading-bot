@@ -1,8 +1,9 @@
 import type { NextApiResponse } from 'next';
-import { withBotAuth, type AuthenticatedRequest } from '../../../lib/botAuth';
+import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { loadConfig } from '../../../../src/config';
-import { tradingPairs } from '../../../lib/tradingPairs';
+import { findPair, isValidPairKey } from '../../../../src/config/tradingPairs';
 import { getSharedClient, getCachedPrice, setCachedPrice } from '../../../lib/xrplClient';
+import { logger } from '../../../../src/analytics/logger';
 
 export const config = {
     api: { bodyParser: false },
@@ -31,16 +32,29 @@ interface PriceData {
     cached?: boolean;
 }
 
-async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
+async function handler(req: LocalRequest, res: NextApiResponse) {
     try {
         const cfg = loadConfig();
 
         // Get pair from query or use default
         const pairKey = typeof req.query.pair === 'string' ? req.query.pair : 'XRP/RLUSD';
-        const pair = tradingPairs.find((p) => p.key === pairKey);
 
+        // Validate pair against source of truth
+        if (!isValidPairKey(pairKey)) {
+            return res.status(400).json({
+                error: `Invalid trading pair: ${pairKey}`,
+                code: 'INVALID_PAIR',
+                requestId: req.requestId,
+            });
+        }
+
+        const pair = findPair(pairKey);
         if (!pair) {
-            return res.status(400).json({ error: `Unknown trading pair: ${pairKey}` });
+            return res.status(400).json({
+                error: `Unknown trading pair: ${pairKey}`,
+                code: 'PAIR_NOT_FOUND',
+                requestId: req.requestId,
+            });
         }
 
         // Check cache first
@@ -161,8 +175,9 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
         };
 
         return res.status(200).json(priceData);
-    } catch (err: any) {
-        console.error('Price API error:', err);
+    } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to fetch price';
+        logger.error({ err }, '[API /bot/price] Error');
 
         // Return cached price if available on error
         const pairKey = typeof req.query.pair === 'string' ? req.query.pair : 'XRP/RLUSD';
@@ -174,14 +189,12 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
                 timestamp: Date.now(),
                 cached: true,
                 stale: true,
+                requestId: req.requestId,
             });
         }
 
-        return res.status(500).json({ error: err?.message || 'Failed to fetch price' });
+        return res.status(500).json({ error: errorMessage, requestId: req.requestId });
     }
 }
 
-export default withBotAuth(handler, {
-    permission: 'bot:price_read',
-    methods: ['GET'],
-});
+export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });

@@ -17,6 +17,8 @@ export interface Trade {
     hash?: string;
     paper: boolean;
     status: 'FILLED' | 'PARTIAL' | 'REJECTED' | 'PENDING';
+    /** Slippage from expected price in basis points (negative = better execution) */
+    slippageBps?: number;
 }
 
 export interface TradeStats {

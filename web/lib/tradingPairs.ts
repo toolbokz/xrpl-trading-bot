@@ -1,104 +1,50 @@
-export type CurrencySide = {
-    currency: string;
-    issuer?: string;
-    issuerEnv?: string;
-};
+/**
+ * Trading Pairs - Frontend Re-export
+ * 
+ * This module re-exports from the shared trading pairs module for frontend use.
+ * DO NOT add pairs here - use src/config/tradingPairs.ts instead.
+ * 
+ * @module lib/tradingPairs
+ */
 
-export type TradingPairOption = {
-    key: string; // human-readable key like XRP/RLUSD
-    base: CurrencySide;
-    quote: CurrencySide;
-    description: string;
-    liquidity?: 'high' | 'medium' | 'low';
-    network?: 'mainnet' | 'testnet' | 'both'; // Which network this pair works on
-};
+// Re-export everything from the shared module
+export {
+    TRADING_PAIRS,
+    type TradingPair,
+    type CurrencySide,
+    type LiquidityLevel,
+    type Network,
+    type LegacyTradingPair,
+    getPair,
+    findPair,
+    listPairs,
+    isValidPairKey,
+    assertValidPair,
+    toLegacyPair,
+    fromLegacyPair,
+} from '../../src/config/tradingPairs';
 
-// TESTNET pairs - use testnet faucet-created tokens or well-known testnet issuers
-const testnetPairs: TradingPairOption[] = [
-    {
-        key: 'XRP/RLUSD',
-        base: { currency: 'XRP' },
-        // Using a common testnet gateway - you may need to adjust this issuer
-        quote: { currency: 'RLUSD', issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De' },
-        description: 'Testnet',
-        liquidity: 'low',
-        network: 'testnet',
-    },
-    {
-        key: "XRP/BTC",
-        base: { "currency": "XRP" },
-        quote: { "currency": "BTC", "issuer": "rchGBxcD1A1C2tdxF6papQYZ8kjRKMYcL" },
-        description: "Testnet",
-        liquidity: 'high',
-        network: 'testnet',
-    }
-];
+// Legacy compatibility - map to old types
+import { TRADING_PAIRS, TradingPair, toLegacyPair, findPair } from '../../src/config/tradingPairs';
 
-// MAINNET pairs - real issuers with actual liquidity
-const mainnetPairs: TradingPairOption[] = [
-    {
-        key: 'XRP/RLUSD',
-        base: { currency: 'XRP' },
-        quote: { currency: 'RLUSD', issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De' },
-        description: 'XRP/RLUSD',
-        liquidity: 'high',
-        network: 'mainnet',
-    },
-    {
-        key: 'XRP/USDT',
-        base: { currency: 'XRP' },
-        quote: { currency: 'USDT', issuer: 'rPTr8H5QG74Q63yDq47t4T55jD1g7m7g6' },
-        description: 'XRP/USDT',
-        liquidity: 'high',
-        network: 'mainnet',
-    },
-    {
-        key: 'XRP/USDC',
-        base: { currency: 'XRP' },
-        quote: { currency: 'USDC', issuer: 'rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE' },
-        description: 'XRP/USDC',
-        liquidity: 'high',
-        network: 'mainnet',
-    },
-    {
-        key: "XRP/EUR",
-        base: { "currency": "XRP" },
-        quote: { "currency": "EUR", issuer: "rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq" },
-        description: "XRP/EUR",
-        liquidity: 'high',
-        network: 'mainnet',
-    },
-    {
-        key: "XRP/BTC",
-        base: { "currency": "XRP" },
-        quote: { "currency": "BTC", "issuer": "rchGBxcD1A1C2tdxF6papQYZ8kjRKMYcL" },
-        description: "XRP/BTC",
-        liquidity: 'high',
-        network: 'mainnet',
-    },
-    {
-        key: "XRP/ETH",
-        base: { "currency": "XRP" },
-        quote: { "currency": "ETH", "issuer": "rcA8X3TVMST1n3CJeAdGk1RdRCHii7N2h" },
-        description: "XRP/ETH",
-        liquidity: 'high',
-        network: 'mainnet',
-    },
-    {
-        key: 'RLUSD/USDT',
-        base: { currency: 'RLUSD', issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De' },
-        quote: { currency: 'USDT', issuer: 'rPTr8H5QG74Q63yDq47t4T55jD1g7m7g6' },
-        description: 'RLUSD/USDT',
-        liquidity: 'medium',
-        network: 'mainnet',
-    },
-];
+/**
+ * @deprecated Use TradingPair from src/config/tradingPairs instead
+ */
+export type TradingPairOption = TradingPair;
 
-// Combine all pairs - testnet first for visibility when on testnet
-export const tradingPairs: TradingPairOption[] = [...testnetPairs, ...mainnetPairs];
+/**
+ * @deprecated Use TRADING_PAIRS from src/config/tradingPairs instead
+ */
+export const tradingPairs: readonly TradingPair[] = TRADING_PAIRS;
 
-export const findTradingPair = (key: string): TradingPairOption | undefined => tradingPairs.find((p) => p.key === key);
+/**
+ * @deprecated Use findPair from src/config/tradingPairs instead
+ */
+export const findTradingPair = findPair;
 
+/**
+ * @deprecated Use LegacyTradingPair from src/config/tradingPairs instead
+ */
 export type BotTradingPair = {
     baseCurrency: string;
     baseIssuer?: string | undefined;
@@ -108,21 +54,9 @@ export type BotTradingPair = {
     description?: string | undefined;
 };
 
-export const toBotTradingPair = (option: TradingPairOption): BotTradingPair => {
-    const result: BotTradingPair = {
-        baseCurrency: option.base.currency,
-        quoteCurrency: option.quote.currency,
-        description: option.description,
-    };
-    if (option.base.issuer) {
-        result.baseIssuer = option.base.issuer;
-    }
-    if (option.quote.issuer) {
-        result.quoteIssuer = option.quote.issuer;
-    }
-    const legacyIssuer = option.quote.issuer || option.base.issuer;
-    if (legacyIssuer) {
-        result.issuer = legacyIssuer;
-    }
-    return result;
+/**
+ * @deprecated Use toLegacyPair from src/config/tradingPairs instead
+ */
+export const toBotTradingPair = (option: TradingPair): BotTradingPair => {
+    return toLegacyPair(option);
 };

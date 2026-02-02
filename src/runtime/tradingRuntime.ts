@@ -1,5 +1,6 @@
 import { Wallet, isValidClassicAddress, Client } from 'xrpl';
 import { AppConfig, TradingPair, loadConfig } from '../config';
+import { TRADING_PAIRS, isValidPairKey, LegacyTradingPair } from '../config/tradingPairs';
 import { logger } from '../analytics/logger';
 import { XRPLWebSocket } from '../xrpl/client';
 import { OrderBookTracker } from '../market/orderBookTracker';
@@ -13,6 +14,9 @@ import { Strategy } from '../strategies/types';
 import { getWallet, initWallet } from '../xrpl/wallet';
 import { ExecutionResult } from '../utils/types';
 import { closeBreakerStore } from '../persistence/breakerStore';
+import { enforceLocalOnly } from '../security/localOnly';
+import { throttleStrategy } from '../utils/rateLimiter';
+import { isCpuHealthy, startCpuWatchdog, CpuWatchdog } from '../monitoring/cpuWatchdog';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -46,6 +50,20 @@ export const validateTradingPair = (pair: TradingPair): void => {
     }
 };
 
+/**
+ * Validate that a trading pair is in the allowed TRADING_PAIRS list.
+ * This provides a runtime guard against invalid/unapproved pairs.
+ */
+export const assertAllowedPair = (pair: TradingPair): void => {
+    const pairKey = `${pair.baseCurrency}/${pair.quoteCurrency}`;
+    if (!isValidPairKey(pairKey)) {
+        const allowedKeys = TRADING_PAIRS.map((p) => p.key).join(', ');
+        throw new Error(
+            `Trading pair "${pairKey}" is not allowed. Only these pairs are supported: ${allowedKeys}`
+        );
+    }
+};
+
 export class TradingRuntime {
     private xrpl: XRPLWebSocket | null = null;
     private tracker: OrderBookTracker | null = null;
@@ -56,16 +74,33 @@ export class TradingRuntime {
     private tickInFlight = false;
     private started = false;
     private shutdownInProgress = false;
+    private cpuWatchdog: CpuWatchdog | null = null;
     private readonly baseConfig: AppConfig;
 
     constructor(config?: AppConfig) {
+        // Security gate: enforce local-only execution on construction
+        try {
+            enforceLocalOnly('TradingRuntime');
+        } catch (err) {
+            logger.error({ err }, 'Local-only security check failed');
+            throw err;
+        }
+
         this.baseConfig = config ?? loadConfig();
     }
 
     async start(): Promise<void> {
+        // Security gate: re-check on start
+        enforceLocalOnly('TradingRuntime.start');
+
         if (this.started) return;
         const config = cloneConfig(this.baseConfig);
+
+        // Validate trading pair structure
         validateTradingPair(config.tradingPair);
+
+        // Runtime guard: ensure pair is in allowed list
+        assertAllowedPair(config.tradingPair);
 
         // Wallet init is required for network safety checks even in paper mode.
         let walletCtx: ReturnType<typeof initWallet>;
@@ -107,6 +142,12 @@ export class TradingRuntime {
             this.executor = executor;
             this.walletAddress = wallet?.classicAddress ?? null;
             this.started = true;
+
+            // Start CPU watchdog to prevent runaway CPU usage
+            this.cpuWatchdog = startCpuWatchdog(() => {
+                logger.warn('CPU watchdog triggered - trading paused due to high CPU');
+            });
+
             logger.info('Trading runtime started');
         } catch (err) {
             await xrpl.disconnect().catch(() => undefined);
@@ -120,6 +161,13 @@ export class TradingRuntime {
             throw new Error('Trading runtime not started');
         }
         if (this.tickInFlight) return; // avoid overlapping ticks
+
+        // CPU safety: skip tick if CPU is overloaded
+        if (!isCpuHealthy()) {
+            logger.debug('Skipping tick - CPU watchdog paused trading');
+            return;
+        }
+
         this.tickInFlight = true;
         try {
             // Check for daily loss reset at UTC midnight
@@ -133,6 +181,8 @@ export class TradingRuntime {
             await this.tracker.refresh();
             const ctx = { orderBook: this.tracker.getState(), ledgerIndex: this.xrpl.getLedgerIndex() };
             for (const strategy of this.strategies) {
+                // Rate limit strategy execution to prevent CPU spikes
+                await throttleStrategy();
                 await strategy.tick(ctx);
             }
         } finally {
@@ -347,6 +397,11 @@ export class TradingRuntime {
     }
 
     private reset(): void {
+        // Stop CPU watchdog
+        if (this.cpuWatchdog) {
+            this.cpuWatchdog.stop();
+            this.cpuWatchdog = null;
+        }
         this.xrpl = null;
         this.tracker = null;
         this.risk = null;

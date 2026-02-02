@@ -2,13 +2,14 @@
  * Prometheus metrics endpoint.
  * Returns metrics in Prometheus exposition format.
  * 
- * Authentication: Optional - controlled by METRICS_AUTH_REQUIRED env var.
- * Default: Requires bot:metrics permission when auth is enabled.
+ * Localhost-only access (no external auth needed).
  */
 
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
+import { withLocalApi, LocalRequest } from '../../lib/localApi';
 import { getPrometheusMetrics, BotMetrics } from '../../lib/metrics/collector';
-import { botController, type BotState } from '../../lib/botController';
+import { botController } from '../../lib/botController';
+import { logger } from '../../../src/analytics/logger';
 
 // Bot state sync interval
 let syncInterval: NodeJS.Timeout | null = null;
@@ -31,43 +32,7 @@ function startBotStateSync(): void {
     }
 }
 
-export default async function handler(
-    req: NextApiRequest,
-    res: NextApiResponse
-): Promise<void> {
-    // Only allow GET
-    if (req.method !== 'GET') {
-        res.setHeader('Allow', 'GET');
-        res.status(405).json({ error: 'Method not allowed' });
-        return;
-    }
-
-    // Check if authentication is required
-    const authRequired = process.env.METRICS_AUTH_REQUIRED === 'true';
-
-    if (authRequired) {
-        // Simple bearer token auth for metrics
-        const authHeader = req.headers.authorization;
-        const expectedToken = process.env.METRICS_AUTH_TOKEN;
-
-        if (!expectedToken) {
-            console.warn('[Metrics] METRICS_AUTH_REQUIRED is true but METRICS_AUTH_TOKEN is not set');
-            res.status(500).json({ error: 'Metrics authentication not configured' });
-            return;
-        }
-
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            res.status(401).json({ error: 'Missing authorization header' });
-            return;
-        }
-
-        const token = authHeader.slice(7);
-        if (token !== expectedToken) {
-            res.status(403).json({ error: 'Invalid token' });
-            return;
-        }
-    }
-
+function handler(req: LocalRequest, res: NextApiResponse): void {
     // Start bot state sync if not already running
     startBotStateSync();
 
@@ -85,3 +50,5 @@ export default async function handler(
     res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
     res.status(200).send(metrics);
 }
+
+export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });

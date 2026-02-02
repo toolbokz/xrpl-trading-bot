@@ -5,7 +5,9 @@ import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'rec
 import { Activity, AlertTriangle, Circle, Pause, Play, Shield, Zap, Wallet2 } from 'lucide-react';
 import { Badge, Pill, StatCard } from '../components/ui';
 import clsx from 'clsx';
-import { tradingPairs, TradingPairOption } from '../lib/tradingPairs';
+import { TRADING_PAIRS, TradingPair, findPair } from '../lib/tradingPairs';
+import { PairControl, PriceSummary } from '../components/PairSelector';
+import { PairSummary, formatPrice, formatSpreadBps, getLiquidityColor, getNetworkColor } from '../lib/apiClient';
 import { CandleChart } from '../components/CandleChart';
 import { CandlestickData, UTCTimestamp } from 'lightweight-charts';
 
@@ -308,7 +310,7 @@ export default function Page() {
         };
     }, [selectedPairKey, fetchPrice, buildInitialCandles, setBot]);
 
-    const currentPair = useMemo<TradingPairOption | undefined>(() => tradingPairs.find((p) => p.key === selectedPairKey), [selectedPairKey]);
+    const currentPair = useMemo<TradingPair | undefined>(() => findPair(selectedPairKey), [selectedPairKey]);
 
     const heartbeatClass = useMemo(
         () =>
@@ -338,7 +340,7 @@ export default function Page() {
         }
     }, [updateStatus]);
 
-    const fetchWalletInfo = useCallback(async (pair?: TradingPairOption) => {
+    const fetchWalletInfo = useCallback(async (pair?: TradingPair) => {
         try {
             // Build query params if pair is provided
             const params = new URLSearchParams();
@@ -587,7 +589,7 @@ export default function Page() {
             if (res.ok) {
                 setPairMessage(`Trading pair set to ${pairKey}`);
                 // Update liquidity hint from selected pair
-                const pair = tradingPairs.find((p) => p.key === pairKey);
+                const pair = findPair(pairKey);
                 if (pair) {
                     setBot((prev) => ({
                         ...prev,
@@ -731,13 +733,21 @@ export default function Page() {
                                     className="w-full rounded-lg bg-slate-900 border border-white/10 px-3 py-2 text-slate-100 focus:outline-none focus:ring focus:ring-sky-500"
                                 >
                                     <option value="" disabled>Select a predefined pair</option>
-                                    {tradingPairs.map((pair) => (
+                                    {TRADING_PAIRS.map((pair) => (
                                         <option key={pair.key} value={pair.key}>
                                             {pair.key} — {pair.description}
                                         </option>
                                     ))}
                                 </select>
                                 {pairMessage && <div className="text-xs text-slate-400 pt-1">{pairMessage}</div>}
+                                {/* Live price summary from API */}
+                                {selectedPairKey && (
+                                    <PriceSummary
+                                        pairKey={selectedPairKey}
+                                        refreshInterval={5000}
+                                        className="mt-2 p-2 rounded-lg bg-slate-900/50"
+                                    />
+                                )}
                                 {currentPair && (
                                     <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-300">
                                         <div className="rounded-lg bg-slate-900/80 border border-white/5 px-2 py-2">
@@ -749,6 +759,15 @@ export default function Page() {
                                             <div className="text-slate-400">Quote</div>
                                             <div className="text-slate-100 font-semibold">{currentPair.quote.currency}</div>
                                             {currentPair.quote.issuer && <div className="text-[11px] text-slate-400 break-all">{currentPair.quote.issuer}</div>}
+                                        </div>
+                                        {/* Network and liquidity badges */}
+                                        <div className="col-span-2 flex gap-2">
+                                            <span className={clsx('px-2 py-0.5 rounded text-xs font-medium', getLiquidityColor(currentPair.liquidity))}>
+                                                {currentPair.liquidity} liquidity
+                                            </span>
+                                            <span className={clsx('px-2 py-0.5 rounded text-xs font-medium', getNetworkColor(currentPair.network))}>
+                                                {currentPair.network}
+                                            </span>
                                         </div>
                                     </div>
                                 )}

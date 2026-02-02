@@ -1,9 +1,31 @@
 import { logger } from './analytics/logger';
 import { loadConfig } from './config';
 import { TradingRuntime } from './runtime/tradingRuntime';
+import { enforceLocalOnly, getLocalOnlyStatus, CloudExecutionBlockedError, RemoteExecutionBlockedError } from './security/localOnly';
+import { BOT_LOOP_MIN_DELAY_MS } from './utils/sleep';
 
 async function main(): Promise<void> {
-    const runtime = new TradingRuntime(loadConfig());
+    // Security gate: enforce local-only execution at startup
+    logger.info('Performing local-only security check...');
+
+    try {
+        enforceLocalOnly('CLI');
+    } catch (err) {
+        if (err instanceof CloudExecutionBlockedError || err instanceof RemoteExecutionBlockedError) {
+            logger.error({ err: (err as Error).message }, '🚫 SECURITY: Remote/cloud execution blocked');
+            logger.error('This bot is locked to localhost for safety.');
+            logger.error('Set BOT_LOCAL_ONLY=true to run locally, or BOT_ALLOW_REMOTE=true (dangerous) to override.');
+            process.exit(1);
+        }
+        throw err;
+    }
+
+    const status = getLocalOnlyStatus();
+    logger.info({ localOnly: status.isLocal, reason: status.reason }, '✅ Local-only security check passed');
+
+    const config = loadConfig();
+    const runtime = new TradingRuntime(config);
+
     let interval: ReturnType<typeof setInterval> | undefined;
     let isShuttingDown = false;
 
@@ -55,6 +77,9 @@ async function main(): Promise<void> {
     try {
         await runtime.start();
 
+        // Use minimum loop delay from config (default 4s, min BOT_LOOP_MIN_DELAY_MS)
+        const loopDelayMs = Math.max(4_000, BOT_LOOP_MIN_DELAY_MS);
+
         const runLoop = async () => {
             try {
                 await runtime.tick();
@@ -63,9 +88,9 @@ async function main(): Promise<void> {
             }
         };
 
-        interval = setInterval(runLoop, 4_000);
+        interval = setInterval(runLoop, loopDelayMs);
 
-        logger.info('Trading bot started, press Ctrl+C to stop');
+        logger.info({ loopDelayMs }, 'Trading bot started, press Ctrl+C to stop');
     } catch (err) {
         logger.error({ err }, 'Startup failure');
         if (interval) clearInterval(interval);

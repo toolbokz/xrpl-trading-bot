@@ -1,10 +1,26 @@
-import { Client, Wallet, TransactionMetadata } from 'xrpl';
+import { Client, Wallet, TransactionMetadata, Amount, IssuedCurrencyAmount, dropsToXrp } from 'xrpl';
 import { ExecutionResult, OrderBookState } from '../utils/types';
 import { RiskEngine } from '../risk/riskEngine';
 import { StrategyConfig, TradingPair } from '../config';
 import { logger } from '../analytics/logger';
 import { tradeHistory } from '../analytics/tradeHistory';
 import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './offerBuilder';
+
+/**
+ * Represents the actual amounts filled by an OfferCreate transaction.
+ */
+export interface PartialFillResult {
+    /** Amount of TakerGets actually delivered */
+    takerGotAmount: number;
+    /** Amount of TakerPays actually delivered */
+    takerPaidAmount: number;
+    /** Percentage of the original order filled (0-1) */
+    fillRatio: number;
+    /** Effective price achieved (takerPaidAmount / takerGotAmount) */
+    effectivePrice: number;
+    /** Slippage from expected price in basis points (can be negative for better execution) */
+    slippageBps: number;
+}
 
 export interface OfferParams {
     side: 'buy' | 'sell';
@@ -212,6 +228,151 @@ export class OfferExecutor {
     }
 
     /**
+     * Convert an XRPL Amount to a numeric value.
+     * XRP amounts are in drops (strings), issued currency amounts are objects.
+     */
+    private amountToNumber(amount: Amount): number {
+        if (typeof amount === 'string') {
+            // XRP in drops - dropsToXrp returns a number
+            return dropsToXrp(amount);
+        }
+        // IssuedCurrencyAmount has currency, issuer, and value fields
+        if (typeof amount === 'object' && 'value' in amount) {
+            return parseFloat((amount as IssuedCurrencyAmount).value);
+        }
+        return 0;
+    }
+
+    /**
+     * Parse transaction metadata to extract actual fill amounts.
+     * XRPL OfferCreate transactions may partially fill, and the actual amounts
+     * are found in the AffectedNodes of the transaction metadata.
+     * 
+     * @param meta - Transaction metadata from submitAndWait result
+     * @param originalTakerGets - Original TakerGets amount from the transaction
+     * @param originalTakerPays - Original TakerPays amount from the transaction
+     * @param expectedPrice - Expected execution price for slippage calculation
+     * @returns PartialFillResult with actual fill amounts and slippage
+     */
+    parsePartialFill(
+        meta: TransactionMetadata | undefined,
+        originalTakerGets: Amount,
+        originalTakerPays: Amount,
+        expectedPrice?: number
+    ): PartialFillResult {
+        const originalGetsNum = this.amountToNumber(originalTakerGets);
+        const originalPaysNum = this.amountToNumber(originalTakerPays);
+
+        // Default to full fill assumption if no metadata
+        if (!meta || typeof meta === 'string' || !meta.AffectedNodes) {
+            const effectivePrice = originalGetsNum > 0 ? originalPaysNum / originalGetsNum : 0;
+            const slippageBps = expectedPrice && expectedPrice > 0
+                ? Math.round(((effectivePrice - expectedPrice) / expectedPrice) * 10000)
+                : 0;
+            
+            return {
+                takerGotAmount: originalGetsNum,
+                takerPaidAmount: originalPaysNum,
+                fillRatio: 1,
+                effectivePrice,
+                slippageBps,
+            };
+        }
+
+        // Track delivered amounts from balance changes
+        let takerGotAmount = 0;
+        let takerPaidAmount = 0;
+
+        // Look through AffectedNodes for balance changes that indicate fills
+        // For OfferCreate, we look for:
+        // - ModifiedNode on Offer entries that were consumed
+        // - CreatedNode/DeletedNode for the offer itself
+        // - Balance changes in AccountRoot or RippleState (trustline)
+        
+        for (const node of meta.AffectedNodes) {
+            // Check for Offer nodes that were consumed (filled against)
+            if ('ModifiedNode' in node && node.ModifiedNode.LedgerEntryType === 'Offer') {
+                const modified = node.ModifiedNode;
+                const prev = modified.PreviousFields;
+                const final = modified.FinalFields;
+                
+                if (prev && final) {
+                    // The difference in TakerGets/TakerPays shows how much was consumed
+                    const prevGets = prev.TakerGets ? this.amountToNumber(prev.TakerGets as Amount) : 0;
+                    const finalGets = final.TakerGets ? this.amountToNumber(final.TakerGets as Amount) : 0;
+                    const prevPays = prev.TakerPays ? this.amountToNumber(prev.TakerPays as Amount) : 0;
+                    const finalPays = final.TakerPays ? this.amountToNumber(final.TakerPays as Amount) : 0;
+                    
+                    // Amount consumed = previous - final
+                    takerGotAmount += Math.max(0, prevGets - finalGets);
+                    takerPaidAmount += Math.max(0, prevPays - finalPays);
+                }
+            }
+            
+            // Check for Offer nodes that were fully consumed (deleted)
+            if ('DeletedNode' in node && node.DeletedNode.LedgerEntryType === 'Offer') {
+                const deleted = node.DeletedNode;
+                const prev = deleted.PreviousFields;
+                const final = deleted.FinalFields;
+                
+                // For deleted nodes, final fields show what remained before deletion
+                // We need previous fields to know the starting amount
+                if (prev) {
+                    const prevGets = prev.TakerGets ? this.amountToNumber(prev.TakerGets as Amount) : 0;
+                    const prevPays = prev.TakerPays ? this.amountToNumber(prev.TakerPays as Amount) : 0;
+                    
+                    takerGotAmount += prevGets;
+                    takerPaidAmount += prevPays;
+                } else if (final) {
+                    // No previous fields means entire offer was consumed
+                    const finalGets = final.TakerGets ? this.amountToNumber(final.TakerGets as Amount) : 0;
+                    const finalPays = final.TakerPays ? this.amountToNumber(final.TakerPays as Amount) : 0;
+                    
+                    takerGotAmount += finalGets;
+                    takerPaidAmount += finalPays;
+                }
+            }
+        }
+
+        // If we couldn't determine fill from metadata, assume full fill
+        if (takerGotAmount === 0 && takerPaidAmount === 0) {
+            takerGotAmount = originalGetsNum;
+            takerPaidAmount = originalPaysNum;
+        }
+
+        // Calculate fill ratio based on the "gets" side (what we receive)
+        const fillRatio = originalGetsNum > 0 ? Math.min(1, takerGotAmount / originalGetsNum) : 0;
+        
+        // Calculate effective price (what we paid per unit received)
+        const effectivePrice = takerGotAmount > 0 ? takerPaidAmount / takerGotAmount : 0;
+        
+        // Calculate slippage in basis points
+        // Positive = worse execution, negative = better execution
+        const slippageBps = expectedPrice && expectedPrice > 0
+            ? Math.round(((effectivePrice - expectedPrice) / expectedPrice) * 10000)
+            : 0;
+
+        logger.debug({
+            originalGetsNum,
+            originalPaysNum,
+            takerGotAmount,
+            takerPaidAmount,
+            fillRatio,
+            effectivePrice,
+            expectedPrice,
+            slippageBps,
+        }, 'Parsed partial fill result');
+
+        return {
+            takerGotAmount,
+            takerPaidAmount,
+            fillRatio,
+            effectivePrice,
+            slippageBps,
+        };
+    }
+
+    /**
      * Wraps a promise with a timeout.
      * Returns the promise result or rejects with timeout error.
      */
@@ -305,23 +466,61 @@ export class OfferExecutor {
             }
             this.risk.resetFailures();
 
-            // Record successful trade
+            // Parse actual fill amounts from transaction metadata (P2-8: Partial fill handling)
+            const meta = res.result.meta as TransactionMetadata | undefined;
+            const fillResult = this.parsePartialFill(
+                meta,
+                prepared.TakerGets as Amount,
+                prepared.TakerPays as Amount,
+                intent?.expectedPrice
+            );
+
+            // Log slippage metrics for monitoring
+            if (fillResult.slippageBps !== 0) {
+                logger.info({
+                    pair: pairSymbol,
+                    expectedPrice: intent?.expectedPrice,
+                    effectivePrice: fillResult.effectivePrice,
+                    slippageBps: fillResult.slippageBps,
+                    fillRatio: fillResult.fillRatio,
+                }, 'Trade execution slippage');
+            }
+
+            // Determine trade status based on fill ratio
+            let status: 'FILLED' | 'PARTIAL' = 'FILLED';
+            if (fillResult.fillRatio < 1) {
+                status = 'PARTIAL';
+                logger.warn({
+                    pair: pairSymbol,
+                    fillRatio: fillResult.fillRatio,
+                    takerGotAmount: fillResult.takerGotAmount,
+                    takerPaidAmount: fillResult.takerPaidAmount,
+                }, 'Partial fill detected');
+            }
+
+            // Record trade with actual fill amounts
             if (intent) {
                 tradeHistory.recordTrade({
                     pair: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
                     side: intent.side as 'BUY' | 'SELL',
-                    price: intent.price,
+                    price: fillResult.effectivePrice || intent.price,
                     amount: intent.amount,
-                    filled: intent.amount, // IOC orders either fill fully or not at all in most cases
+                    filled: fillResult.takerGotAmount || intent.amount, // Use actual fill amount
                     fee: 0.000012, // Typical XRPL transaction fee
                     pnl: 0, // P&L calculated separately by strategy
                     hash: res.result.hash,
                     paper: false,
-                    status: 'FILLED',
+                    status,
+                    slippageBps: fillResult.slippageBps,
                 });
             }
 
-            return { accepted: true, hash: res.result.hash, txJSON: (res.result as any).tx_json };
+            return {
+                accepted: true,
+                hash: res.result.hash,
+                txJSON: (res.result as any).tx_json,
+                fillResult, // Include fill details in result
+            };
         } catch (err: any) {
             logger.error({ err, txType: tx?.TransactionType, tx, pair: pairSymbol }, 'XRPL submission failed');
             this.risk.registerFailure();

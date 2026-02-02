@@ -2,7 +2,8 @@ import { Client, SubscribeRequest, BookOffer, LedgerStreamResponse, TransactionS
 import EventEmitter from 'events';
 import { XRPLConfig, TradingPair } from '../config';
 import { logger } from '../analytics/logger';
-import { nextBackoff, BackoffState } from '../utils/backoff';
+import { nextBackoffWithJitter, BackoffState } from '../utils/backoff';
+import { sleep } from '../utils/sleep';
 import { getWalletAddress } from './wallet';
 import { toXrplCurrency } from './currency';
 
@@ -191,10 +192,16 @@ export class XRPLWebSocket extends EventEmitter {
             return;
         }
         this.reconnects += 1;
-        this.backoff = nextBackoff(this.backoff, this.cfg.initialReconnectDelayMs, this.cfg.maxReconnectDelayMs);
+        // Use jittered backoff to prevent reconnect storms (cap at 15s)
+        this.backoff = nextBackoffWithJitter(
+            this.backoff,
+            this.cfg.initialReconnectDelayMs,
+            Math.min(this.cfg.maxReconnectDelayMs, 15_000),
+            0.2 // ±20% jitter
+        );
         this.emit('reconnect', this.reconnects);
-        logger.warn({ reconnects: this.reconnects, delay: this.backoff.delayMs }, 'XRPL reconnecting');
-        await new Promise((resolve) => setTimeout(resolve, this.backoff.delayMs));
+        logger.warn({ reconnects: this.reconnects, delay: this.backoff.delayMs }, 'XRPL reconnecting with jittered backoff');
+        await sleep(this.backoff.delayMs);
         this.client = new Client(this.cfg.endpoint, { connectionTimeout: 10_000 });
         this.reconnecting = false;
         await this.establish();
@@ -252,11 +259,11 @@ export const subscribeOrderBooks = async (
         const quoteNeedsIssuer = pair.quote.toUpperCase() !== 'XRP';
         const issuer = (pair.issuer ?? process.env.TRADE_ISSUER ?? '').trim();
         if ((baseNeedsIssuer || quoteNeedsIssuer) && (!issuer || !isValidClassicAddress(issuer))) {
-            console.warn('[subscribeOrderBooks] Skipping pair with invalid issuer', pair);
+            logger.warn({ pair }, '[subscribeOrderBooks] Skipping pair with invalid issuer');
             continue;
         }
         if ((baseNeedsIssuer || quoteNeedsIssuer) && botAddress && issuer === botAddress) {
-            console.warn('[subscribeOrderBooks] Skipping pair because issuer is bot wallet', { pair, botAddress });
+            logger.warn({ pair, botAddress }, '[subscribeOrderBooks] Skipping pair because issuer is bot wallet');
             continue;
         }
 
@@ -286,9 +293,9 @@ export const subscribeOrderBooks = async (
             logBookRequest('subscribe-legacy/bid', baseCur, quoteCur);
             logBookRequest('subscribe-legacy/ask', quoteCur, baseCur);
 
-            console.info('[subscribeOrderBooks] Prepared books for pair', pair);
+            logger.info({ pair }, '[subscribeOrderBooks] Prepared books for pair');
         } catch (err) {
-            console.warn('[subscribeOrderBooks] Skipping pair due to formatting error', { pair, err });
+            logger.warn({ pair, err }, '[subscribeOrderBooks] Skipping pair due to formatting error');
         }
     }
 
@@ -310,15 +317,15 @@ export const subscribeOrderBooks = async (
     }
 
     try {
-        console.info('[subscribeOrderBooks] Subscribing', { books: books.length, streams: req.streams });
+        logger.info({ booksCount: books.length, streams: req.streams }, '[subscribeOrderBooks] Subscribing');
         const result = await client.request(req);
-        console.info('[subscribeOrderBooks] Subscription acknowledged');
+        logger.info('[subscribeOrderBooks] Subscription acknowledged');
         return result;
     } catch (err) {
         if (err instanceof RippledError) {
-            console.error('[subscribeOrderBooks] RippledError', { error: err.data || err.message });
+            logger.error({ error: (err as RippledError).data || (err as Error).message }, '[subscribeOrderBooks] RippledError');
         } else {
-            console.error('[subscribeOrderBooks] Subscription failed', err);
+            logger.error({ err }, '[subscribeOrderBooks] Subscription failed');
         }
         throw err;
     }

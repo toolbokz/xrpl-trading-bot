@@ -1,26 +1,32 @@
 import type { NextApiResponse } from 'next';
-import { withBotAuth, AuthenticatedRequest } from '../../../lib/botAuth';
+import { withLocalApi, LocalRequest, logSensitiveAction } from '../../../lib/localApi';
 import { botController } from '../../../lib/botController';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
+import { logger } from '../../../../src/analytics/logger';
 
 export const config = {
     api: { bodyParser: false },
 };
 
-async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
+async function handler(req: LocalRequest, res: NextApiResponse) {
     try {
         ensureRuntimeHooks();
+        const previousState = botController.getState();
         const state = await botController.kill();
-        res.status(200).json({ state, message: 'Bot has been stopped' });
-    } catch (err: any) {
-        res.status(400).json({ error: err?.message || 'Failed to stop bot', state: botController.getState() });
+
+        // Audit log sensitive action
+        await logSensitiveAction(req.requestId, 'bot:kill', { previousState });
+
+        res.status(200).json({ state, message: 'Bot has been stopped', requestId: req.requestId });
+    } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to stop bot';
+        logger.error({ err }, '[API /bot/kill] Error');
+        res.status(400).json({
+            error: errorMessage,
+            state: botController.getState(),
+            requestId: req.requestId,
+        });
     }
 }
 
-export default withBotAuth(handler, {
-    permission: 'bot:kill',
-    methods: ['POST'],
-});
+export default withLocalApi(handler, { methods: ['POST'] });

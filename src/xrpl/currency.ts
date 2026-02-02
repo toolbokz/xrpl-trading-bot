@@ -1,4 +1,5 @@
 import { isValidClassicAddress } from 'xrpl';
+import { logger } from '../analytics/logger';
 
 const classicAddressPattern = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;
 const is160BitHex = /^[A-F0-9]{40}$/i;
@@ -62,7 +63,7 @@ export const toXrplCurrency = (input: XrplCurrency | { currency: string; issuer?
     }
     if (!normalized.issuer) {
         const msg = `Missing issuer for issued currency: ${normalized.currency}`;
-        console.error(msg, { input });
+        logger.error({ input }, msg);
         throw new Error(msg);
     }
     return { currency: normalized.currency, issuer: normalized.issuer };

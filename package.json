@@ -2,21 +2,25 @@
     "name": "xrpl-trading-bot",
     "version": "0.1.0",
     "description": "Production-grade XRPL trading bot with risk controls and paper trading mode",
+    "private": true,
     "main": "dist/index.js",
     "type": "commonjs",
     "scripts": {
         "build:backend": "tsc -p tsconfig.json",
         "build:frontend": "TAILWIND_CONFIG=tailwind.config.js next build web",
         "build": "npm run build:backend && npm run build:frontend",
-        "start:backend": "node dist/index.js",
-        "start:frontend": "TAILWIND_CONFIG=tailwind.config.js next start web",
-        "start": "concurrently -k -n backend,frontend \"npm run start:backend\" \"npm run start:frontend\"",
-        "dev:backend": "ts-node --transpile-only src/index.ts",
-        "dev:frontend": "TAILWIND_CONFIG=tailwind.config.js next dev web",
-        "dev": "concurrently -k -n backend,frontend \"npm run dev:backend\" \"npm run dev:frontend\"",
+        "start:backend": "BOT_LOCAL_ONLY=true node dist/index.js",
+        "start:frontend": "BOT_LOCAL_ONLY=true node web/server.js",
+        "start": "BOT_LOCAL_ONLY=true concurrently -k -n backend,frontend \"npm run start:backend\" \"npm run start:frontend\"",
+        "dev:backend": "BOT_LOCAL_ONLY=true ts-node --transpile-only src/index.ts",
+        "dev:frontend": "TAILWIND_CONFIG=tailwind.config.js next dev web -H 127.0.0.1",
+        "dev": "BOT_LOCAL_ONLY=true concurrently -k -n backend,frontend \"npm run dev:backend\" \"npm run dev:frontend\"",
+        "dashboard": "BOT_LOCAL_ONLY=true node web/server.js",
         "lint": "next lint web --no-inline-config",
         "faucet": "ts-node --transpile-only scripts/createTestnetWallet.ts",
-        "test": "vitest"
+        "test": "vitest",
+        "clean": "rm -rf dist web/.next node_modules web/node_modules",
+        "reinstall": "npm run clean && npm install"
     },
     "engines": {
         "node": ">=20"

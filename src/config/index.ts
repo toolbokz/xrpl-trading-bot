@@ -53,6 +53,16 @@ export interface StrategyConfig {
     orderBookStaleMs: number;
 }
 
+/**
+ * CPU Safety Configuration
+ * Environment variables:
+ * - BOT_LOOP_MIN_DELAY_MS: Minimum delay between loop iterations (default: 50, min: 25)
+ * - STRATEGY_MAX_TPS: Max strategy ticks per second (default: 10)
+ * - CPU_MAX_PERCENT: Max sustained CPU % before pausing (default: 50)
+ * - CPU_MAX_DURATION_MS: Duration before CPU threshold triggers pause (default: 5000)
+ * - LOG_MAX_PER_SEC: Max log messages per key per second (default: 10)
+ */
+
 export interface AppConfig {
     xrpl: XRPLConfig;
     tradingPair: TradingPair;
