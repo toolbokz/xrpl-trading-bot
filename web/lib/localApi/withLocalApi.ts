@@ -96,14 +96,19 @@ export function jsonError(
  * Returns null if allowed, or error details if rejected.
  */
 export function isLocalRequest(req: NextApiRequest): { allowed: true } | { allowed: false; error: string; reason: string } {
-    // Check for proxy headers (reject proxied requests)
-    const proxyCheck = isProxiedRequest(req);
-    if (proxyCheck.proxied) {
-        return {
-            allowed: false,
-            error: 'Proxied requests not allowed',
-            reason: `Request contains ${proxyCheck.header} header indicating proxy`,
-        };
+    // In dev mode, skip proxy header checks (Next.js dev server adds x-forwarded-for)
+    const isDevMode = process.env.BOT_API_DEV_MODE === 'true';
+
+    // Check for proxy headers (reject proxied requests in production)
+    if (!isDevMode) {
+        const proxyCheck = isProxiedRequest(req);
+        if (proxyCheck.proxied) {
+            return {
+                allowed: false,
+                error: 'Proxied requests not allowed',
+                reason: `Request contains ${proxyCheck.header} header indicating proxy`,
+            };
+        }
     }
 
     // Check client IP

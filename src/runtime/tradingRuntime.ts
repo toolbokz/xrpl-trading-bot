@@ -1,6 +1,6 @@
 import { Wallet, isValidClassicAddress, Client } from 'xrpl';
 import { AppConfig, TradingPair, loadConfig } from '../config';
-import { TRADING_PAIRS, isValidPairKey, LegacyTradingPair } from '../config/tradingPairs';
+import { TRADING_PAIRS, isValidPairKey } from '../config/tradingPairs';
 import { logger } from '../analytics/logger';
 import { XRPLWebSocket } from '../xrpl/client';
 import { OrderBookTracker } from '../market/orderBookTracker';

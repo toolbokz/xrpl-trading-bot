@@ -102,6 +102,15 @@ export const loadConfig = (): AppConfig => {
     const paperTrading = toBool(process.env.PAPER_TRADING as EnvBool, true);
     const enableTestnetFaucet = toBool(process.env.ENABLE_TESTNET_FAUCET as EnvBool, false);
 
+    // Network-specific wallet credentials
+    const isTestnet = network.toLowerCase() === 'testnet';
+    const walletSeed = isTestnet
+        ? process.env.XRPL_SEED_TESTNET || process.env.XRPL_SEED || process.env.WALLET_SEED
+        : process.env.XRPL_SEED_MAINNET || process.env.XRPL_SEED || process.env.WALLET_SEED;
+    const walletSecretNumbers = isTestnet
+        ? process.env.XRPL_SECRET_NUMBERS_TESTNET || process.env.XRPL_SECRET_NUMBERS
+        : process.env.XRPL_SECRET_NUMBERS_MAINNET || process.env.XRPL_SECRET_NUMBERS;
+
     const baseCurrency = process.env.TRADE_BASE_CURRENCY || 'XRP';
     const quoteCurrency = process.env.TRADE_QUOTE_CURRENCY || 'NZD';
     const legacyIssuer = process.env.TRADE_ISSUER || '';
@@ -153,8 +162,8 @@ export const loadConfig = (): AppConfig => {
         xrpl,
         tradingPair,
         tradingPairs: [tradingPair],
-        walletSeed: process.env.XRPL_SEED || process.env.WALLET_SEED,
-        walletSecretNumbers: process.env.XRPL_SECRET_NUMBERS,
+        walletSeed,
+        walletSecretNumbers,
         enableTestnetFaucet,
         paperTrading,
         risk,
