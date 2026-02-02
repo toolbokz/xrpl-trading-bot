@@ -373,7 +373,8 @@ describe('Log-Scale Detection', () => {
         test('should be unsafe for data with zero/negative values', () => {
             const data = createTestDataset([100, 0, 120]);
             // Manually set a zero value
-            data[1].low = 0;
+            const item = data[1];
+            if (item) item.low = 0;
             expect(isScaleTransitionSafe(data)).toBe(false);
         });
     });
@@ -523,8 +524,9 @@ describe('Heikin-Ashi', () => {
 
             // Each HA candle should have original values
             haData.forEach((candle, i) => {
-                expect(candle.originalOpen).toBe(data[i].open);
-                expect(candle.originalClose).toBe(data[i].close);
+                const original = data[i];
+                expect(candle.originalOpen).toBe(original?.open);
+                expect(candle.originalClose).toBe(original?.close);
             });
         });
 

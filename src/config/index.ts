@@ -14,11 +14,11 @@ type EnvNumber = string | undefined;
 
 export interface TradingPair {
     baseCurrency: string; // e.g., XRP
-    baseIssuer?: string; // r-address for issued currency (base)
+    baseIssuer?: string | undefined; // r-address for issued currency (base)
     quoteCurrency: string; // e.g., USD
-    quoteIssuer?: string; // r-address for issued currency (quote)
-    issuer?: string; // legacy single-issuer fallback
-    description?: string;
+    quoteIssuer?: string | undefined; // r-address for issued currency (quote)
+    issuer?: string | undefined; // legacy single-issuer fallback
+    description?: string | undefined;
 }
 
 export interface XRPLConfig {
@@ -49,14 +49,16 @@ export interface StrategyConfig {
     ammArbMinProfitBps: number;
     pathArbMinProfitBps: number;
     maxSlippageBps: number;
+    /** Order book staleness threshold in milliseconds (default: 5000) */
+    orderBookStaleMs: number;
 }
 
 export interface AppConfig {
     xrpl: XRPLConfig;
     tradingPair: TradingPair;
-    tradingPairs?: TradingPair[];
-    walletSeed?: string;
-    walletSecretNumbers?: string;
+    tradingPairs: TradingPair[];
+    walletSeed?: string | undefined;
+    walletSecretNumbers?: string | undefined;
     enableTestnetFaucet: boolean;
     paperTrading: boolean;
     risk: RiskConfig;
@@ -124,6 +126,7 @@ export const loadConfig = (): AppConfig => {
         ammArbMinProfitBps: toNumber(process.env.AMM_ARB_MIN_PROFIT_BPS, 15),
         pathArbMinProfitBps: toNumber(process.env.PATH_ARB_MIN_PROFIT_BPS, 20),
         maxSlippageBps: toNumber(process.env.MAX_SLIPPAGE_BPS, 50),
+        orderBookStaleMs: toNumber(process.env.ORDERBOOK_STALE_MS, 5_000), // Default 5 seconds
     };
 
     const xrpl: XRPLConfig = {

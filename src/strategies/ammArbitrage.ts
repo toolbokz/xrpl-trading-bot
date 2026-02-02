@@ -21,12 +21,23 @@ export class AMMArbitrageStrategy implements Strategy {
         const { orderBook } = ctx;
         if (!orderBook.bids.length || !orderBook.asks.length) return;
 
-        const bestBid = orderBook.bids[0].price;
-        const bestAsk = orderBook.asks[0].price;
+        const firstBid = orderBook.bids[0];
+        const firstAsk = orderBook.asks[0];
+        if (!firstBid || !firstAsk) return;
+
+        const bestBid = firstBid.price;
+        const bestAsk = firstAsk.price;
+
+        const baseIssuer = this.pair.baseCurrency.toUpperCase() === 'XRP'
+            ? undefined
+            : (this.pair.baseIssuer ?? this.pair.issuer);
+        const quoteIssuer = this.pair.quoteCurrency.toUpperCase() === 'XRP'
+            ? undefined
+            : (this.pair.quoteIssuer ?? this.pair.issuer);
 
         const ammInfo = await this.amm.fetchAMMInfo(
-            { currency: this.pair.baseCurrency, issuer: this.pair.baseIssuer ?? this.pair.issuer },
-            { currency: this.pair.quoteCurrency, issuer: this.pair.quoteIssuer ?? this.pair.issuer }
+            baseIssuer ? { currency: this.pair.baseCurrency, issuer: baseIssuer } : { currency: 'XRP' },
+            quoteIssuer ? { currency: this.pair.quoteCurrency, issuer: quoteIssuer } : { currency: 'XRP' }
         );
         if (!ammInfo || !ammInfo.tradingFee || !Number.isFinite(ammInfo.tradingFee)) return;
         if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk) || bestBid <= 0 || bestAsk <= 0) return;

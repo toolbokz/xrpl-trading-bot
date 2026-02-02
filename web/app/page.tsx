@@ -112,7 +112,9 @@ const useMockData = () => {
     useEffect(() => {
         const id = setInterval(() => {
             setChart((prev) => {
-                const next = [...prev.slice(1), { t: prev[prev.length - 1].t + 1, p: prev[prev.length - 1].p + (Math.random() - 0.5) * 0.002 }];
+                const lastItem = prev[prev.length - 1];
+                if (!lastItem) return prev;
+                const next = [...prev.slice(1), { t: lastItem.t + 1, p: lastItem.p + (Math.random() - 0.5) * 0.002 }];
                 return next;
             });
         }, 1500);
@@ -271,6 +273,8 @@ export default function Page() {
             // Add new candle based on real price
             setCandleData((prev) => {
                 const last = prev[prev.length - 1];
+                if (!last) return prev;
+
                 const lastTime = typeof last.time === 'number' ? last.time : Number(last.time);
                 const now = Math.floor(Date.now() / 1000);
 
@@ -278,17 +282,19 @@ export default function Page() {
                 if (now - lastTime < 30) {
                     // Update current candle's close/high/low
                     const updated = [...prev];
-                    const current = { ...updated[updated.length - 1] };
+                    const currentCandle = updated[updated.length - 1];
+                    if (!currentCandle) return prev;
+                    const current = { ...currentCandle };
                     current.close = price;
-                    current.high = Math.max(current.high, price);
-                    current.low = Math.min(current.low, price);
+                    current.high = Math.max(current.high ?? price, price);
+                    current.low = Math.min(current.low ?? price, price);
                     updated[updated.length - 1] = current;
                     return updated;
                 }
 
                 const nextTime = (lastTime + 30) as UTCTimestamp;
                 const volatility = price * 0.001;
-                const open = last.close;
+                const open = last.close ?? price;
                 const close = price;
                 const high = Math.max(open, close) + Math.random() * volatility;
                 const low = Math.min(open, close) - Math.random() * volatility;

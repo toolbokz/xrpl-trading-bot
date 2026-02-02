@@ -66,19 +66,30 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
         const baseIsXRP = baseCurrency.toUpperCase() === 'XRP';
         const quoteIsXRP = quoteCurrency.toUpperCase() === 'XRP';
 
-        const baseAmount = baseIsXRP
-            ? { currency: 'XRP' }
-            : { currency: currencyToHex(baseCurrency), issuer: baseIssuer };
+        // Type-safe currency amount construction
+        type CurrencyAmount = { currency: string; issuer?: string | undefined };
 
-        const quoteAmount = quoteIsXRP
-            ? { currency: 'XRP' }
-            : { currency: currencyToHex(quoteCurrency), issuer: quoteIssuer };
+        let baseAmount: CurrencyAmount;
+        if (baseIsXRP) {
+            baseAmount = { currency: 'XRP' };
+        } else {
+            baseAmount = { currency: currencyToHex(baseCurrency) };
+            if (baseIssuer) baseAmount.issuer = baseIssuer;
+        }
+
+        let quoteAmount: CurrencyAmount;
+        if (quoteIsXRP) {
+            quoteAmount = { currency: 'XRP' };
+        } else {
+            quoteAmount = { currency: currencyToHex(quoteCurrency) };
+            if (quoteIssuer) quoteAmount.issuer = quoteIssuer;
+        }
 
         // Get asks (selling base for quote)
         const asksRes = await client.request({
             command: 'book_offers',
-            taker_gets: baseAmount,
-            taker_pays: quoteAmount,
+            taker_gets: baseAmount as any,
+            taker_pays: quoteAmount as any,
             ledger_index: 'validated',
             limit: 1,
         });
@@ -86,8 +97,8 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
         // Get bids (buying base with quote)
         const bidsRes = await client.request({
             command: 'book_offers',
-            taker_gets: quoteAmount,
-            taker_pays: baseAmount,
+            taker_gets: quoteAmount as any,
+            taker_pays: baseAmount as any,
             ledger_index: 'validated',
             limit: 1,
         });
@@ -95,9 +106,13 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
         let askPrice = 0;
         let bidPrice = 0;
 
+        // Type guard for book_offers response
+        const getOffers = (res: any) => res.result?.offers as Array<any> | undefined;
+
         // Calculate ask price (price to buy base)
-        if (asksRes.result.offers?.length > 0) {
-            const offer = asksRes.result.offers[0];
+        const askOffers = getOffers(asksRes);
+        if (askOffers && askOffers.length > 0) {
+            const offer = askOffers[0];
             const baseQty = baseIsXRP
                 ? Number(offer.TakerGets) / 1_000_000
                 : Number((offer.TakerGets as any).value);
@@ -110,8 +125,9 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
         }
 
         // Calculate bid price (price to sell base)
-        if (bidsRes.result.offers?.length > 0) {
-            const offer = bidsRes.result.offers[0];
+        const bidOffers = getOffers(bidsRes);
+        if (bidOffers && bidOffers.length > 0) {
+            const offer = bidOffers[0];
             const quoteQty = quoteIsXRP
                 ? Number(offer.TakerGets) / 1_000_000
                 : Number((offer.TakerGets as any).value);

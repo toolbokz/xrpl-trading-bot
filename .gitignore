@@ -84,3 +84,6 @@ out/
 # Misc
 *.pem
 .vercel
+# Circuit breaker persistence data
+data/
+*.json.bak

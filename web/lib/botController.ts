@@ -1,3 +1,17 @@
+import pino from 'pino';
+
+const pinoOptions = process.env.NODE_ENV !== 'production'
+    ? {
+        level: process.env.LOG_LEVEL || 'info',
+        transport: {
+            target: 'pino-pretty',
+            options: { colorize: true, translateTime: 'SYS:standard' },
+        },
+    }
+    : { level: process.env.LOG_LEVEL || 'info' };
+
+const logger = pino(pinoOptions).child({ module: 'BotController' });
+
 export type BotState = 'RUNNING' | 'PAUSED' | 'STOPPED';
 
 export type BotHooks = {
@@ -28,12 +42,12 @@ class BotController {
             await this.hooks.start?.();
             this.startLoop();
             this.state = 'RUNNING';
-            console.log('[BotController] Bot is running');
+            logger.info({ state: this.state }, 'Bot is running');
             return this.state;
         } catch (err) {
             // If start fails, ensure we stay in STOPPED state
             this.stopLoop();
-            console.error('[BotController] Failed to start bot:', err);
+            logger.error({ err }, 'Failed to start bot');
             throw err;
         }
     }
@@ -45,7 +59,7 @@ class BotController {
         this.stopLoop();
         await this.hooks.pause?.();
         this.state = 'PAUSED';
-        console.log('[BotController] Bot is paused (monitoring only)');
+        logger.info({ state: this.state }, 'Bot is paused (monitoring only)');
         return this.state;
     }
 
@@ -56,7 +70,7 @@ class BotController {
         this.stopLoop();
         await this.hooks.kill?.();
         this.state = 'STOPPED';
-        console.log('[BotController] Bot killed and halted');
+        logger.info({ state: this.state }, 'Bot killed and halted');
         return this.state;
     }
 
@@ -65,7 +79,7 @@ class BotController {
         if (!this.hooks.tick) return;
         this.loop = setInterval(() => {
             Promise.resolve(this.hooks.tick?.())
-                .catch((err) => console.error('[BotController] tick error', err));
+                .catch((err) => logger.error({ err }, 'Tick error'));
         }, 4_000);
     }
 

@@ -232,7 +232,8 @@ export function detectVolumeSpikes(
     const spikeThreshold = avg + threshold * stdDev;
 
     for (let i = 0; i < values.length; i++) {
-        if (values[i] > spikeThreshold) {
+        const val = values[i];
+        if (val !== undefined && val > spikeThreshold) {
             spikeIndices.push(i);
         }
     }

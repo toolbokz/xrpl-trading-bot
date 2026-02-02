@@ -1,6 +1,7 @@
 import { Client } from 'xrpl';
 import { RiskConfig, TradingPair } from '../config';
 import { logger } from '../analytics/logger';
+import { hasAdequateReserves, loadReserveConfig, type ReserveConfig } from '../xrpl/reserve';
 
 export interface TradeIntent {
     issuer: string;
@@ -11,8 +12,49 @@ export interface TradeIntent {
 export class RiskEngine {
     private consecutiveFailures = 0;
     private dailyLoss = 0;
+    private lastResetDate: string;
+    private reserveConfig: ReserveConfig;
 
-    constructor(private readonly risk: RiskConfig, private readonly client: Client) { }
+    constructor(private readonly risk: RiskConfig, private readonly client: Client) {
+        // Initialize to current UTC date
+        this.lastResetDate = this.getCurrentDateUTC();
+        // Load reserve buffer config from env
+        this.reserveConfig = loadReserveConfig();
+    }
+
+    /**
+     * Get current UTC date as YYYY-MM-DD string.
+     */
+    private getCurrentDateUTC(): string {
+        const isoString = new Date().toISOString();
+        const datePart = isoString.split('T')[0];
+        // ISO 8601 format guarantees 'T' separator exists
+        return datePart ?? isoString.slice(0, 10);
+    }
+
+    /**
+     * Check if daily loss counter should be reset (at UTC midnight).
+     * Should be called periodically (e.g., from TradingRuntime.tick()).
+     */
+    checkAndResetDaily(): void {
+        const today = this.getCurrentDateUTC();
+        if (today !== this.lastResetDate) {
+            logger.info({
+                previousLoss: this.dailyLoss,
+                previousDate: this.lastResetDate,
+                newDate: today,
+            }, 'Resetting daily loss counter (UTC midnight rollover)');
+            this.dailyLoss = 0;
+            this.lastResetDate = today;
+
+            // Also clear emergency shutdown if it was triggered by daily loss
+            // (but not if triggered by consecutive failures)
+            if (this.risk.emergencyShutdown && this.consecutiveFailures < this.risk.consecutiveFailureKillSwitch) {
+                logger.info('Clearing daily-loss emergency shutdown for new trading day');
+                this.risk.emergencyShutdown = false;
+            }
+        }
+    }
 
     registerFailure(): void {
         this.consecutiveFailures += 1;
@@ -35,14 +77,22 @@ export class RiskEngine {
     }
 
     async checkReserves(account: string): Promise<boolean> {
-        const info = await this.client.request({
-            command: 'account_info',
+        // Use dynamic reserve calculation accounting for owner count
+        const { adequate, requirement } = await hasAdequateReserves(
+            this.client,
             account,
-            ledger_index: 'validated',
-        });
-        const balance = Number(info.result.account_data.Balance) / 1_000_000;
-        if (balance < this.risk.reserveFloorXRP) {
-            logger.warn({ balance }, 'Below reserve floor; halting');
+            this.risk.reserveFloorXRP, // Use config value as minimum available balance
+            this.reserveConfig
+        );
+
+        if (!adequate) {
+            logger.warn({
+                balance: requirement.balanceXRP,
+                required: requirement.requiredXRP,
+                available: requirement.availableXRP,
+                minAvailable: this.risk.reserveFloorXRP,
+                ownerCount: requirement.ownerCount,
+            }, 'Below dynamic reserve floor; halting');
             this.risk.emergencyShutdown = true;
             return false;
         }

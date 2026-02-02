@@ -22,7 +22,7 @@ export interface SlippageCheckResult {
     allowed: boolean;
     actualSlippageBps: number;
     maxSlippageBps: number;
-    reason?: string;
+    reason?: string | undefined;
 }
 
 export class OfferExecutor {
@@ -211,6 +211,22 @@ export class OfferExecutor {
         return (meta as TransactionMetadata).TransactionResult;
     }
 
+    /**
+     * Wraps a promise with a timeout.
+     * Returns the promise result or rejects with timeout error.
+     */
+    private withTimeout<T>(promise: Promise<T>, ms: number, context: string): Promise<T> {
+        return Promise.race([
+            promise,
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`Transaction timeout after ${ms}ms (${context})`)), ms)
+            ),
+        ]);
+    }
+
+    // Timeout for submitAndWait (12 seconds - ~3 ledger closes)
+    private static readonly SUBMIT_TIMEOUT_MS = 12_000;
+
     // Unified submit path with logging, validation, and error handling to avoid rippled parameter errors.
     private async submitWithGuards(tx: any, pairSymbol?: string, intent?: TradeIntent): Promise<ExecutionResult> {
         try {
@@ -236,7 +252,32 @@ export class OfferExecutor {
             };
             logger.info({ tx: safePrepared, pair: pairSymbol }, 'Autofilled XRPL transaction');
             const signed = this.wallet.sign(prepared);
-            const res = await this.client.submitAndWait(signed.tx_blob);
+
+            // Wrap submitAndWait with timeout to prevent blocking indefinitely
+            let res;
+            try {
+                res = await this.withTimeout(
+                    this.client.submitAndWait(signed.tx_blob),
+                    OfferExecutor.SUBMIT_TIMEOUT_MS,
+                    `submitAndWait for ${tx.TransactionType}`
+                );
+            } catch (timeoutErr: any) {
+                // Timeout does NOT mean failure - tx may still succeed
+                // Log warning and return unknown finality
+                logger.warn({
+                    err: timeoutErr,
+                    txType: tx.TransactionType,
+                    pair: pairSymbol,
+                    hash: signed.hash,
+                }, 'Transaction timeout - finality unknown, requires reconciliation');
+
+                return {
+                    accepted: false,
+                    reason: 'timeout-unknown-finality',
+                    hash: signed.hash,
+                };
+            }
+
             logger.info({ result: res.result, pair: pairSymbol }, 'XRPL submitAndWait result');
 
             const txResult = this.extractTxResult(res.result.meta);

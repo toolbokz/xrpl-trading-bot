@@ -78,12 +78,19 @@ export function updateLastHACandle(
 
     const result = [...haCandles];
     const lastIndex = result.length - 1;
-    const previousHA = lastIndex > 0 ? result[lastIndex - 1] : null;
+    const lastCandle = result[lastIndex];
+    const prevCandle = lastIndex > 0 ? result[lastIndex - 1] : null;
+    const previousHA = prevCandle ?? null;
+
+    if (!lastCandle) {
+        // Safety check - should not happen since we already checked haCandles.length
+        return [calculateHACandle(newOHLC, null)];
+    }
 
     // Check if this is an update to the current candle or a new candle
-    const lastTime = typeof result[lastIndex].time === 'number'
-        ? result[lastIndex].time
-        : Number(result[lastIndex].time);
+    const lastTime = typeof lastCandle.time === 'number'
+        ? lastCandle.time
+        : Number(lastCandle.time);
     const newTime = typeof newOHLC.time === 'number'
         ? newOHLC.time
         : Number(newOHLC.time);
@@ -93,7 +100,7 @@ export function updateLastHACandle(
         result[lastIndex] = calculateHACandle(newOHLC, previousHA);
     } else if (newTime > lastTime) {
         // New candle
-        const newHA = calculateHACandle(newOHLC, result[lastIndex]);
+        const newHA = calculateHACandle(newOHLC, lastCandle);
         result.push(newHA);
     }
 
@@ -107,7 +114,8 @@ export function appendHACandle(
     haCandles: HeikinAshiData[],
     newOHLC: OHLCData
 ): HeikinAshiData[] {
-    const previousHA = haCandles.length > 0 ? haCandles[haCandles.length - 1] : null;
+    const lastCandle = haCandles.length > 0 ? haCandles[haCandles.length - 1] : null;
+    const previousHA = lastCandle ?? null;
     const newHA = calculateHACandle(newOHLC, previousHA);
     return [...haCandles, newHA];
 }

@@ -8,4 +8,5 @@ export interface StrategyContext {
 export interface Strategy {
     name: string;
     tick(ctx: StrategyContext): Promise<void>;
+    shutdown?(): Promise<void>;
 }

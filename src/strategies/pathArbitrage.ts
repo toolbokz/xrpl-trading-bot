@@ -4,6 +4,7 @@ import { StrategyConfig, TradingPair } from '../config';
 import { OfferExecutor } from '../execution/offerExecutor';
 import { logger } from '../analytics/logger';
 import { toXrplCurrency } from '../xrpl/currency';
+import { getBreakerStore, BreakerState, BreakerStore } from '../persistence/breakerStore';
 
 /**
  * Environment-based feature flags for path arbitrage.
@@ -33,16 +34,59 @@ function loadPathArbConfig(): PathArbConfig {
 
 /**
  * Simple circuit breaker to halt trading after excessive losses.
+ * Now with persistence support.
  */
 class CircuitBreaker {
     private trades: Array<{ timestamp: number; pnlBps: number }> = [];
     private trippedAt: number | null = null;
+    private store: BreakerStore;
+    private saveDebounceTimer: NodeJS.Timeout | null = null;
+    private readonly SAVE_DEBOUNCE_MS = 1000;
+    private initialized = false;
 
     constructor(
         private readonly maxLossBps: number,
         private readonly windowMs: number,
-        private readonly cooldownMs: number
-    ) { }
+        private readonly cooldownMs: number,
+        private readonly storeKey: string = 'path_arb'
+    ) {
+        this.store = getBreakerStore();
+    }
+
+    /** Initialize breaker state from persistent store */
+    async initialize(): Promise<void> {
+        if (this.initialized) return;
+        try {
+            const state = await this.store.load(this.storeKey);
+            this.trades = state.trades;
+            this.trippedAt = state.trippedAt;
+            this.initialized = true;
+            logger.info({
+                tradeCount: this.trades.length,
+                trippedAt: this.trippedAt,
+            }, 'Circuit breaker state loaded from persistence');
+        } catch (err) {
+            logger.warn({ err }, 'Failed to load circuit breaker state, starting fresh');
+            this.initialized = true;
+        }
+    }
+
+    /** Save breaker state (debounced to avoid excessive writes) */
+    private scheduleSave(): void {
+        if (this.saveDebounceTimer) {
+            clearTimeout(this.saveDebounceTimer);
+        }
+        this.saveDebounceTimer = setTimeout(() => {
+            const state: BreakerState = {
+                trades: this.trades,
+                trippedAt: this.trippedAt,
+                lastUpdated: Date.now(),
+            };
+            this.store.save(this.storeKey, state).catch((err) => {
+                logger.warn({ err }, 'Failed to save circuit breaker state');
+            });
+        }, this.SAVE_DEBOUNCE_MS);
+    }
 
     /** Returns true if circuit breaker is tripped (should halt trading) */
     isTripped(): boolean {
@@ -51,6 +95,7 @@ class CircuitBreaker {
                 logger.info({}, 'Path arbitrage circuit breaker reset after cooldown');
                 this.trippedAt = null;
                 this.trades = [];
+                this.scheduleSave();
                 return false;
             }
             return true;
@@ -76,9 +121,11 @@ class CircuitBreaker {
                 { totalPnlBps, maxLossBps: this.maxLossBps, tradeCount: this.trades.length },
                 'Path arbitrage circuit breaker TRIPPED - halting execution'
             );
+            this.scheduleSave();
             return true; // tripped
         }
 
+        this.scheduleSave();
         return false;
     }
 
@@ -103,6 +150,7 @@ export class PathArbitrageStrategy implements Strategy {
     private lastLedger = 0;
     private readonly pathArbConfig: PathArbConfig;
     private readonly circuitBreaker: CircuitBreaker;
+    private breakerInitialized = false;
 
     constructor(
         private readonly client: Client,
@@ -115,7 +163,8 @@ export class PathArbitrageStrategy implements Strategy {
         this.circuitBreaker = new CircuitBreaker(
             this.pathArbConfig.circuitBreakerMaxLossBps,
             this.pathArbConfig.circuitBreakerWindowMs,
-            this.pathArbConfig.circuitBreakerCooldownMs
+            this.pathArbConfig.circuitBreakerCooldownMs,
+            `path_arb_${pair.baseCurrency}_${pair.quoteCurrency}` // Unique key per pair
         );
 
         if (!this.pathArbConfig.enabled) {
@@ -133,6 +182,12 @@ export class PathArbitrageStrategy implements Strategy {
             return;
         }
 
+        // Initialize circuit breaker state on first tick (async)
+        if (!this.breakerInitialized) {
+            await this.circuitBreaker.initialize();
+            this.breakerInitialized = true;
+        }
+
         // Circuit breaker check
         if (this.circuitBreaker.isTripped()) {
             return;
@@ -141,16 +196,28 @@ export class PathArbitrageStrategy implements Strategy {
         if (ctx.ledgerIndex === this.lastLedger) return;
         this.lastLedger = ctx.ledgerIndex;
         if (!ctx.orderBook.bids.length || !ctx.orderBook.asks.length) return;
-        if (Date.now() - ctx.orderBook.lastUpdated > 15_000) return;
 
-        const base = toXrplCurrency({
-            currency: this.pair.baseCurrency,
-            issuer: this.pair.baseCurrency.toUpperCase() === 'XRP' ? undefined : (this.pair.baseIssuer ?? this.pair.issuer)
-        });
-        const quote = toXrplCurrency({
-            currency: this.pair.quoteCurrency,
-            issuer: this.pair.quoteCurrency.toUpperCase() === 'XRP' ? undefined : (this.pair.quoteIssuer ?? this.pair.issuer)
-        });
+        // Use configurable staleness threshold (default: 5000ms)
+        const stalenessMs = this.config.orderBookStaleMs ?? 5_000;
+        const bookAge = Date.now() - ctx.orderBook.lastUpdated;
+        if (bookAge > stalenessMs) {
+            logger.debug({ bookAge, stalenessMs }, 'PathArb: order book stale, skipping tick');
+            return;
+        }
+
+        const baseIssuer = this.pair.baseCurrency.toUpperCase() === 'XRP'
+            ? undefined
+            : (this.pair.baseIssuer ?? this.pair.issuer);
+        const quoteIssuer = this.pair.quoteCurrency.toUpperCase() === 'XRP'
+            ? undefined
+            : (this.pair.quoteIssuer ?? this.pair.issuer);
+
+        const base = baseIssuer
+            ? toXrplCurrency({ currency: this.pair.baseCurrency, issuer: baseIssuer })
+            : toXrplCurrency({ currency: 'XRP' });
+        const quote = quoteIssuer
+            ? toXrplCurrency({ currency: this.pair.quoteCurrency, issuer: quoteIssuer })
+            : toXrplCurrency({ currency: 'XRP' });
         const baseIssued = base.currency === 'XRP' ? null : (base as Extract<typeof base, { issuer: string }>);
         const quoteIssued = quote.currency === 'XRP' ? null : (quote as Extract<typeof quote, { issuer: string }>);
         const issuer = quoteIssued ? quoteIssued.issuer : baseIssued ? baseIssued.issuer : null;

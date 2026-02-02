@@ -51,7 +51,7 @@ class WebTradeHistoryService {
                 return loc;
             }
         }
-        return locations[0]; // Default to first location
+        return locations[0] ?? path.resolve(process.cwd(), TRADES_FILE); // Default to first location
     }
 
     private loadTrades(): Trade[] {

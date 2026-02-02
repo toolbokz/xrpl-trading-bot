@@ -24,10 +24,14 @@ export function countDecimals(value: number): number {
 
     // Handle scientific notation (e.g., 1.23e-7)
     if (str.includes('e')) {
-        const [mantissa, exponent] = str.split('e');
+        const parts = str.split('e');
+        const mantissa = parts[0];
+        const exponent = parts[1];
+        if (!mantissa || !exponent) return 0;
+
         const exp = parseInt(exponent, 10);
         const mantissaDecimals = mantissa.includes('.')
-            ? mantissa.split('.')[1]?.length || 0
+            ? mantissa.split('.')[1]?.length ?? 0
             : 0;
 
         if (exp < 0) {
@@ -39,6 +43,7 @@ export function countDecimals(value: number): number {
     // Standard decimal notation
     if (str.includes('.')) {
         const decimalPart = str.split('.')[1];
+        if (!decimalPart) return 0;
         // Trim trailing zeros for actual precision
         const trimmed = decimalPart.replace(/0+$/, '');
         return trimmed.length;

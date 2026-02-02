@@ -102,17 +102,26 @@ export class SeedSigner implements Signer {
  * - Xumm SDK integration
  * - WebSocket for sign request/response
  * - User approval flow
+ * 
+ * @remarks These fields are intentionally unused until implementation.
  */
+// @ts-ignore - Scaffold: fields will be used when implemented
 export class XummSigner implements Signer {
     readonly type = 'xumm' as const;
-    private apiKey: string;
-    private apiSecret: string;
-    private userToken?: string;
+    // These fields are stored for future implementation
+    private _apiKey: string;
+    private _apiSecret: string;
+    private _userToken: string | undefined;
 
     constructor(apiKey: string, apiSecret: string, userToken?: string) {
-        this.apiKey = apiKey;
-        this.apiSecret = apiSecret;
-        this.userToken = userToken;
+        this._apiKey = apiKey;
+        this._apiSecret = apiSecret;
+        this._userToken = userToken ?? undefined;
+    }
+
+    /** Get configuration for future implementation */
+    protected getConfig(): { apiKey: string; apiSecret: string } {
+        return { apiKey: this._apiKey, apiSecret: this._apiSecret };
     }
 
     async getAddress(): Promise<string> {
@@ -120,7 +129,7 @@ export class XummSigner implements Signer {
         throw new Error('XummSigner.getAddress() not implemented. Requires Xumm SDK.');
     }
 
-    async signTx(tx: Transaction): Promise<SignedTransaction> {
+    async signTx(_tx: Transaction): Promise<SignedTransaction> {
         // TODO: Implement Xumm sign request flow
         // 1. Create sign request via Xumm API
         // 2. Wait for user approval (WebSocket or polling)
@@ -129,7 +138,7 @@ export class XummSigner implements Signer {
     }
 
     async isReady(): Promise<boolean> {
-        return !!this.userToken;
+        return !!this._userToken;
     }
 }
 
@@ -139,13 +148,22 @@ export class XummSigner implements Signer {
  * This is a scaffold implementation. Full implementation requires:
  * - @ledgerhq/hw-transport-node-hid or WebUSB transport
  * - XRP app communication protocol
+ * 
+ * @remarks These fields are intentionally unused until implementation.
  */
+// @ts-ignore - Scaffold: fields will be used when implemented
 export class LedgerSigner implements Signer {
     readonly type = 'ledger' as const;
-    private derivationPath: string;
+    // Stored for future implementation
+    private _derivationPath: string;
 
     constructor(derivationPath = "44'/144'/0'/0/0") {
-        this.derivationPath = derivationPath;
+        this._derivationPath = derivationPath;
+    }
+
+    /** Get derivation path for future implementation */
+    protected getDerivationPath(): string {
+        return this._derivationPath;
     }
 
     async getAddress(): Promise<string> {
@@ -153,7 +171,7 @@ export class LedgerSigner implements Signer {
         throw new Error('LedgerSigner.getAddress() not implemented. Requires Ledger HW library.');
     }
 
-    async signTx(tx: Transaction): Promise<SignedTransaction> {
+    async signTx(_tx: Transaction): Promise<SignedTransaction> {
         // TODO: Implement Ledger signing
         // 1. Connect to Ledger device
         // 2. Open XRP app
@@ -174,15 +192,24 @@ export class LedgerSigner implements Signer {
  *
  * This is a scaffold for AWS KMS. Similar patterns for GCP/Azure.
  * Requires the private key to be stored in KMS with sign permissions.
+ * 
+ * @remarks These fields are intentionally unused until implementation.
  */
+// @ts-ignore - Scaffold: fields will be used when implemented
 export class KmsSigner implements Signer {
     readonly type = 'kms' as const;
-    private keyId: string;
-    private region: string;
+    // Stored for future implementation
+    private _keyId: string;
+    private _region: string;
 
     constructor(keyId: string, region = 'us-east-1') {
-        this.keyId = keyId;
-        this.region = region;
+        this._keyId = keyId;
+        this._region = region;
+    }
+
+    /** Get KMS configuration for future implementation */
+    protected getKmsConfig(): { keyId: string; region: string } {
+        return { keyId: this._keyId, region: this._region };
     }
 
     async getAddress(): Promise<string> {
@@ -192,7 +219,7 @@ export class KmsSigner implements Signer {
         throw new Error('KmsSigner.getAddress() not implemented. Requires AWS SDK.');
     }
 
-    async signTx(tx: Transaction): Promise<SignedTransaction> {
+    async signTx(_tx: Transaction): Promise<SignedTransaction> {
         // TODO: Implement KMS signing
         // 1. Serialize transaction for signing
         // 2. Call KMS Sign with ECDSA_SHA_256
@@ -260,10 +287,11 @@ export async function signAndSubmit(
         const address = await signer.getAddress();
 
         // Add account and autofill
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const prepared = await client.autofill({
             ...tx,
             Account: address,
-        } as Transaction);
+        } as any);
 
         // Sign
         const signed = await signer.signTx(prepared);
@@ -274,9 +302,9 @@ export async function signAndSubmit(
         const meta = result.result.meta;
         if (meta && typeof meta === 'object' && 'TransactionResult' in meta) {
             if (meta.TransactionResult === 'tesSUCCESS') {
-                return { success: true, hash: signed.hash };
+                return { success: true, ...(signed.hash ? { hash: signed.hash } : {}) };
             }
-            return { success: false, hash: signed.hash, error: meta.TransactionResult };
+            return { success: false, ...(signed.hash ? { hash: signed.hash } : {}), error: meta.TransactionResult };
         }
 
         return { success: false, error: 'Unknown transaction result' };

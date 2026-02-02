@@ -1,11 +1,26 @@
 import type { NextApiRequest } from 'next';
 
+/** Maximum request body size in bytes (64KB) */
+const MAX_BODY_SIZE = 64 * 1024;
+
+/** Error thrown when request body exceeds size limit */
+export class BodyTooLargeError extends Error {
+    constructor(size: number, maxSize: number = MAX_BODY_SIZE) {
+        super(`Request body too large: ${size} bytes exceeds limit of ${maxSize} bytes`);
+        this.name = 'BodyTooLargeError';
+    }
+}
+
 /**
  * Read the raw body from a Next.js API request.
  * Must be used with `export const config = { api: { bodyParser: false } }` for POST/PUT/DELETE.
  * For GET requests, returns empty string.
+ * 
+ * @param req - Next.js API request
+ * @param maxSize - Maximum allowed body size in bytes (default: 64KB)
+ * @throws {BodyTooLargeError} If body exceeds maxSize
  */
-export async function readRawBody(req: NextApiRequest): Promise<string> {
+export async function readRawBody(req: NextApiRequest, maxSize: number = MAX_BODY_SIZE): Promise<string> {
     // GET/HEAD requests have no body
     if (req.method === 'GET' || req.method === 'HEAD') {
         return '';
@@ -18,8 +33,15 @@ export async function readRawBody(req: NextApiRequest): Promise<string> {
 
     return new Promise((resolve, reject) => {
         const chunks: Buffer[] = [];
+        let totalSize = 0;
 
         req.on('data', (chunk: Buffer) => {
+            totalSize += chunk.length;
+            if (totalSize > maxSize) {
+                req.destroy();
+                reject(new BodyTooLargeError(totalSize, maxSize));
+                return;
+            }
             chunks.push(chunk);
         });
 

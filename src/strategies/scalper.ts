@@ -7,8 +7,8 @@ import { logger } from '../analytics/logger';
 
 interface PositionState {
     side: 'flat' | 'long' | 'short';
-    entryPrice?: number;
-    cooldownUntil?: number;
+    entryPrice?: number | undefined;
+    cooldownUntil?: number | undefined;
 }
 
 export class ScalperStrategy implements Strategy {
@@ -32,7 +32,15 @@ export class ScalperStrategy implements Strategy {
     async tick(_ctx: StrategyContext): Promise<void> {
         const state = this.tracker.getState();
         if (!state.bids.length || !state.asks.length) return;
-        if (Date.now() - state.lastUpdated > 15_000) return; // stale book
+
+        // Use configurable staleness threshold (default: 5000ms)
+        const stalenessMs = this.config.orderBookStaleMs ?? 5_000;
+        const bookAge = Date.now() - state.lastUpdated;
+        if (bookAge > stalenessMs) {
+            logger.debug({ bookAge, stalenessMs }, 'Scalper: order book stale, skipping tick');
+            return; // stale book
+        }
+
         if (Date.now() < (this.position.cooldownUntil ?? 0)) return;
         const issuer = this.pair.quoteIssuer || this.pair.baseIssuer || this.pair.issuer;
         if (!issuer) return;

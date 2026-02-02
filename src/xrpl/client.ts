@@ -292,11 +292,22 @@ export const subscribeOrderBooks = async (
         }
     }
 
-    const req: SubscribeRequest = {
-        command: 'subscribe',
-        streams: ['ledger', 'transactions'],
-        books: books as SubscribeRequest['books'],
-    };
+    const streams: ('ledger' | 'transactions')[] = ['ledger', 'transactions'];
+
+    // Build request - only include books if we have some to subscribe to
+    let req: SubscribeRequest;
+    if (books.length > 0) {
+        req = {
+            command: 'subscribe',
+            streams,
+            books: books as NonNullable<SubscribeRequest['books']>,
+        };
+    } else {
+        req = {
+            command: 'subscribe',
+            streams,
+        };
+    }
 
     try {
         console.info('[subscribeOrderBooks] Subscribing', { books: books.length, streams: req.streams });

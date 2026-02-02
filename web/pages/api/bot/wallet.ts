@@ -93,12 +93,15 @@ async function fetchXrpRate(client: Client, currency: string, issuers: string[])
                 ledger_index: 'validated',
                 limit: 1,
             });
-            if (bookRes.result.offers?.length > 0) {
-                const offer = bookRes.result.offers[0];
-                const takerGets = Number(offer.TakerGets) / 1_000_000; // XRP in drops
-                const takerPays = Number((offer.TakerPays as any).value);
-                if (takerGets > 0 && takerPays > 0) {
-                    return takerPays / takerGets;
+            const offers = (bookRes.result as any).offers as Array<any> | undefined;
+            if (offers && offers.length > 0) {
+                const offer = offers[0];
+                if (offer) {
+                    const takerGets = Number(offer.TakerGets) / 1_000_000; // XRP in drops
+                    const takerPays = Number((offer.TakerPays as any).value);
+                    if (takerGets > 0 && takerPays > 0) {
+                        return takerPays / takerGets;
+                    }
                 }
             }
         } catch (err) {

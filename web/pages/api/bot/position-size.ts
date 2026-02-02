@@ -1,6 +1,7 @@
 import type { NextApiResponse } from 'next';
 import { withBotAuth, AuthenticatedRequest } from '../../../lib/botAuth';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
+import { validateBody, positionSizeSchema } from '../../../lib/validation/schemas';
 
 export const config = {
     api: { bodyParser: false },
@@ -8,19 +9,26 @@ export const config = {
 
 async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
+        return res.status(405).json({ error: 'Method not allowed', requestId: req.auth.requestId });
+    }
+
+    // Validate input with zod
+    const validation = validateBody(req.parsedBody, positionSizeSchema);
+    if (!validation.success) {
+        return res.status(400).json({
+            error: 'Invalid input',
+            details: validation.errors,
+            requestId: req.auth.requestId,
+        });
     }
 
     try {
-        const { size } = req.body as { size?: number };
-        if (!Number.isFinite(size) || (size as number) <= 0) {
-            return res.status(400).json({ error: 'Size must be a positive number' });
-        }
+        const { size } = validation.data;
         const runtime = ensureRuntimeHooks();
-        runtime.setPositionSize(size as number);
-        res.status(200).json({ message: 'Position size updated', size });
+        runtime.setPositionSize(size);
+        res.status(200).json({ message: 'Position size updated', size, requestId: req.auth.requestId });
     } catch (err: any) {
-        res.status(400).json({ error: err?.message || 'Failed to update position size' });
+        res.status(400).json({ error: err?.message || 'Failed to update position size', requestId: req.auth.requestId });
     }
 }
 

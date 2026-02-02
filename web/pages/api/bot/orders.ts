@@ -1,8 +1,10 @@
 import type { NextApiResponse } from 'next';
 import { withBotAuth, type AuthenticatedRequest, hasPermission } from '../../../lib/botAuth';
-import { Client, Wallet } from 'xrpl';
-import { walletFromSecretNumbers } from 'xrpl/dist/npm/Wallet/walletFromSecretNumbers';
 import { loadConfig } from '../../../../src/config';
+import { getSharedClient } from '../../../lib/xrplClient';
+import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
+import { logger } from '../../../../src/analytics/logger';
+import { validateBody, ordersUpdateSchema, ordersCancelSchema } from '../../../lib/validation/schemas';
 
 export const config = {
     api: { bodyParser: false },
@@ -35,60 +37,101 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
 
     // Handle settings updates (POST) - requires operator
     if (req.method === 'POST') {
-        if (!hasPermission(req.role, 'bot:orders_manage')) {
-            return res.status(403).json({ error: 'Insufficient permission for orders management' });
+        if (!hasPermission(req.auth.role, 'bot:orders_manage')) {
+            return res.status(403).json({ error: 'Insufficient permission for orders management', requestId: req.auth.requestId });
         }
-        const { autoManageEnabled, stalenessThresholdSec } = req.body;
+
+        // Validate input with zod
+        const validation = validateBody(req.parsedBody, ordersUpdateSchema);
+        if (!validation.success) {
+            return res.status(400).json({
+                error: 'Invalid input',
+                details: validation.errors,
+                requestId: req.auth.requestId,
+            });
+        }
+
+        const { autoManageEnabled, stalenessThresholdSec } = validation.data;
         if (typeof autoManageEnabled === 'boolean') {
             globalAutoManage._autoManageEnabled = autoManageEnabled;
         }
-        if (typeof stalenessThresholdSec === 'number' && stalenessThresholdSec > 0) {
+        if (typeof stalenessThresholdSec === 'number') {
             globalAutoManage._stalenessThresholdSec = stalenessThresholdSec;
         }
         return res.status(200).json({
             autoManageEnabled: globalAutoManage._autoManageEnabled,
             stalenessThresholdSec: globalAutoManage._stalenessThresholdSec,
+            requestId: req.auth.requestId,
         });
     }
 
     // Handle cancel request (DELETE) - requires admin
+    // Routes through TradingRuntime to use proper signing via executor
     if (req.method === 'DELETE') {
-        if (!hasPermission(req.role, 'bot:orders_cancel')) {
-            return res.status(403).json({ error: 'Insufficient permission for order cancellation' });
+        if (!hasPermission(req.auth.role, 'bot:orders_cancel')) {
+            return res.status(403).json({ error: 'Insufficient permission for order cancellation', requestId: req.auth.requestId });
         }
-        const { sequence } = req.body;
-        if (typeof sequence !== 'number') {
-            return res.status(400).json({ error: 'Missing sequence number' });
+
+        // Validate input with zod
+        const validation = validateBody(req.parsedBody, ordersCancelSchema);
+        if (!validation.success) {
+            return res.status(400).json({
+                error: 'Invalid input',
+                details: validation.errors,
+                requestId: req.auth.requestId,
+            });
         }
+
+        const { sequence } = validation.data;
         try {
-            const result = await cancelOffer(cfg, sequence);
-            return res.status(200).json(result);
+            const runtime = ensureRuntimeHooks();
+            if (!runtime.isStarted()) {
+                return res.status(400).json({
+                    error: 'Bot must be running to cancel offers',
+                    requestId: req.auth.requestId,
+                });
+            }
+            const result = await runtime.cancelOffer(sequence);
+            logger.info({ sequence, result, requestId: req.auth.requestId }, 'Offer cancel result');
+            return res.status(200).json({
+                success: result.accepted,
+                sequence,
+                hash: result.hash,
+                reason: result.reason,
+                requestId: req.auth.requestId,
+            });
         } catch (err: any) {
-            return res.status(500).json({ error: err?.message || 'Failed to cancel offer' });
+            logger.error({ err, sequence, requestId: req.auth.requestId }, 'Failed to cancel offer');
+            return res.status(500).json({
+                error: err?.message || 'Failed to cancel offer',
+                requestId: req.auth.requestId,
+            });
         }
     }
 
     // GET: Fetch active orders and optionally auto-cancel stale ones
     try {
-        const client = new Client(cfg.xrpl.endpoint);
-        await client.connect();
+        // Use shared client to avoid rate limiting and connection leaks
+        const client = await getSharedClient(cfg.xrpl.endpoint);
 
-        // Get wallet
-        let wallet: Wallet | null = null;
-        if (cfg.walletSeed) {
-            wallet = Wallet.fromSeed(cfg.walletSeed);
-        } else if (cfg.walletSecretNumbers) {
-            const secretNums = cfg.walletSecretNumbers.split(',').map(n => n.trim());
-            wallet = walletFromSecretNumbers(secretNums);
+        // Try to get wallet address from runtime if available
+        let walletAddress: string | null = null;
+        try {
+            const runtime = ensureRuntimeHooks();
+            walletAddress = runtime.getWalletAddress();
+        } catch {
+            // Runtime not initialized, try to get from config
         }
 
-        if (!wallet) {
-            await client.disconnect();
+        // If no wallet address from runtime, we can't fetch orders
+        if (!walletAddress) {
             return res.status(200).json({
                 orders: [],
                 autoManageEnabled: globalAutoManage._autoManageEnabled,
                 stalenessThresholdSec: globalAutoManage._stalenessThresholdSec,
                 cancelledCount: 0,
+                requestId: req.auth.requestId,
+                message: 'Bot not running or wallet not configured',
             });
         }
 
@@ -99,7 +142,7 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
         // Fetch account offers
         const offersRes = await client.request({
             command: 'account_offers',
-            account: wallet.classicAddress,
+            account: walletAddress,
             ledger_index: 'validated',
         });
 
@@ -158,86 +201,47 @@ async function handler(req: AuthenticatedRequest, res: NextApiResponse) {
             }
         }
 
-        // Auto-cancel stale orders if enabled
+        // Auto-cancel stale orders if enabled (routes through runtime)
         let cancelledCount = 0;
         if (globalAutoManage._autoManageEnabled && staleSequences.length > 0) {
-            for (const seq of staleSequences) {
-                try {
-                    const cancelTx = {
-                        TransactionType: 'OfferCancel' as const,
-                        Account: wallet.classicAddress,
-                        OfferSequence: seq,
-                    };
-                    const prepared = await client.autofill(cancelTx);
-                    const signed = wallet.sign(prepared);
-                    const result = await client.submitAndWait(signed.tx_blob);
-                    if (result.result.meta && typeof result.result.meta === 'object' && 'TransactionResult' in result.result.meta) {
-                        if (result.result.meta.TransactionResult === 'tesSUCCESS') {
-                            cancelledCount++;
-                            console.log(`Auto-cancelled stale offer ${seq}`);
+            try {
+                const runtime = ensureRuntimeHooks();
+                if (runtime.isStarted()) {
+                    for (const seq of staleSequences) {
+                        try {
+                            const result = await runtime.cancelOffer(seq);
+                            if (result.accepted) {
+                                cancelledCount++;
+                                logger.info({ sequence: seq, hash: result.hash }, 'Auto-cancelled stale offer');
+                            }
+                        } catch (err) {
+                            logger.error({ err, sequence: seq }, 'Failed to auto-cancel offer');
                         }
                     }
-                } catch (err) {
-                    console.error(`Failed to auto-cancel offer ${seq}:`, err);
                 }
+            } catch {
+                // Runtime not available for auto-cancel
+                logger.warn('Auto-cancel skipped: bot not running');
             }
         }
-
-        await client.disconnect();
 
         res.status(200).json({
             orders: activeOrders,
             autoManageEnabled: globalAutoManage._autoManageEnabled,
             stalenessThresholdSec: globalAutoManage._stalenessThresholdSec,
             cancelledCount,
+            requestId: req.auth.requestId,
         });
     } catch (err: any) {
-        console.error('Orders API error:', err);
+        logger.error({ err, requestId: req.auth.requestId }, 'Orders API error');
         res.status(500).json({
             error: err?.message || 'Failed to fetch orders',
             orders: [],
             autoManageEnabled: globalAutoManage._autoManageEnabled,
             stalenessThresholdSec: globalAutoManage._stalenessThresholdSec,
+            requestId: req.auth.requestId,
         });
     }
-}
-
-async function cancelOffer(config: ReturnType<typeof loadConfig>, sequence: number) {
-    const client = new Client(config.xrpl.endpoint);
-    await client.connect();
-
-    let wallet: Wallet | null = null;
-    if (config.walletSeed) {
-        wallet = Wallet.fromSeed(config.walletSeed);
-    } else if (config.walletSecretNumbers) {
-        const secretNums = config.walletSecretNumbers.split(',').map(n => n.trim());
-        wallet = walletFromSecretNumbers(secretNums);
-    }
-
-    if (!wallet) {
-        await client.disconnect();
-        throw new Error('No wallet configured');
-    }
-
-    const cancelTx = {
-        TransactionType: 'OfferCancel' as const,
-        Account: wallet.classicAddress,
-        OfferSequence: sequence,
-    };
-
-    const prepared = await client.autofill(cancelTx);
-    const signed = wallet.sign(prepared);
-    const result = await client.submitAndWait(signed.tx_blob);
-
-    await client.disconnect();
-
-    if (result.result.meta && typeof result.result.meta === 'object' && 'TransactionResult' in result.result.meta) {
-        if (result.result.meta.TransactionResult === 'tesSUCCESS') {
-            return { success: true, sequence };
-        }
-    }
-
-    return { success: false, sequence, error: 'Transaction failed' };
 }
 
 export default withBotAuth(handler, {

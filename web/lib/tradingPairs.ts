@@ -40,7 +40,7 @@ const mainnetPairs: TradingPairOption[] = [
         key: 'XRP/RLUSD',
         base: { currency: 'XRP' },
         quote: { currency: 'RLUSD', issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De' },
-        description: 'Native Ripple USD',
+        description: 'XRP/RLUSD',
         liquidity: 'high',
         network: 'mainnet',
     },
@@ -48,7 +48,7 @@ const mainnetPairs: TradingPairOption[] = [
         key: 'XRP/USDT',
         base: { currency: 'XRP' },
         quote: { currency: 'USDT', issuer: 'rPTr8H5QG74Q63yDq47t4T55jD1g7m7g6' },
-        description: 'Tether',
+        description: 'XRP/USDT',
         liquidity: 'high',
         network: 'mainnet',
     },
@@ -56,7 +56,7 @@ const mainnetPairs: TradingPairOption[] = [
         key: 'XRP/USDC',
         base: { currency: 'XRP' },
         quote: { currency: 'USDC', issuer: 'rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE' },
-        description: 'USDC',
+        description: 'XRP/USDC',
         liquidity: 'high',
         network: 'mainnet',
     },
@@ -64,7 +64,7 @@ const mainnetPairs: TradingPairOption[] = [
         key: "XRP/EUR",
         base: { "currency": "XRP" },
         quote: { "currency": "EUR", issuer: "rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq" },
-        description: "GateHub EUR",
+        description: "XRP/EUR",
         liquidity: 'high',
         network: 'mainnet',
     },
@@ -72,7 +72,7 @@ const mainnetPairs: TradingPairOption[] = [
         key: "XRP/BTC",
         base: { "currency": "XRP" },
         quote: { "currency": "BTC", "issuer": "rchGBxcD1A1C2tdxF6papQYZ8kjRKMYcL" },
-        description: "GateHub BTC",
+        description: "XRP/BTC",
         liquidity: 'high',
         network: 'mainnet',
     },
@@ -80,7 +80,7 @@ const mainnetPairs: TradingPairOption[] = [
         key: "XRP/ETH",
         base: { "currency": "XRP" },
         quote: { "currency": "ETH", "issuer": "rcA8X3TVMST1n3CJeAdGk1RdRCHii7N2h" },
-        description: "GateHub ETH",
+        description: "XRP/ETH",
         liquidity: 'high',
         network: 'mainnet',
     },
@@ -88,7 +88,7 @@ const mainnetPairs: TradingPairOption[] = [
         key: 'RLUSD/USDT',
         base: { currency: 'RLUSD', issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De' },
         quote: { currency: 'USDT', issuer: 'rPTr8H5QG74Q63yDq47t4T55jD1g7m7g6' },
-        description: 'STABLECOIN',
+        description: 'RLUSD/USDT',
         liquidity: 'medium',
         network: 'mainnet',
     },
@@ -101,18 +101,28 @@ export const findTradingPair = (key: string): TradingPairOption | undefined => t
 
 export type BotTradingPair = {
     baseCurrency: string;
-    baseIssuer?: string;
+    baseIssuer?: string | undefined;
     quoteCurrency: string;
-    quoteIssuer?: string;
-    issuer?: string; // legacy fallback
-    description?: string;
+    quoteIssuer?: string | undefined;
+    issuer?: string | undefined; // legacy fallback
+    description?: string | undefined;
 };
 
-export const toBotTradingPair = (option: TradingPairOption): BotTradingPair => ({
-    baseCurrency: option.base.currency,
-    quoteCurrency: option.quote.currency,
-    baseIssuer: option.base.issuer,
-    quoteIssuer: option.quote.issuer,
-    issuer: option.quote.issuer || option.base.issuer,
-    description: option.description,
-});
+export const toBotTradingPair = (option: TradingPairOption): BotTradingPair => {
+    const result: BotTradingPair = {
+        baseCurrency: option.base.currency,
+        quoteCurrency: option.quote.currency,
+        description: option.description,
+    };
+    if (option.base.issuer) {
+        result.baseIssuer = option.base.issuer;
+    }
+    if (option.quote.issuer) {
+        result.quoteIssuer = option.quote.issuer;
+    }
+    const legacyIssuer = option.quote.issuer || option.base.issuer;
+    if (legacyIssuer) {
+        result.issuer = legacyIssuer;
+    }
+    return result;
+};

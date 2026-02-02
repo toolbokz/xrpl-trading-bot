@@ -27,9 +27,11 @@ export interface SubmitResult {
 
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_BACKOFF_MS = 1_000;
+const SEQUENCE_CACHE_TTL_MS = 30_000; // Refresh sequence after 30 seconds
 
 export class TransactionEngine {
     private sequence: number | null = null;
+    private sequenceFetchedAt: number = 0;
     private readonly paperMode: boolean;
     private readonly maxRetries: number;
     private readonly backoffMs: number;
@@ -84,6 +86,8 @@ export class TransactionEngine {
 
         let attempt = 0;
         let lastError: unknown;
+        let sequenceRetried = false;
+
         while (attempt <= this.maxRetries) {
             try {
                 const prepared = await this.opts.client.autofill(preparedBase);
@@ -93,6 +97,7 @@ export class TransactionEngine {
                 const res = await this.opts.client.submitAndWait(signed.tx_blob);
                 logger.info({ result: res.result }, 'SubmitAndWait result');
                 this.sequence = (prepared.Sequence || this.sequence || 0) + 1;
+                this.sequenceFetchedAt = Date.now(); // Update timestamp on success
 
                 const txResult = this.extractResult(res.result.meta);
                 const partialFill = this.detectPartialFill(prepared.TransactionType, res.result.meta);
@@ -103,7 +108,23 @@ export class TransactionEngine {
                 return { accepted, hash: res.result.hash, result: txResult, partialFill };
             } catch (err: any) {
                 lastError = err;
-                const code = err?.data?.error || err?.name || err?.message;
+                const code = err?.data?.error || err?.name || err?.message || '';
+                const codeStr = String(code).toLowerCase();
+
+                // Handle sequence-related errors with one retry after refresh
+                if (!sequenceRetried && (
+                    codeStr.includes('tefpast_seq') ||
+                    codeStr.includes('tefmax_ledger') ||
+                    codeStr.includes('sequence')
+                )) {
+                    logger.warn({ code, attempt }, 'Sequence error detected, refreshing and retrying once');
+                    await this.forceRefreshSequence(wallet.classicAddress);
+                    // Update the prepared base with new sequence
+                    (preparedBase as any).Sequence = this.sequence;
+                    sequenceRetried = true;
+                    continue; // Retry without incrementing attempt count
+                }
+
                 // Retry on transient codes
                 if (code === 'terQUEUED' || code === 'timeout' || code === 'tecPATH_DRY') {
                     attempt += 1;
@@ -128,14 +149,41 @@ export class TransactionEngine {
         return this.opts.wallet;
     }
 
+    /**
+     * Ensure we have a valid sequence number for transaction submission.
+     * Fetches from network if cache is stale (older than SEQUENCE_CACHE_TTL_MS).
+     */
     private async ensureSequence(account: string): Promise<void> {
-        if (this.sequence !== null) return;
+        const now = Date.now();
+        const cacheExpired = (now - this.sequenceFetchedAt) >= SEQUENCE_CACHE_TTL_MS;
+
+        if (this.sequence !== null && !cacheExpired) {
+            return;
+        }
+
+        logger.info({
+            reason: this.sequence === null ? 'first-fetch' : 'cache-expired',
+            cacheAgeMs: now - this.sequenceFetchedAt,
+        }, 'Fetching account sequence from network');
+
         const info = await this.opts.client.request({
             command: 'account_info',
             account,
             ledger_index: 'current',
         });
         this.sequence = info.result.account_data.Sequence;
+        this.sequenceFetchedAt = now;
+    }
+
+    /**
+     * Force refresh the sequence number from network.
+     * Called after sequence-related errors.
+     */
+    private async forceRefreshSequence(account: string): Promise<void> {
+        logger.info('Force refreshing sequence after error');
+        this.sequence = null;
+        this.sequenceFetchedAt = 0;
+        await this.ensureSequence(account);
     }
 
     private extractResult(meta: unknown): string | undefined {

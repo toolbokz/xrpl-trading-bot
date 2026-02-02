@@ -5,8 +5,8 @@ import { ensureIssued } from './currency';
 
 export interface TrustlineParams {
     limit: string;
-    qualityIn?: number;
-    qualityOut?: number;
+    qualityIn?: number | undefined;
+    qualityOut?: number | undefined;
 }
 
 export class TrustlineManager {
@@ -36,8 +36,8 @@ export class TrustlineManager {
                 value: params.limit,
             },
             Flags: 0,
-            QualityIn: params.qualityIn,
-            QualityOut: params.qualityOut,
+            ...(params.qualityIn !== undefined ? { QualityIn: params.qualityIn } : {}),
+            ...(params.qualityOut !== undefined ? { QualityOut: params.qualityOut } : {}),
         };
 
         logger.info({ currency: pair.quoteCurrency, limit: params.limit }, 'Creating trustline');

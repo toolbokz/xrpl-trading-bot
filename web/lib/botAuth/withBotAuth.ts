@@ -2,23 +2,30 @@
  * withBotAuth - HMAC authentication and RBAC wrapper for Next.js API routes.
  *
  * Features:
+ * - CORS validation (origin allowlist in production)
  * - HMAC signature verification
  * - Timestamp validation (replay protection)
  * - Nonce validation (replay protection)
- * - Rate limiting per (apiKey + ip)
+ * - Rate limiting per (apiKey + ip) with read/write differentiation
+ * - Per-route rate limit overrides
  * - Role-based access control
  * - IP allowlist (optional)
  * - Audit logging for privileged actions
+ * - Request correlation IDs (X-REQUEST-ID)
+ * - Request body size limits
+ * - Prometheus metrics collection
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { loadBotAuthEnv, getApiKeyById, type ApiKey } from './env';
 import { verifySignature, isTimestampValid } from './hmac';
-import { readRawBody, parseJsonBody } from './rawBody';
+import { readRawBody, parseJsonBody, BodyTooLargeError } from './rawBody';
 import { checkAndStoreNonce } from './nonceStore';
-import { checkRateLimit } from './rateLimit';
+import { checkRateLimit, getRateLimitType, type RateLimitType } from './rateLimit';
 import { hasPermission, type Permission, type Role } from './permissions';
 import { logAudit, generateRequestId } from './audit';
+import { checkCors, handleCorsPreflightIfNeeded } from '../http/cors';
+import { BotMetrics } from '../metrics/collector';
 
 export interface AuthenticatedRequest extends NextApiRequest {
     auth: {
@@ -54,7 +61,43 @@ export function withBotAuth(
     options: BotAuthOptions
 ) {
     return async (req: NextApiRequest, res: NextApiResponse): Promise<void> => {
-        const requestId = generateRequestId();
+        const startTime = Date.now();
+        const requestPath = req.url?.split('?')[0] ?? '/unknown';
+        const method = req.method ?? 'GET';
+
+        // Helper to record metrics on response
+        const recordMetrics = (statusCode: number): void => {
+            const duration = Date.now() - startTime;
+            BotMetrics.httpRequest(method, requestPath, statusCode);
+            BotMetrics.httpDuration(method, requestPath, duration);
+        };
+
+        // Handle CORS preflight (OPTIONS) requests first
+        if (handleCorsPreflightIfNeeded(req, res)) {
+            recordMetrics(204);
+            return;
+        }
+
+        // Accept inbound X-REQUEST-ID or generate one
+        const inboundRequestId = req.headers['x-request-id'];
+        const requestId = typeof inboundRequestId === 'string' && inboundRequestId.length > 0
+            ? inboundRequestId
+            : generateRequestId();
+
+        // Always include requestId in response headers
+        res.setHeader('X-Request-ID', requestId);
+
+        // CORS validation (applies headers and checks origin)
+        const corsError = checkCors(req, res);
+        if (corsError) {
+            res.status(403).json({
+                error: corsError.error,
+                reason: corsError.reason,
+                requestId
+            });
+            return;
+        }
+
         const env = loadBotAuthEnv();
 
         // Get client IP
@@ -70,12 +113,16 @@ export function withBotAuth(
         const permission =
             options.methodPermissions?.[req.method || ''] ?? options.permission;
 
-        // Read raw body for signature verification
+        // Read raw body for signature verification (with size limit)
         let rawBody: string;
         try {
             rawBody = await readRawBody(req);
         } catch (err) {
-            res.status(400).json({ error: 'Failed to read request body' });
+            if (err instanceof BodyTooLargeError) {
+                res.status(413).json({ error: 'Request body too large', requestId });
+                return;
+            }
+            res.status(400).json({ error: 'Failed to read request body', requestId });
             return;
         }
 
@@ -100,6 +147,8 @@ export function withBotAuth(
                 ip,
             });
 
+            BotMetrics.authFailure('missing_headers');
+            recordMetrics(401);
             res.status(401).json({
                 error: 'Missing authentication headers',
                 required: ['X-API-KEY', 'X-SIGNATURE', 'X-TIMESTAMP', 'X-NONCE'],
@@ -123,6 +172,8 @@ export function withBotAuth(
                 ip,
             });
 
+            BotMetrics.authFailure('invalid_api_key');
+            recordMetrics(401);
             res.status(401).json({ error: 'Invalid API key' });
             return;
         }
@@ -220,8 +271,10 @@ export function withBotAuth(
             return;
         }
 
-        // Check rate limit
-        const rateLimitResult = await checkRateLimit(apiKeyId, ip);
+        // Check rate limit (differentiated by read/write operation, with per-route overrides)
+        const rateLimitType = getRateLimitType(req.method);
+        const rateLimitPath = req.url?.split('?')[0] ?? '';
+        const rateLimitResult = await checkRateLimit(apiKeyId, ip, rateLimitType, rateLimitPath);
         if (!rateLimitResult.allowed) {
             logAudit({
                 requestId,
@@ -235,11 +288,23 @@ export function withBotAuth(
                 ip,
             });
 
+            // Record rate limit metric
+            BotMetrics.rateLimitBlocked(requestPath, rateLimitType);
+
             res.setHeader('X-RateLimit-Remaining', '0');
             res.setHeader('X-RateLimit-Reset', rateLimitResult.resetAt.toString());
+            res.setHeader('X-RateLimit-Limit', rateLimitResult.limit.toString());
+            res.setHeader('X-RateLimit-Type', rateLimitResult.type);
+            if (rateLimitResult.route) {
+                res.setHeader('X-RateLimit-Route', rateLimitResult.route);
+            }
+            recordMetrics(429);
             res.status(429).json({
                 error: 'Rate limit exceeded',
                 retryAfter: Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000),
+                limit: rateLimitResult.limit,
+                type: rateLimitResult.type,
+                route: rateLimitResult.route,
             });
             return;
         }
@@ -247,6 +312,11 @@ export function withBotAuth(
         // Set rate limit headers
         res.setHeader('X-RateLimit-Remaining', rateLimitResult.remaining.toString());
         res.setHeader('X-RateLimit-Reset', rateLimitResult.resetAt.toString());
+        res.setHeader('X-RateLimit-Limit', rateLimitResult.limit.toString());
+        res.setHeader('X-RateLimit-Type', rateLimitResult.type);
+        if (rateLimitResult.route) {
+            res.setHeader('X-RateLimit-Route', rateLimitResult.route);
+        }
 
         // Check RBAC permission
         if (!hasPermission(apiKey.role, permission)) {
@@ -302,6 +372,8 @@ export function withBotAuth(
         // Call the actual handler
         try {
             await handler(authReq, res);
+            // Record metrics with the actual response status
+            recordMetrics(res.statusCode || 200);
         } catch (err: any) {
             logAudit({
                 requestId,
@@ -316,6 +388,7 @@ export function withBotAuth(
                 ip,
             });
 
+            recordMetrics(500);
             res.status(500).json({
                 error: 'Internal server error',
                 requestId,
@@ -334,12 +407,12 @@ function getClientIp(req: NextApiRequest): string {
         const ips = Array.isArray(forwardedFor)
             ? forwardedFor[0]
             : forwardedFor.split(',')[0];
-        return ips.trim();
+        return ips?.trim() ?? 'unknown';
     }
 
     const realIp = req.headers['x-real-ip'];
     if (realIp) {
-        return Array.isArray(realIp) ? realIp[0] : realIp;
+        return Array.isArray(realIp) ? realIp[0] ?? 'unknown' : realIp;
     }
 
     // Fallback to socket address

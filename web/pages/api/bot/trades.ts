@@ -38,7 +38,7 @@ async function handler(
 
     if (req.method === 'DELETE') {
         // DELETE requires admin permission (bot:orders_cancel used as proxy for admin actions)
-        if (!hasPermission(req.role, 'bot:orders_cancel')) {
+        if (!hasPermission(req.auth.role, 'bot:orders_cancel')) {
             return res.status(403).json({ error: 'Insufficient permission for trades clear' });
         }
         try {

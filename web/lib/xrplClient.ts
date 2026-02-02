@@ -77,6 +77,7 @@ export async function getSharedClient(endpoint: string): Promise<Client> {
     connectPromise = (async () => {
         for (let i = 0; i < endpointsToTry.length; i++) {
             const ep = endpointsToTry[i];
+            if (!ep) continue;
             try {
                 console.log(`[XRPL] Trying endpoint: ${ep}`);
                 sharedClient = new Client(ep, { connectionTimeout: 15000 });

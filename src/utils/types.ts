@@ -22,10 +22,10 @@ export interface OrderBookState {
 }
 
 export interface ExecutionResult {
-    hash?: string;
+    hash?: string | undefined;
     accepted: boolean;
-    reason?: string;
-    txJSON?: Record<string, unknown>;
+    reason?: string | undefined;
+    txJSON?: Record<string, unknown> | undefined;
 }
 
 export interface XRPLError extends RippledError {
