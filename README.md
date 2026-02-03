@@ -1,82 +1,300 @@
-# XRPL Trading Bot — Explained Like a Playground Game
+# XRPL Trading Bot
 
-## 1) Introduction
-- Think of XRP as the playground’s main marble. It needs no sticker (no issuer).
-- Issued coins (like NZD) are marbles with a sticker showing who printed them (the issuer’s r-address). The bot trades these marbles for you.
-- The bot watches the playground trades (order books), then can buy or sell marbles automatically. You can keep it in pretend mode (paper) or let it trade for real.
+A localhost-only automated trading bot for the XRP Ledger decentralized exchange.
 
-## 2) What you need
-- Node.js 20+ and npm (the tools to run the bot).
-- A `.env` file: a secret note that holds your keys and settings. Never show it to anyone.
+---
 
-## 3) Setup (step by step)
-1. Clone the bot:
-   ```bash
-   git clone https://github.com/yourname/xrpl-trading-bot.git
-   cd xrpl-trading-bot
-   ```
-2. Install everything (one time, at the root):
-   ```bash
-   npm install
-   ```
-3. Make your secret `.env` file (copy from example if you have one) and fill it:
-   ```env
-   XRPL_WSS_URL=wss://s.altnet.rippletest.net:51233   # testnet server
-   XRPL_NETWORK=testnet                              # use "mainnet" for real XRP world
-   XRPL_SEED=put_your_secret_seed_here               # never share this
-   TRADE_BASE_CURRENCY=XRP
-   TRADE_QUOTE_CURRENCY=NZD
-   TRADE_ISSUER=rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe    # issuer for NZD on testnet
-   PAPER_TRADING=true                                # "pretend" mode (no real trades)
-   ```
-   - For **mainnet**, change `XRPL_NETWORK=mainnet`, pick a mainnet WebSocket URL, and set a real issuer for your issued coin.
+# Part 1: How the Code Works
 
-## 4) How to run the bot
-- Start both bot (backend) and dashboard (frontend) together:
-  ```bash
-  npm run dev
-  ```
-  - Frontend opens at http://localhost:3000 (your dashboard playground).
-  - Backend connects to XRPL and watches the books.
-- Build everything for production:
-  ```bash
-  npm run build
-  npm start
-  ```
-- Paper mode vs real:
-  - `PAPER_TRADING=true` → pretend trades only; nothing is sent to XRPL.
-  - `PAPER_TRADING=false` → real offers/payments are sent. Be sure you know what you’re doing.
+## Project Structure
 
-## 5) How the bot trades (playground story)
-- The bot looks at two buckets: one for what it gives (`taker_pays`) and one for what it gets (`taker_gets`).
-- If it pays XRP, it uses the string "XRP". If it pays/gets a stickered marble (like NZD), it uses `{ currency: 'NZD', issuer: 'r...address' }`.
-- Order book = a line of kids shouting prices. The bot listens and decides to buy or sell automatically if the deal looks good.
+```
+xrpl-trading-bot/
+├── src/                    # Backend trading engine
+│   ├── index.ts            # CLI entry point
+│   ├── config/             # Environment config loading
+│   ├── runtime/            # TradingRuntime orchestrator
+│   ├── xrpl/               # XRPL client, wallet, currency utils
+│   ├── market/             # OrderBookTracker, AMM service
+│   ├── strategies/         # Scalper, AMM arb, Path arb
+│   ├── execution/          # OfferExecutor, offer building
+│   ├── risk/               # RiskEngine guardrails
+│   ├── analytics/          # PnL tracking, trade history
+│   ├── persistence/        # Circuit breaker state storage
+│   └── security/           # Localhost-only enforcement
+├── web/                    # Next.js dashboard
+│   ├── app/                # React pages
+│   ├── components/         # UI components (charts, etc.)
+│   ├── pages/api/          # API routes
+│   └── lib/                # Shared utilities
+└── scripts/                # Helper scripts (faucet, wallet creation)
+```
 
-## 6) Tips & safety
-- Never share your XRPL_SEED. It is the key to your marbles.
-- Always start on **testnet**. It’s the pretend playground.
-- Switch to **mainnet** only when you understand what every setting does and you’re okay trading real marbles.
+## Core Components
 
-## 7) Switching Between Mainnet and Testnet
+### TradingRuntime (`src/runtime/tradingRuntime.ts`)
+The main orchestrator that:
+- Connects to XRPL WebSocket
+- Initializes wallet and validates network
+- Registers strategies
+- Runs the tick loop (every 4 seconds)
+- Handles graceful shutdown
 
-### Testnet Configuration (Safe for Testing)
+### OrderBookTracker (`src/market/orderBookTracker.ts`)
+- Maintains live order book state (bids/asks)
+- Normalizes XRP drops vs issued currency amounts
+- Calculates spread in basis points
+- Detects stale data
+
+### RiskEngine (`src/risk/riskEngine.ts`)
+- Validates trade intents before execution
+- Tracks daily losses (resets at UTC midnight)
+- Monitors consecutive failures
+- Checks reserve requirements
+- Manages issuer blacklist
+
+### OfferExecutor (`src/execution/offerExecutor.ts`)
+- Builds XRPL `OfferCreate` transactions
+- Handles paper vs live mode
+- Detects partial fills
+- Calculates slippage
+- Records trade history
+
+### Strategies (`src/strategies/`)
+Each strategy implements the `Strategy` interface:
+```typescript
+interface Strategy {
+  name: string;
+  tick(ctx: StrategyContext): Promise<void>;
+}
+```
+
+**Available strategies:**
+1. **ScalperStrategy** - Spread-based market making
+2. **AMMArbitrageStrategy** - Order book vs AMM arbitrage
+3. **PathArbitrageStrategy** - Multi-hop payment path discovery
+
+## Data Flow
+
+```
+XRPL WebSocket
+      │
+      ▼
+OrderBookTracker ──► tick() ──► Strategy.tick()
+      │                              │
+      │                              ▼
+      │                        RiskEngine.approveIntent()
+      │                              │
+      │                              ▼
+      │                        OfferExecutor.placeOffer()
+      │                              │
+      │                              ▼
+      └──────────────────────► XRPL (if live mode)
+```
+
+## Trade Execution Pipeline
+
+1. **Order Book Monitoring**: `OrderBookTracker` polls bids/asks every tick
+2. **Strategy Evaluation**: Each strategy analyzes market state
+3. **Risk Check**: `RiskEngine` validates size, loss limits, reserves
+4. **Slippage Check**: Compare expected vs actual price
+5. **Offer Placement**: `OfferExecutor` builds and submits transaction
+6. **Fill Detection**: Parse transaction metadata for partial fills
+7. **P&L Recording**: Update trade history and stats
+
+## P&L Tracking
+
+| Metric | Description | Storage |
+|--------|-------------|---------|
+| **Total P&L** | Cumulative profit/loss | `trade_history.json` |
+| **Today's P&L** | Current UTC day | Resets at midnight |
+| **Trade P&L** | Per-trade result | `(exit - entry) × qty - fees` |
+
+## Position States
+
+| State | Meaning |
+|-------|---------|
+| **Flat** | No open position |
+| **Long** | Holding base currency |
+| **Short** | Sold base currency |
+
+## Win Rate
+
+```
+Win Rate = (Winning Trades / Total Trades) × 100%
+```
+- **Win**: P&L > 0
+- **Loss**: P&L ≤ 0
+
+## Risk Guardrails
+
+| Guardrail | Trigger |
+|-----------|---------|
+| Daily Loss Limit | `dailyLoss >= MAX_DAILY_LOSS_XRP` |
+| Kill Switch | `consecutiveFailures >= 5` |
+| Reserve Floor | `availableXRP < RESERVE_FLOOR_XRP` |
+| Issuer Blacklist | Untrusted issuer detected |
+| Max Trade Size | `tradeSize > MAX_TRADE_SIZE` |
+| Slippage Protection | `slippageBps > maxSlippageBps` |
+| Circuit Breaker | Path arb losing streak |
+
+## Graceful Shutdown
+
+On `SIGTERM`/`SIGINT`:
+1. Stop tick processing
+2. Cancel open offers
+3. Stop strategies (LIFO order)
+4. Close persistence stores
+5. Disconnect XRPL WebSocket
+6. Exit cleanly
+
+---
+
+# Part 2: How to Run on Testnet (Safe Mode)
+
+## Prerequisites
+
+- Node.js 20+
+- npm
+
+## Quick Start
+
+```bash
+# Clone and install
+git clone https://github.com/yourname/xrpl-trading-bot.git
+cd xrpl-trading-bot
+npm install
+
+# Create .env file
+cp .env.example .env
+```
+
+## Testnet Configuration
+
+Edit `.env`:
 ```env
+# Network
 XRPL_NETWORK=testnet
 XRPL_WSS_URL=wss://s.altnet.rippletest.net:51233
+
+# Wallet (testnet only!)
+XRPL_SEED_TESTNET=sYourTestnetSeedHere
+
+# Trading pair
+TRADE_BASE_CURRENCY=XRP
+TRADE_QUOTE_CURRENCY=RLUSD
+TRADE_ISSUER=rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De
+
+# Safety
 PAPER_TRADING=true
 ENABLE_TESTNET_FAUCET=true
+BOT_LOCAL_ONLY=true
 ```
 
 **Testnet WebSocket endpoints:**
 - `wss://s.altnet.rippletest.net:51233` (primary)
 - `wss://testnet.xrpl-labs.com` (alternative)
 
-### Mainnet Configuration (Real Money!)
+## Create a Testnet Wallet
+
+```bash
+npm run faucet
+```
+
+This generates a new testnet wallet and funds it with test XRP.
+
+## Fund with Test RLUSD
+
+```bash
+npm run fund:rlusd:testnet
+```
+
+This creates a trustline and requests RLUSD from the testnet faucet.
+
+## Run the Bot
+
+```bash
+npm run dev
+```
+
+- Dashboard opens at http://localhost:3000
+- Backend connects to XRPL testnet
+- **Paper mode by default** — no real trades
+
+## Dashboard Features
+
+| Section | Description |
+|---------|-------------|
+| **Balance Banner** | XRP and quote currency balances |
+| **Price Chart** | Live candlestick chart |
+| **Stats Cards** | P&L, win rate, position state |
+| **Bot Control** | Start/stop, pair selection |
+| **Active Orders** | Open orders on the DEX |
+| **Recent Trades** | Trade history with P&L |
+| **Risk Dashboard** | Exposure, loss limits, kill switch |
+
+## Paper Trading (Simulation)
+
+With `PAPER_TRADING=true`:
+- Trades are **simulated locally**
+- No transactions sent to XRPL
+- P&L and stats still tracked
+- Perfect for testing strategies
+
+## Testnet Safety Features
+
+1. **Network mismatch protection**: Bot refuses to start if wallet doesn't match network
+2. **Faucet enabled**: Can request free test tokens
+3. **Paper mode default**: Must explicitly enable live trading
+4. **Localhost only**: Cannot run on cloud platforms
+
+## Troubleshooting
+
+| Error | Solution |
+|-------|----------|
+| "Wallet network mismatch" | Use a testnet wallet, not mainnet |
+| "Invalid issuer address" | Check `TRADE_ISSUER` is valid r-address |
+| "Order book stale" | XRPL connection issue, check WebSocket URL |
+| "Reserve floor" | Get more test XRP from faucet |
+
+---
+
+# Part 3: How to Run on Mainnet (Real Money!)
+
+## ⚠️ WARNING: Real Funds at Risk
+
+Mainnet trading uses **real XRP and tokens**. You can lose money. Make sure you:
+- Fully understand the code and strategies
+- Have tested extensively on testnet
+- Set conservative risk limits
+- Start with small position sizes
+
+## Mainnet Configuration
+
+Edit `.env`:
 ```env
+# Network
 XRPL_NETWORK=mainnet
 XRPL_WSS_URL=wss://xrplcluster.com
-PAPER_TRADING=false
+
+# Wallet (NEVER share this!)
+XRPL_SEED=sYourMainnetSeedHere
+
+# Trading pair (use mainnet issuers!)
+TRADE_BASE_CURRENCY=XRP
+TRADE_QUOTE_CURRENCY=USD
+TRADE_ISSUER=rMainnetIssuerAddressHere
+
+# Safety - START WITH PAPER MODE
+PAPER_TRADING=true
 ENABLE_TESTNET_FAUCET=false
+BOT_LOCAL_ONLY=true
+
+# Risk controls - BE CONSERVATIVE
+MAX_DAILY_LOSS_XRP=50
+MAX_TRADE_SIZE=100
+RESERVE_FLOOR_XRP=50
+POSITION_SIZE_XRP=10
 ```
 
 **Mainnet WebSocket endpoints:**
@@ -84,246 +302,157 @@ ENABLE_TESTNET_FAUCET=false
 - `wss://s1.ripple.com` (Ripple-operated)
 - `wss://s2.ripple.com` (Ripple-operated, backup)
 
-### ⚠️ Critical: Network Safety Checks
+## Switching from Testnet to Mainnet
 
-The bot has built-in safety guards to prevent accidental misconfigurations:
+### Checklist
 
-1. **Wallet network mismatch protection**: A testnet wallet cannot be used on mainnet, and vice versa. The bot will refuse to start if there's a mismatch.
-
-2. **Faucet safety**: `ENABLE_TESTNET_FAUCET=true` is blocked on mainnet to prevent accidents.
-
-3. **Paper trading default**: `PAPER_TRADING` defaults to `true` — you must explicitly set it to `false` to trade real funds.
-
-### Switching Checklist
-
-**Testnet → Mainnet:**
 - [ ] Set `XRPL_NETWORK=mainnet`
-- [ ] Update `XRPL_WSS_URL` to a mainnet endpoint
-- [ ] Use a **mainnet wallet** (different seed/secret numbers!)
+- [ ] Update `XRPL_WSS_URL` to mainnet endpoint
+- [ ] Use a **mainnet wallet** (different seed!)
 - [ ] Set `ENABLE_TESTNET_FAUCET=false`
-- [ ] Update `TRADE_ISSUER` to a mainnet issuer address
-- [ ] Review `MAX_DAILY_LOSS_XRP` and `RESERVE_FLOOR_XRP` for mainnet values
-- [ ] Consider keeping `PAPER_TRADING=true` initially to validate config
+- [ ] Update `TRADE_ISSUER` to mainnet issuer
+- [ ] Review and lower risk limits
+- [ ] Keep `PAPER_TRADING=true` initially
+- [ ] Test with paper mode first
+- [ ] Only set `PAPER_TRADING=false` when ready
 
-**Mainnet → Testnet:**
-- [ ] Set `XRPL_NETWORK=testnet`
-- [ ] Update `XRPL_WSS_URL` to a testnet endpoint
-- [ ] Use a **testnet wallet** (you can use the faucet to fund it)
-- [ ] Set `ENABLE_TESTNET_FAUCET=true` (optional, for auto-funding)
-- [ ] Update `TRADE_ISSUER` to a testnet issuer address
+### Going Live
 
-### Creating a Testnet Wallet
-```bash
-npm run create-testnet-wallet
-```
-This generates a new testnet wallet and optionally funds it via the faucet.
-
-## 8) 🔒 Localhost-Only Security
-
-### Why Localhost Only?
-
-**This trading bot is LOCKED to localhost execution by default.** This is a critical security measure:
-
-- **Cloud platforms are dangerous for trading bots** — Your private keys could be exposed through logs, environment variable leaks, or container inspection.
-- **Remote access exposes your funds** — Anyone who can reach your dashboard could control your trades.
-- **No cloud deployment** — Vercel, AWS Lambda, Heroku, Railway, Render, Fly.io, and other platforms are blocked.
-
-### Security Gates
-
-The bot enforces localhost-only execution at **multiple layers**:
-
-| Gate | Location | Protection |
-|------|----------|------------|
-| CLI startup | `src/index.ts` | Blocks `npm start` / `npm run dev:backend` on cloud |
-| Runtime creation | `src/runtime/tradingRuntime.ts` | Blocks TradingRuntime instantiation on cloud |
-| Dashboard startup | `web/server.js` | Custom server binds to 127.0.0.1 only |
-| API authentication | `web/lib/botAuth/withBotAuth.ts` | Rejects requests from non-localhost IPs |
-| Health endpoint | `web/pages/api/health.ts` | Localhost-only health checks |
-| Vercel deployment | `vercel.json` | Returns 403 if somehow deployed |
-
-### Blocked Cloud Platforms
-
-The bot detects and blocks execution on:
-- Vercel (`VERCEL`, `VERCEL_ENV`)
-- AWS Lambda (`AWS_LAMBDA_FUNCTION_NAME`)
-- Google Cloud Run/Functions (`GOOGLE_CLOUD_PROJECT`, `K_SERVICE`)
-- Azure Functions (`WEBSITE_SITE_NAME`)
-- Heroku (`DYNO`)
-- Railway (`RAILWAY_PROJECT_ID`)
-- Render (`RENDER`)
-- Fly.io (`FLY_APP_NAME`)
-- DigitalOcean App Platform (`DIGITALOCEAN_APP_NAME`)
-- Netlify (`NETLIFY`)
-- Kubernetes (`KUBERNETES_SERVICE_HOST`)
-
-### Request IP Validation
-
-All API requests are validated:
-- ✅ Allowed: `127.0.0.1`, `::1`, `localhost`
-- ❌ Blocked: Any external IP (192.168.x.x, 10.x.x.x, public IPs)
-- ❌ Blocked: Requests with `X-Forwarded-For` header (indicates proxy/load balancer)
-
-### Configuration
+Once you've validated config in paper mode:
 
 ```env
-# Enable localhost-only enforcement (default: true)
-BOT_LOCAL_ONLY=true
-
-# DANGEROUS: Override localhost-only restriction
-# Only use if you understand the risks and need to run in Docker/custom environment
-# BOT_ALLOW_REMOTE=false
+# Enable live trading (DANGEROUS!)
+PAPER_TRADING=false
 ```
 
-### Running Locally
+## Mainnet Safety Features
+
+### Localhost-Only Execution
+
+The bot is **locked to localhost** by default:
+- Blocked on all cloud platforms (Vercel, AWS, Heroku, etc.)
+- API only accepts requests from 127.0.0.1
+- Dashboard binds to localhost only
+
+### Blocked Platforms
+
+The bot detects and refuses to run on:
+- Vercel, AWS Lambda, Google Cloud
+- Azure Functions, Heroku, Railway
+- Render, Fly.io, DigitalOcean
+- Netlify, Kubernetes
+
+### Risk Controls
+
+| Control | Description | Recommended Mainnet Value |
+|---------|-------------|---------------------------|
+| `MAX_DAILY_LOSS_XRP` | Stop trading after this loss | 50-100 XRP |
+| `MAX_TRADE_SIZE` | Maximum single order | 100 XRP |
+| `RESERVE_FLOOR_XRP` | Minimum balance to keep | 50+ XRP |
+| `POSITION_SIZE_XRP` | Trade size | 10-50 XRP |
+
+### Kill Switch
+
+The bot automatically shuts down if:
+- Daily loss limit reached
+- 5+ consecutive failed trades
+- Balance falls below reserve floor
+
+## Running in Production
 
 ```bash
-# Development mode (localhost only)
-npm run dev
+# Build for production
+npm run build
 
-# Production mode with custom localhost-bound server
-npm run dashboard   # Just the dashboard
-npm run start       # Bot + dashboard
+# Start (localhost only)
+npm start
 ```
 
-### Docker Considerations
+## Monitoring
 
-If you need to run in Docker for local development:
-
-```env
-# In your .env file
-BOT_ALLOW_REMOTE=true
-```
-
-⚠️ **Warning**: Only use `BOT_ALLOW_REMOTE=true` when you understand the risks:
-- Container must not be exposed to the network
-- No port forwarding to external interfaces
-- No reverse proxy pointing to the container
-
-### What Happens on Violation
-
-**On startup (CLI/runtime):**
-```
-🚫 SECURITY: Remote/cloud execution blocked
-This bot is locked to localhost for safety.
-Set BOT_LOCAL_ONLY=true to run locally, or BOT_ALLOW_REMOTE=true (dangerous) to override.
-```
-Process exits with code 1.
-
-**On API request from remote IP:**
-```json
-{
-  "error": "Remote access disabled",
-  "reason": "Request IP 192.168.1.100 is not localhost. This bot only accepts connections from 127.0.0.1 or ::1.",
-  "remoteAddress": "192.168.1.100"
-}
-```
-HTTP 403 Forbidden.
-
-## 9) Troubleshooting (in kid words)
-- "Invalid parameters" → Something in the message was wrong. Check that XRP has no issuer and issued coins have a real issuer r-address.
-- "Issued currency requires a valid classic issuer address" → You forgot the sticker or wrote it wrong. Set `TRADE_ISSUER` to a real r-address.
-- If stuck, flip back to paper mode (`PAPER_TRADING=true`) and testnet while you fix things.
-
-## 10) Operations Guide
-
-### Health Endpoint
-The bot exposes a health check endpoint at `/api/health`:
+### Health Check
 ```bash
 curl http://localhost:3000/api/health
 ```
-Returns:
-```json
-{
-  "ok": true,
-  "timestamp": "2026-02-02T12:00:00Z",
-  "uptimeSec": 3600,
-  "version": "0.1.0",
-  "requestId": "req_abc123",
-  "xrpl": { "connected": true, "endpoint": "wss://s.altnet.rippletest.net", "network": "testnet" },
-  "bot": { "state": "RUNNING", "paperTrading": true }
-}
+
+### Logs
+Watch the terminal for:
+- Trade executions
+- Risk warnings
+- Error messages
+
+### Trade History
+- Dashboard shows recent trades
+- `trade_history.json` persists data
+- CSV export available
+
+## Emergency Procedures
+
+### Stop the Bot
+```bash
+# Graceful shutdown
+Ctrl+C
+
+# Or send SIGTERM
+kill -TERM <pid>
 ```
 
-### Graceful Shutdown
-The bot handles `SIGTERM` and `SIGINT` signals for clean shutdown:
-1. Stops accepting new ticks
-2. Cancels all open offers (best-effort)
-3. Disconnects XRPL WebSocket cleanly
-4. Closes circuit breaker persistence store
-5. Exits process with code 0
+### Cancel All Orders
+The bot attempts to cancel open offers on shutdown. If needed manually:
+1. Stop the bot
+2. Use XRPL explorer or wallet to cancel remaining offers
 
-On deploy/restart, send `SIGTERM` to allow graceful cleanup.
+### Recover from Errors
+1. Check logs for error messages
+2. Verify wallet has sufficient balance
+3. Check XRPL network status
+4. Review risk settings
+5. Restart in paper mode to diagnose
 
-### Circuit Breaker Persistence
-Path arbitrage circuit breaker state persists across restarts:
-- **With Redis**: Set `REDIS_URL=redis://localhost:6379`
-- **Without Redis**: Falls back to file storage in `./data/breaker_*.json`
-- **Configure**: Set `PATH_ARB_BREAKER_STORE=redis|file|auto` (default: auto)
+---
 
-This prevents the bot from resuming risky execution immediately after restart.
+# Environment Variables Reference
 
-## 11) Environment Variables Reference
-
-### Core Settings
+## Core Settings
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `XRPL_WSS_URL` | XRPL WebSocket endpoint | `wss://s1.ripple.com` |
-| `XRPL_NETWORK` | Network (mainnet/testnet/devnet) | `mainnet` |
-| `XRPL_SEED` | Wallet seed (keep secret!) | - |
-| `PAPER_TRADING` | Enable paper trading mode | `true` |
+| `XRPL_NETWORK` | Network (mainnet/testnet) | `mainnet` |
+| `XRPL_SEED` | Wallet seed (secret!) | - |
+| `PAPER_TRADING` | Simulate trades | `true` |
 
-### Security Settings
+## Security
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `BOT_LOCAL_ONLY` | Enforce localhost-only execution | `true` |
-| `BOT_ALLOW_REMOTE` | Override localhost restriction (dangerous!) | `false` |
-| `BOT_API_DEV_MODE` | Skip auth for localhost dev (dev only!) | `false` |
+| `BOT_LOCAL_ONLY` | Localhost-only execution | `true` |
+| `BOT_ALLOW_REMOTE` | Override localhost (dangerous!) | `false` |
+| `BOT_API_DEV_MODE` | Skip auth in dev | `false` |
 
-### Trading Settings
+## Trading
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TRADE_BASE_CURRENCY` | Base currency (e.g., XRP) | `XRP` |
-| `TRADE_QUOTE_CURRENCY` | Quote currency (e.g., USD) | `NZD` |
-| `TRADE_ISSUER` | Issuer address for issued currencies | - |
-| `POSITION_SIZE_XRP` | Position size in XRP | `5` |
-| `ORDERBOOK_STALE_MS` | Order book staleness threshold | `5000` |
+| `TRADE_BASE_CURRENCY` | Base currency | `XRP` |
+| `TRADE_QUOTE_CURRENCY` | Quote currency | `NZD` |
+| `TRADE_ISSUER` | Issuer for non-XRP | - |
+| `POSITION_SIZE_XRP` | Trade size | `5` |
 
-### Risk Controls
+## Risk Controls
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `MAX_DAILY_LOSS_XRP` | Maximum daily loss in XRP | `500` |
-| `MAX_TRADE_SIZE` | Maximum single trade size | `1000` |
-| `RESERVE_FLOOR_XRP` | Minimum available XRP after reserves | `25` |
-| `RESERVE_BUFFER_BPS` | Additional buffer over reserve (basis points) | `0` |
-| `RESERVE_BUFFER_XRP` | Additional fixed buffer over reserve | `0` |
+| `MAX_DAILY_LOSS_XRP` | Daily loss limit | `500` |
+| `MAX_TRADE_SIZE` | Max order size | `1000` |
+| `RESERVE_FLOOR_XRP` | Min balance | `25` |
 
-### Path Arbitrage
+## Strategies
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PATH_ARB_ENABLED` | Enable path arbitrage strategy | `false` |
-| `PATH_ARB_DRY_RUN` | Log opportunities without executing | `true` |
-| `PATH_ARB_BREAKER_STORE` | Persistence backend (redis/file/auto) | `auto` |
-| `PATH_ARB_CIRCUIT_BREAKER_MAX_LOSS_BPS` | Loss threshold to trip breaker | `500` |
+| `PATH_ARB_ENABLED` | Enable path arbitrage | `false` |
+| `PATH_ARB_DRY_RUN` | Log only, don't execute | `true` |
+| `MIN_SPREAD_BPS` | Min spread for scalper | `10` |
+| `AMM_ARB_MIN_PROFIT_BPS` | Min AMM arb profit | `20` |
 
-### API Authentication
+## Persistence
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `BOT_API_KEYS` | JSON array of API keys with roles | - |
-| `BOT_API_TTL_SECONDS` | Request timestamp validity window | `60` |
-| `BOT_API_RATE_LIMIT_READ_PER_MIN` | Rate limit for GET requests | `60` |
-| `BOT_API_RATE_LIMIT_WRITE_PER_MIN` | Rate limit for POST/PUT/DELETE | `20` |
-| `BOT_API_ALLOWED_ORIGINS` | CORS allowlist (comma-separated) | - |
-| `BOT_API_ALLOWED_IPS` | IP allowlist (comma-separated) | - |
-
-### Audit Logging
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AUDIT_LOG_SINK` | Audit log destination (stdout/file/none) | `stdout` (dev), `file` (prod) |
-| `AUDIT_LOG_MIN_LEVEL` | Minimum level to log (all/denied/error) | `all` |
-
-### Persistence
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `REDIS_URL` | Redis connection URL (optional) | - |
-
-# xrpl-trading-bot
+| `REDIS_URL` | Redis for circuit breaker | - |
+| `PATH_ARB_BREAKER_STORE` | Breaker storage (redis/file/auto) | `auto` |

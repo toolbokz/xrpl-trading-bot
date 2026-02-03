@@ -23,6 +23,9 @@ const MAINNET_USD_ISSUERS = [
     'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De', // RLUSD (Ripple USD)
 ];
 
+// Testnet RLUSD faucet issuer
+const TESTNET_RLUSD_ISSUER = 'rnEVYfAWYP5HpPaWQiPSJMyDeUiEJ6zhy2';
+
 // Approximate USD to NZD conversion (updated periodically)
 const USD_TO_NZD_RATE = 1.62;
 
@@ -179,16 +182,37 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
         const baseCurrency = queryBase || cfg.tradingPair.baseCurrency || 'XRP';
         const baseIssuer = queryIssuer || cfg.tradingPair.baseIssuer || cfg.tradingPair.issuer || '';
 
+        const isTestnet = cfg.xrpl.network === 'testnet';
+
         // Find the quote currency balance if it's not XRP
         let quoteBalance = 0;
         let quoteCurrencyDisplay = quoteCurrency;
 
-        if (quoteCurrency.toUpperCase() !== 'XRP' && quoteIssuer) {
-            const quoteLine = trustLines.find(
-                (line) => currencyMatches(line.currency, quoteCurrency) && line.issuer === quoteIssuer
-            );
-            if (quoteLine) {
-                quoteBalance = quoteLine.balance;
+        if (quoteCurrency.toUpperCase() !== 'XRP') {
+            const candidateIssuers = [quoteIssuer];
+            // Fallback: RLUSD testnet faucet issuer if running on testnet
+            if (isTestnet && quoteCurrency.toUpperCase() === 'RLUSD') {
+                candidateIssuers.push(TESTNET_RLUSD_ISSUER);
+            }
+
+            for (const issuer of candidateIssuers.filter(Boolean)) {
+                const quoteLine = trustLines.find(
+                    (line) => currencyMatches(line.currency, quoteCurrency) && line.issuer === issuer
+                );
+                if (quoteLine) {
+                    quoteBalance = quoteLine.balance;
+                    quoteCurrencyDisplay = decodeCurrency(quoteLine.currency);
+                    break;
+                }
+            }
+
+            // Last-resort: on testnet, if RLUSD balance exists under a different issuer, surface it
+            if (isTestnet && quoteCurrency.toUpperCase() === 'RLUSD' && quoteBalance === 0) {
+                const anyRlusd = trustLines.find((line) => currencyMatches(line.currency, quoteCurrency));
+                if (anyRlusd) {
+                    quoteBalance = anyRlusd.balance;
+                    quoteCurrencyDisplay = decodeCurrency(anyRlusd.currency);
+                }
             }
         } else if (quoteCurrency.toUpperCase() === 'XRP') {
             // If quote is XRP, use XRP balance
@@ -199,14 +223,31 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
         let baseBalance = balance; // Default to XRP balance
         let baseCurrencyDisplay = baseCurrency;
 
-        if (baseCurrency.toUpperCase() !== 'XRP' && baseIssuer) {
-            const baseLine = trustLines.find(
-                (line) => currencyMatches(line.currency, baseCurrency) && line.issuer === baseIssuer
-            );
-            if (baseLine) {
-                baseBalance = baseLine.balance;
-            } else {
-                baseBalance = 0;
+        if (baseCurrency.toUpperCase() !== 'XRP') {
+            const candidateIssuers = [baseIssuer];
+            if (isTestnet && baseCurrency.toUpperCase() === 'RLUSD') {
+                candidateIssuers.push(TESTNET_RLUSD_ISSUER);
+            }
+
+            for (const issuer of candidateIssuers.filter(Boolean)) {
+                const baseLine = trustLines.find(
+                    (line) => currencyMatches(line.currency, baseCurrency) && line.issuer === issuer
+                );
+                if (baseLine) {
+                    baseBalance = baseLine.balance;
+                    baseCurrencyDisplay = decodeCurrency(baseLine.currency);
+                    break;
+                } else {
+                    baseBalance = 0;
+                }
+            }
+
+            if (isTestnet && baseCurrency.toUpperCase() === 'RLUSD' && baseBalance === 0) {
+                const anyRlusd = trustLines.find((line) => currencyMatches(line.currency, baseCurrency));
+                if (anyRlusd) {
+                    baseBalance = anyRlusd.balance;
+                    baseCurrencyDisplay = decodeCurrency(anyRlusd.currency);
+                }
             }
         }
 

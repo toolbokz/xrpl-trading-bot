@@ -619,19 +619,19 @@ export default function Page() {
                             <Badge tone={bot.network === 'MAINNET' ? 'danger' : 'neutral'}>{bot.network}</Badge>
                         </div>
                         <div className="flex flex-wrap items-center gap-6">
-                            {/* XRP Balance */}
+                            {/* XRP Balance - always shown */}
                             <div className="flex flex-col items-end">
                                 <div className="text-xl font-semibold text-slate-100">
-                                    {bot.baseBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })} <span className="text-sky-400">{bot.baseCurrency || 'XRP'}</span>
+                                    {bot.xrpBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })} <span className="text-sky-400">XRP</span>
                                 </div>
-                                {bot.baseCurrency === 'XRP' && bot.nzdRate > 0 && (
+                                {bot.nzdRate > 0 && (
                                     <div className="text-xs text-slate-400">
-                                        ≈ ${(bot.baseBalance * bot.nzdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NZD
+                                        ≈ ${(bot.xrpBalance * bot.nzdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NZD
                                     </div>
                                 )}
                             </div>
-                            {/* Quote Currency Balance */}
-                            {bot.quoteCurrency && (
+                            {/* Quote Currency Balance - only when pair selected */}
+                            {selectedPairKey && bot.quoteCurrency && (
                                 <div className="flex flex-col items-end border-l border-white/10 pl-6">
                                     <div className="text-xl font-semibold text-slate-100">
                                         {bot.quoteBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })} <span className="text-emerald-400">{bot.quoteCurrency}</span>
@@ -647,7 +647,7 @@ export default function Page() {
                             <div className="flex flex-col items-end border-l border-white/10 pl-6">
                                 <div className="text-xs text-slate-500 uppercase tracking-wider">Total Value</div>
                                 <div className="text-lg font-semibold text-amber-400">
-                                    ${((bot.baseCurrency === 'XRP' ? bot.baseBalance * bot.nzdRate : 0) + (bot.quoteCurrency === 'RLUSD' ? bot.quoteBalance * 1.62 : 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NZD
+                                    ${((bot.xrpBalance * bot.nzdRate) + (selectedPairKey && bot.quoteCurrency === 'RLUSD' ? bot.quoteBalance * 1.62 : 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NZD
                                 </div>
                             </div>
                         </div>

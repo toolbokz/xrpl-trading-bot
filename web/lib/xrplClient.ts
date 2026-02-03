@@ -76,8 +76,12 @@ export async function getSharedClient(endpoint: string): Promise<Client> {
     // Rate limit reconnection attempts with jittered backoff
     const now = Date.now();
     const reconnectDelay = getReconnectDelay();
-    if (now - lastConnectAttempt < Math.max(MIN_RECONNECT_INTERVAL, reconnectDelay)) {
-        throw new Error('Rate limited - please wait before retrying');
+    const minDelay = Math.max(MIN_RECONNECT_INTERVAL, reconnectDelay);
+    const elapsed = now - lastConnectAttempt;
+    if (elapsed < minDelay) {
+        const waitMs = minDelay - elapsed;
+        logger.debug({ waitMs }, '[XRPL] Throttling reconnect to avoid rate limit');
+        await sleep(waitMs);
     }
 
     // If already connecting, wait for that
@@ -88,7 +92,7 @@ export async function getSharedClient(endpoint: string): Promise<Client> {
         }
     }
 
-    lastConnectAttempt = now;
+    lastConnectAttempt = Date.now();
     reconnectAttempt++;
 
     // Try endpoints in order, starting with the provided one or cycling through fallbacks
@@ -103,14 +107,14 @@ export async function getSharedClient(endpoint: string): Promise<Client> {
             if (!ep) continue;
             try {
                 logger.debug({ endpoint: ep, attempt: reconnectAttempt }, '[XRPL] Trying endpoint with backoff');
-                
+
                 // Apply jittered backoff delay before attempting connection
                 if (i > 0) {
                     const delay = getReconnectDelay();
                     logger.debug({ delay }, '[XRPL] Backoff delay before next attempt');
                     await sleep(delay);
                 }
-                
+
                 sharedClient = new Client(ep, { connectionTimeout: 15000 });
                 await sharedClient.connect();
                 logger.info({ endpoint: ep }, '[XRPL] Shared client connected');

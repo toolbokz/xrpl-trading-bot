@@ -9,7 +9,6 @@ import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../lib/localApi';
 import { getPrometheusMetrics, BotMetrics } from '../../lib/metrics/collector';
 import { botController } from '../../lib/botController';
-import { logger } from '../../../src/analytics/logger';
 
 // Bot state sync interval
 let syncInterval: NodeJS.Timeout | null = null;

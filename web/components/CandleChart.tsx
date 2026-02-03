@@ -21,10 +21,13 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
 
+    // Initialize chart
     useEffect(() => {
         if (!containerRef.current) return;
 
         const chart = createChart(containerRef.current, {
+            width: containerRef.current.clientWidth || 600,
+            height: height,
             layout: {
                 background: { color: BINANCE_COLORS.background },
                 textColor: BINANCE_COLORS.text,
@@ -33,9 +36,33 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
                 vertLines: { color: BINANCE_COLORS.grid },
                 horzLines: { color: BINANCE_COLORS.grid },
             },
-            timeScale: { borderColor: BINANCE_COLORS.grid },
-            rightPriceScale: { borderColor: BINANCE_COLORS.grid },
-            autoSize: true,
+            timeScale: {
+                borderColor: BINANCE_COLORS.grid,
+                timeVisible: true,
+                secondsVisible: false,
+            },
+            rightPriceScale: {
+                borderColor: BINANCE_COLORS.grid,
+                scaleMargins: {
+                    top: 0.1,
+                    bottom: 0.1,
+                },
+            },
+            crosshair: {
+                mode: 1,
+                horzLine: {
+                    color: '#758696',
+                    width: 1,
+                    style: 2,
+                    labelBackgroundColor: '#2B3139',
+                },
+                vertLine: {
+                    color: '#758696',
+                    width: 1,
+                    style: 2,
+                    labelBackgroundColor: '#2B3139',
+                },
+            },
         });
 
         const series = chart.addCandlestickSeries({
@@ -51,11 +78,11 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
 
         const handleResize = () => {
             if (containerRef.current && chartRef.current) {
-                const { clientWidth } = containerRef.current;
-                chartRef.current.applyOptions({ width: clientWidth });
+                chartRef.current.applyOptions({
+                    width: containerRef.current.clientWidth || 600,
+                });
             }
         };
-        handleResize();
         window.addEventListener('resize', handleResize);
 
         return () => {
@@ -64,13 +91,14 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
             chartRef.current = null;
             seriesRef.current = null;
         };
-    }, []);
+    }, [height]);
 
+    // Update data when it changes
     useEffect(() => {
-        if (seriesRef.current && chartRef.current) {
-            seriesRef.current.setData(data);
-            chartRef.current.timeScale().fitContent();
-        }
+        if (!seriesRef.current || !chartRef.current) return;
+
+        seriesRef.current.setData(data);
+        chartRef.current.timeScale().fitContent();
     }, [data]);
 
     return <div ref={containerRef} style={{ width: '100%', height }} />;
