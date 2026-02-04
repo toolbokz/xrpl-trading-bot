@@ -48,6 +48,16 @@ export interface TradeEventRecord {
     error: string | null;
     isBotTrade: number | null; // 1 = true, 0 = false, null = unknown
     midPriceAtDecision: number | null;
+    // Cost realism fields
+    slippageBpsVsIntent: number | null;
+    slippageBpsVsMid: number | null;
+    spreadPaidBps: number | null;
+    edgeBpsVsMid: number | null;
+    netEdgeBpsVsMid: number | null;
+    txFeeXrp: number | null;
+    ammFeeBps: number | null;
+    fillRatio: number | null;
+    isPartial: number | null; // 1 = true, 0 = false
 }
 
 /**
@@ -151,7 +161,16 @@ function initSchema(db: DatabaseType): void {
             resultCode TEXT,
             error TEXT,
             isBotTrade INTEGER,
-            midPriceAtDecision REAL
+            midPriceAtDecision REAL,
+            slippageBpsVsIntent REAL,
+            slippageBpsVsMid REAL,
+            spreadPaidBps REAL,
+            edgeBpsVsMid REAL,
+            netEdgeBpsVsMid REAL,
+            txFeeXrp REAL,
+            ammFeeBps REAL,
+            fillRatio REAL,
+            isPartial INTEGER
         )
     `);
 
@@ -194,6 +213,46 @@ function initSchema(db: DatabaseType): void {
 }
 
 /**
+ * Cost realism columns to add to existing databases
+ */
+const TRADE_EVENT_EXTRA_COLUMNS = {
+    slippageBpsVsIntent: 'REAL',
+    slippageBpsVsMid: 'REAL',
+    spreadPaidBps: 'REAL',
+    edgeBpsVsMid: 'REAL',
+    netEdgeBpsVsMid: 'REAL',
+    txFeeXrp: 'REAL',
+    ammFeeBps: 'REAL',
+    fillRatio: 'REAL',
+    isPartial: 'INTEGER',
+} as const;
+
+/**
+ * Ensure columns exist on a table (for migrations without a full migration system)
+ * Uses PRAGMA table_info to check existing columns and ALTER TABLE to add missing ones
+ */
+function ensureColumns(db: DatabaseType, table: string, columns: Record<string, string>): void {
+    try {
+        const existingCols = db.pragma(`table_info(${table})`) as Array<{ name: string }>;
+        const existingNames = new Set(existingCols.map(c => c.name));
+
+        const added: string[] = [];
+        for (const [name, type] of Object.entries(columns)) {
+            if (!existingNames.has(name)) {
+                db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+                added.push(name);
+            }
+        }
+
+        if (added.length > 0) {
+            logger.info({ table, columns: added }, 'Added missing columns to feedback database');
+        }
+    } catch (err) {
+        logger.warn({ err, table }, 'Failed to ensure columns exist');
+    }
+}
+
+/**
  * Create prepared statements for performance
  */
 function createPreparedStatements(db: DatabaseType): PreparedStatements {
@@ -203,12 +262,16 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 id, ts, pairKey, strategy, action, side,
                 intentPrice, intentSizeBase, intentSizeQuote,
                 fillPrice, fillSizeBase, fillSizeQuote,
-                txHash, ledgerIndex, resultCode, error, isBotTrade, midPriceAtDecision
+                txHash, ledgerIndex, resultCode, error, isBotTrade, midPriceAtDecision,
+                slippageBpsVsIntent, slippageBpsVsMid, spreadPaidBps,
+                edgeBpsVsMid, netEdgeBpsVsMid, txFeeXrp, ammFeeBps, fillRatio, isPartial
             ) VALUES (
                 @id, @ts, @pairKey, @strategy, @action, @side,
                 @intentPrice, @intentSizeBase, @intentSizeQuote,
                 @fillPrice, @fillSizeBase, @fillSizeQuote,
-                @txHash, @ledgerIndex, @resultCode, @error, @isBotTrade, @midPriceAtDecision
+                @txHash, @ledgerIndex, @resultCode, @error, @isBotTrade, @midPriceAtDecision,
+                @slippageBpsVsIntent, @slippageBpsVsMid, @spreadPaidBps,
+                @edgeBpsVsMid, @netEdgeBpsVsMid, @txFeeXrp, @ammFeeBps, @fillRatio, @isPartial
             )
         `),
         insertSnapshot: db.prepare(`
@@ -255,6 +318,10 @@ export function getFeedbackDb(): DatabaseType {
         dbInstance.pragma('cache_size = -64000'); // 64MB cache
 
         initSchema(dbInstance);
+
+        // Ensure cost realism columns exist (handles existing databases)
+        ensureColumns(dbInstance, 'trade_events', TRADE_EVENT_EXTRA_COLUMNS);
+
         preparedStatements = createPreparedStatements(dbInstance);
 
         logger.info({ dbPath: config.dbPath }, 'Feedback database initialized');
@@ -329,6 +396,15 @@ export function insertTradeEvent(event: TradeEventRecord): void {
             error: event.error,
             isBotTrade: event.isBotTrade,
             midPriceAtDecision: event.midPriceAtDecision,
+            slippageBpsVsIntent: event.slippageBpsVsIntent,
+            slippageBpsVsMid: event.slippageBpsVsMid,
+            spreadPaidBps: event.spreadPaidBps,
+            edgeBpsVsMid: event.edgeBpsVsMid,
+            netEdgeBpsVsMid: event.netEdgeBpsVsMid,
+            txFeeXrp: event.txFeeXrp,
+            ammFeeBps: event.ammFeeBps,
+            fillRatio: event.fillRatio,
+            isPartial: event.isPartial,
         });
     } catch (err) {
         logger.warn({ err, eventId: event.id }, 'Failed to insert trade event');
@@ -396,6 +472,15 @@ export function insertBatch(events: TradeEventRecord[], snapshot?: MarketSnapsho
                     error: event.error,
                     isBotTrade: event.isBotTrade,
                     midPriceAtDecision: event.midPriceAtDecision,
+                    slippageBpsVsIntent: event.slippageBpsVsIntent,
+                    slippageBpsVsMid: event.slippageBpsVsMid,
+                    spreadPaidBps: event.spreadPaidBps,
+                    edgeBpsVsMid: event.edgeBpsVsMid,
+                    netEdgeBpsVsMid: event.netEdgeBpsVsMid,
+                    txFeeXrp: event.txFeeXrp,
+                    ammFeeBps: event.ammFeeBps,
+                    fillRatio: event.fillRatio,
+                    isPartial: event.isPartial,
                 });
             }
             if (snapshot) {

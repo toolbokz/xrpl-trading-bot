@@ -5,6 +5,7 @@ import { StrategyConfig, TradingPair } from '../config';
 import { logger } from '../analytics/logger';
 import { tradeHistory } from '../analytics/tradeHistory';
 import { feedbackEngine } from '../analytics/feedbackEngine';
+import { computeCostRealism } from '../analytics/costRealism';
 import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './offerBuilder';
 
 /**
@@ -171,13 +172,23 @@ export class OfferExecutor {
                 status: 'FILLED',
             });
 
+            // Compute cost realism for paper trades
+            const side = intent.side.toLowerCase() as 'buy' | 'sell';
+            const costMetrics = computeCostRealism({
+                side,
+                intentPrice: intent.price,
+                fillPrice: intent.price, // Paper assumes perfect fill
+                midPriceAtDecision: this.currentMidPrice,
+                ammFeeBps: null, // No AMM fee in paper mode
+            });
+
             // Record feedback event for paper trades
             try {
                 feedbackEngine.recordTradeEvent({
                     pairKey: pairSymbol,
                     strategy: this.currentStrategy,
                     action: 'fill',
-                    side: intent.side.toLowerCase() as 'buy' | 'sell',
+                    side,
                     intentPrice: intent.price,
                     intentSizeBase: intent.amount,
                     fillPrice: intent.price,
@@ -185,6 +196,16 @@ export class OfferExecutor {
                     resultCode: 'paper-mode',
                     isBotTrade: true,
                     midPriceAtDecision: this.currentMidPrice ?? undefined,
+                    // Cost realism fields
+                    slippageBpsVsIntent: costMetrics.slippageBpsVsIntent,
+                    slippageBpsVsMid: costMetrics.slippageBpsVsMid,
+                    spreadPaidBps: costMetrics.spreadPaidBps,
+                    edgeBpsVsMid: costMetrics.edgeBpsVsMid,
+                    netEdgeBpsVsMid: costMetrics.netEdgeBpsVsMid,
+                    txFeeXrp: 0,
+                    ammFeeBps: null,
+                    fillRatio: 1,
+                    isPartial: false,
                 });
             } catch { /* feedback should never crash trading */ }
 
@@ -596,22 +617,46 @@ export class OfferExecutor {
                     slippageBps: fillResult.slippageBps,
                 });
 
+                // Compute cost realism metrics
+                const side = intent.side.toLowerCase() as 'buy' | 'sell';
+                const actualFillPrice = fillResult.effectivePrice || intent.price;
+                const costMetrics = computeCostRealism({
+                    side,
+                    intentPrice: intent.price,
+                    fillPrice: actualFillPrice,
+                    midPriceAtDecision: this.currentMidPrice,
+                    ammFeeBps: null, // TODO: detect AMM vs order book
+                });
+
+                // Standard XRPL transaction fee in XRP
+                const txFeeXrp = 0.000012;
+
                 // Record feedback for successful fill
                 try {
                     feedbackEngine.recordTradeEvent({
                         pairKey: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
                         strategy: this.currentStrategy,
                         action: 'fill',
-                        side: intent.side.toLowerCase() as 'buy' | 'sell',
+                        side,
                         intentPrice: intent.price,
                         intentSizeBase: intent.amount,
-                        fillPrice: fillResult.effectivePrice || intent.price,
+                        fillPrice: actualFillPrice,
                         fillSizeBase: fillResult.takerGotAmount || intent.amount,
                         txHash: res.result.hash,
                         ledgerIndex: (res.result as any).ledger_index,
                         resultCode: txResult ?? 'tesSUCCESS',
                         isBotTrade: true,
                         midPriceAtDecision: this.currentMidPrice ?? undefined,
+                        // Cost realism fields
+                        slippageBpsVsIntent: costMetrics.slippageBpsVsIntent,
+                        slippageBpsVsMid: costMetrics.slippageBpsVsMid,
+                        spreadPaidBps: costMetrics.spreadPaidBps,
+                        edgeBpsVsMid: costMetrics.edgeBpsVsMid,
+                        netEdgeBpsVsMid: costMetrics.netEdgeBpsVsMid,
+                        txFeeXrp,
+                        ammFeeBps: null, // TODO: detect AMM vs order book
+                        fillRatio: fillResult.fillRatio,
+                        isPartial: fillResult.fillRatio < 1,
                     });
                 } catch { /* feedback should never crash trading */ }
             }

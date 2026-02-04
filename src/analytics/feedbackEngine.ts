@@ -68,6 +68,16 @@ export interface TradeEventInput {
     error?: string | undefined;
     isBotTrade?: boolean;
     midPriceAtDecision?: number | undefined;
+    // Cost realism fields
+    slippageBpsVsIntent?: number | null;
+    slippageBpsVsMid?: number | null;
+    spreadPaidBps?: number | null;
+    edgeBpsVsMid?: number | null;
+    netEdgeBpsVsMid?: number | null;
+    txFeeXrp?: number | null;
+    ammFeeBps?: number | null;
+    fillRatio?: number | null;
+    isPartial?: boolean | null;
 }
 
 /**
@@ -107,6 +117,22 @@ export interface StrategyStats {
     winRate: number;
     expectancy: number;
     profitFactor: number;
+}
+
+/**
+ * Cost realism summary statistics
+ */
+export interface CostSummary {
+    fills: number;
+    avgSlippageBpsVsIntent: number | null;
+    avgSlippageBpsVsMid: number | null;
+    avgSpreadPaidBps: number | null;
+    avgEdgeBpsVsMid: number | null;
+    avgNetEdgeBpsVsMid: number | null;
+    avgTxFeeXrp: number | null;
+    totalTxFeeXrp: number | null;
+    partialFillRatio: number;
+    avgFillRatio: number | null;
 }
 
 /**
@@ -222,6 +248,16 @@ class FeedbackEngine {
                 error: this.sanitizeError(input.error),
                 isBotTrade: input.isBotTrade !== undefined ? (input.isBotTrade ? 1 : 0) : null,
                 midPriceAtDecision: input.midPriceAtDecision ?? null,
+                // Cost realism fields
+                slippageBpsVsIntent: input.slippageBpsVsIntent ?? null,
+                slippageBpsVsMid: input.slippageBpsVsMid ?? null,
+                spreadPaidBps: input.spreadPaidBps ?? null,
+                edgeBpsVsMid: input.edgeBpsVsMid ?? null,
+                netEdgeBpsVsMid: input.netEdgeBpsVsMid ?? null,
+                txFeeXrp: input.txFeeXrp ?? null,
+                ammFeeBps: input.ammFeeBps ?? null,
+                fillRatio: input.fillRatio ?? null,
+                isPartial: input.isPartial != null ? (input.isPartial ? 1 : 0) : null,
             };
 
             insertTradeEvent(event);
@@ -256,6 +292,16 @@ class FeedbackEngine {
                 error: this.sanitizeError(input.error),
                 isBotTrade: input.isBotTrade !== undefined ? (input.isBotTrade ? 1 : 0) : null,
                 midPriceAtDecision: input.midPriceAtDecision ?? null,
+                // Cost realism fields
+                slippageBpsVsIntent: input.slippageBpsVsIntent ?? null,
+                slippageBpsVsMid: input.slippageBpsVsMid ?? null,
+                spreadPaidBps: input.spreadPaidBps ?? null,
+                edgeBpsVsMid: input.edgeBpsVsMid ?? null,
+                netEdgeBpsVsMid: input.netEdgeBpsVsMid ?? null,
+                txFeeXrp: input.txFeeXrp ?? null,
+                ammFeeBps: input.ammFeeBps ?? null,
+                fillRatio: input.fillRatio ?? null,
+                isPartial: input.isPartial != null ? (input.isPartial ? 1 : 0) : null,
             }));
 
             let snapshotRecord: MarketSnapshotRecord | undefined;
@@ -450,6 +496,95 @@ class FeedbackEngine {
             byStrategy: this.getStrategyStats(filters),
             drawdown: this.getRollingDrawdown(filters),
         };
+    }
+
+    /**
+     * Get cost realism summary
+     * Aggregates slippage, edge, spread, and fee metrics across fills
+     */
+    getCostSummary(filters: QueryFilters = {}): CostSummary {
+        if (!this.ensureInitialized()) {
+            return this.emptyCostSummary();
+        }
+
+        try {
+            const events = queryTradeEvents(filters);
+            // Only include fills with cost data
+            const fills = events.filter(e =>
+                (e.action === 'fill' || (e.action === 'offer_create' && e.fillPrice)) &&
+                e.slippageBpsVsIntent != null
+            );
+
+            if (fills.length === 0) {
+                return this.emptyCostSummary();
+            }
+
+            let sumSlippageVsIntent = 0;
+            let countSlippageVsIntent = 0;
+            let sumSlippageVsMid = 0;
+            let countSlippageVsMid = 0;
+            let sumSpreadPaid = 0;
+            let countSpreadPaid = 0;
+            let sumEdgeVsMid = 0;
+            let countEdgeVsMid = 0;
+            let sumNetEdgeVsMid = 0;
+            let countNetEdgeVsMid = 0;
+            let sumTxFee = 0;
+            let countTxFee = 0;
+            let sumFillRatio = 0;
+            let countFillRatio = 0;
+            let partialCount = 0;
+
+            for (const e of fills) {
+                if (e.slippageBpsVsIntent != null) {
+                    sumSlippageVsIntent += e.slippageBpsVsIntent;
+                    countSlippageVsIntent++;
+                }
+                if (e.slippageBpsVsMid != null) {
+                    sumSlippageVsMid += e.slippageBpsVsMid;
+                    countSlippageVsMid++;
+                }
+                if (e.spreadPaidBps != null) {
+                    sumSpreadPaid += e.spreadPaidBps;
+                    countSpreadPaid++;
+                }
+                if (e.edgeBpsVsMid != null) {
+                    sumEdgeVsMid += e.edgeBpsVsMid;
+                    countEdgeVsMid++;
+                }
+                if (e.netEdgeBpsVsMid != null) {
+                    sumNetEdgeVsMid += e.netEdgeBpsVsMid;
+                    countNetEdgeVsMid++;
+                }
+                if (e.txFeeXrp != null) {
+                    sumTxFee += e.txFeeXrp;
+                    countTxFee++;
+                }
+                if (e.fillRatio != null) {
+                    sumFillRatio += e.fillRatio;
+                    countFillRatio++;
+                }
+                if (e.isPartial === 1) {
+                    partialCount++;
+                }
+            }
+
+            return {
+                fills: fills.length,
+                avgSlippageBpsVsIntent: countSlippageVsIntent > 0 ? sumSlippageVsIntent / countSlippageVsIntent : null,
+                avgSlippageBpsVsMid: countSlippageVsMid > 0 ? sumSlippageVsMid / countSlippageVsMid : null,
+                avgSpreadPaidBps: countSpreadPaid > 0 ? sumSpreadPaid / countSpreadPaid : null,
+                avgEdgeBpsVsMid: countEdgeVsMid > 0 ? sumEdgeVsMid / countEdgeVsMid : null,
+                avgNetEdgeBpsVsMid: countNetEdgeVsMid > 0 ? sumNetEdgeVsMid / countNetEdgeVsMid : null,
+                avgTxFeeXrp: countTxFee > 0 ? sumTxFee / countTxFee : null,
+                totalTxFeeXrp: countTxFee > 0 ? sumTxFee : null,
+                partialFillRatio: fills.length > 0 ? partialCount / fills.length : 0,
+                avgFillRatio: countFillRatio > 0 ? sumFillRatio / countFillRatio : null,
+            };
+        } catch (err) {
+            logger.warn({ err }, 'Failed to get cost summary');
+            return this.emptyCostSummary();
+        }
     }
 
     /**
@@ -686,6 +821,24 @@ class FeedbackEngine {
             totalPnlApprox: 0,
             maxDrawdown: 0,
             avgEdgeBps: 0,
+        };
+    }
+
+    /**
+     * Return empty cost summary for error cases
+     */
+    private emptyCostSummary(): CostSummary {
+        return {
+            fills: 0,
+            avgSlippageBpsVsIntent: null,
+            avgSlippageBpsVsMid: null,
+            avgSpreadPaidBps: null,
+            avgEdgeBpsVsMid: null,
+            avgNetEdgeBpsVsMid: null,
+            avgTxFeeXrp: null,
+            totalTxFeeXrp: null,
+            partialFillRatio: 0,
+            avgFillRatio: null,
         };
     }
 }
