@@ -599,6 +599,38 @@ class FeedbackEngine {
     }
 
     /**
+     * Get learning dataset for adaptive learning.
+     * Returns fill events with their corresponding regime context.
+     */
+    getLearningDataset(filters: QueryFilters = {}): Array<{ event: TradeEventRecord; regime: FlowRegime | null }> {
+        if (!this.ensureInitialized()) {
+            return [];
+        }
+
+        try {
+            const events = queryTradeEvents(filters);
+
+            // Filter to bot fills only
+            const fills = events.filter(e =>
+                e.action === 'fill' &&
+                e.isBotTrade === 1
+            );
+
+            // Enrich each fill with regime from nearest snapshot
+            return fills.map(event => {
+                const snapshot = getSnapshotNear(event.pairKey, event.ts, 10000);
+                return {
+                    event,
+                    regime: snapshot?.flowRegime ?? null,
+                };
+            });
+        } catch (err) {
+            logger.warn({ err }, 'Failed to get learning dataset');
+            return [];
+        }
+    }
+
+    /**
      * Shutdown the engine
      */
     shutdown(): void {

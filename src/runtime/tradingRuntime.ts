@@ -20,8 +20,17 @@ import { isCpuHealthy, startCpuWatchdog, CpuWatchdog } from '../monitoring/cpuWa
 import { TradeTape, setGlobalTradeTape } from '../market/tradeTape';
 import { TradeTapeService } from '../market/tradeTapeService';
 import { BackendHttpServer, startBackendHttpServer, stopBackendHttpServer } from '../server/httpServer';
-import { FlowMetrics, computeFlowMetrics } from '../market/flowMetrics';
+import { FlowMetrics, computeFlowMetrics, FlowRegime } from '../market/flowMetrics';
 import { feedbackEngine } from '../analytics/feedbackEngine';
+import {
+    isAdaptiveEnabled,
+    getAdaptiveTuning,
+    isRegimeDisabled,
+} from '../analytics/adaptiveConfig';
+import {
+    startAdaptiveScheduler,
+    stopAdaptiveScheduler,
+} from '../analytics/adaptiveScheduler';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -184,6 +193,14 @@ export class TradingRuntime {
             this.httpServer = await startBackendHttpServer();
             logger.info({ httpPort: this.httpServer.getPort() }, 'Backend HTTP server for trade streaming ready');
 
+            // Start adaptive learning scheduler
+            const pairKey = `${config.tradingPair.baseCurrency}/${config.tradingPair.quoteCurrency}`;
+            const strategyNames = this.strategies.map(s => s.name);
+            startAdaptiveScheduler({
+                pairKeys: [pairKey],
+                strategies: strategyNames,
+            });
+
             logger.info('Trading runtime started');
         } catch (err) {
             await xrpl.disconnect().catch(() => undefined);
@@ -264,10 +281,48 @@ export class TradingRuntime {
                 vwap: this.tradeTape?.getVWAP(60_000),
                 flow: flowMetrics,
             };
+
+            const regime: FlowRegime = flowMetrics.regime;
+
             for (const strategy of this.strategies) {
                 // Rate limit strategy execution to prevent CPU spikes
                 await throttleStrategy();
+
+                // Apply adaptive learning gates and tunings
+                if (isAdaptiveEnabled() && this.executor) {
+                    // Check if this regime is disabled for this strategy
+                    if (isRegimeDisabled(pairKey, strategy.name, regime)) {
+                        logger.debug({
+                            strategy: strategy.name,
+                            regime,
+                        }, 'Skipping strategy - regime disabled by adaptive learning');
+                        continue;
+                    }
+
+                    // Get tuning for this strategy+regime
+                    const tuning = getAdaptiveTuning(pairKey, strategy.name, regime);
+                    if (tuning) {
+                        // Apply tuning overrides to executor
+                        this.executor.setAdaptiveMaxSlippageBps(tuning.maxSlippageBps);
+                        this.executor.setAdaptiveSizeMultiplier(tuning.sizeMultiplier);
+                        this.executor.setAdaptiveMinEdgeBps(tuning.minEdgeBpsToTrade);
+
+                        // Apply cooldown if set
+                        if (tuning.coolDownMs > 0) {
+                            await new Promise(resolve => setTimeout(resolve, tuning.coolDownMs));
+                        }
+                    } else {
+                        // No tuning - clear overrides
+                        this.executor.clearAdaptiveOverrides();
+                    }
+                }
+
                 await strategy.tick(ctx);
+
+                // Clear overrides after each strategy to avoid cross-contamination
+                if (this.executor) {
+                    this.executor.clearAdaptiveOverrides();
+                }
             }
         } finally {
             this.tickInFlight = false;
@@ -370,6 +425,13 @@ export class TradingRuntime {
             feedbackEngine.shutdown();
         } catch (err) {
             logger.warn({ err }, 'Failed to close feedback engine');
+        }
+
+        // Stop adaptive learning scheduler
+        try {
+            stopAdaptiveScheduler();
+        } catch (err) {
+            logger.warn({ err }, 'Failed to stop adaptive scheduler');
         }
 
         // Step 5: Stop backend HTTP server

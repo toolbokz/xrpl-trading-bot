@@ -6,6 +6,7 @@ import { logger } from '../analytics/logger';
 import { tradeHistory } from '../analytics/tradeHistory';
 import { feedbackEngine } from '../analytics/feedbackEngine';
 import { computeCostRealism } from '../analytics/costRealism';
+import { isAdaptiveEnabled } from '../analytics/adaptiveConfig';
 import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './offerBuilder';
 
 /**
@@ -47,6 +48,11 @@ export class OfferExecutor {
     private currentStrategy: string = 'unknown';
     private currentMidPrice: number | null = null;
 
+    // Adaptive learning overrides (set per-tick by TradingRuntime)
+    private adaptiveMaxSlippageBps: number | null = null;
+    private adaptiveSizeMultiplier: number | null = null;
+    private adaptiveMinEdgeBps: number | null = null;
+
     constructor(
         private readonly client: Client,
         private readonly wallet: Wallet | null,
@@ -72,11 +78,69 @@ export class OfferExecutor {
         this.currentMidPrice = midPrice;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Adaptive Learning Setters
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Set adaptive max slippage override.
+     * Called by TradingRuntime based on current regime tuning.
+     */
+    setAdaptiveMaxSlippageBps(value: number | null): void {
+        this.adaptiveMaxSlippageBps = value;
+    }
+
+    /**
+     * Set adaptive size multiplier override.
+     * Called by TradingRuntime based on current regime tuning.
+     */
+    setAdaptiveSizeMultiplier(value: number | null): void {
+        this.adaptiveSizeMultiplier = value;
+    }
+
+    /**
+     * Set adaptive min edge threshold override.
+     * Called by TradingRuntime based on current regime tuning.
+     */
+    setAdaptiveMinEdgeBps(value: number | null): void {
+        this.adaptiveMinEdgeBps = value;
+    }
+
+    /**
+     * Clear all adaptive overrides (called between strategy ticks).
+     */
+    clearAdaptiveOverrides(): void {
+        this.adaptiveMaxSlippageBps = null;
+        this.adaptiveSizeMultiplier = null;
+        this.adaptiveMinEdgeBps = null;
+    }
+
+    /**
+     * Get the effective max slippage (adaptive override → config → default).
+     */
+    private getEffectiveMaxSlippageBps(): number {
+        return this.adaptiveMaxSlippageBps ?? this.strategyConfig?.maxSlippageBps ?? 50;
+    }
+
+    /**
+     * Get the effective size multiplier (adaptive override → 1.0).
+     */
+    private getEffectiveSizeMultiplier(): number {
+        return this.adaptiveSizeMultiplier ?? 1.0;
+    }
+
+    /**
+     * Get the effective min edge threshold (adaptive override → 0).
+     */
+    private getEffectiveMinEdgeBps(): number {
+        return this.adaptiveMinEdgeBps ?? 0;
+    }
+
     /**
      * Check if the actual price vs expected price is within slippage tolerance
      */
     checkSlippage(expectedPrice: number, actualPrice: number, side: 'buy' | 'sell'): SlippageCheckResult {
-        const maxSlippageBps = this.strategyConfig?.maxSlippageBps ?? 50;
+        const maxSlippageBps = this.getEffectiveMaxSlippageBps();
 
         if (!expectedPrice || expectedPrice <= 0) {
             return { allowed: true, actualSlippageBps: 0, maxSlippageBps };
@@ -101,24 +165,142 @@ export class OfferExecutor {
         };
     }
 
+    /**
+     * Check if trade meets adaptive min edge requirement.
+     * Returns rejection result if edge is insufficient.
+     */
+    private checkAdaptiveMinEdge(side: 'buy' | 'sell', intentPrice: number): { allowed: boolean; reason?: string } {
+        if (!isAdaptiveEnabled()) {
+            return { allowed: true };
+        }
+
+        const minEdgeBps = this.getEffectiveMinEdgeBps();
+        if (minEdgeBps <= 0 || !this.currentMidPrice || this.currentMidPrice <= 0) {
+            return { allowed: true };
+        }
+
+        // Compute edge: intent vs mid (same sign convention as costRealism)
+        // For buys: lower intent = better (negative raw edge = positive)
+        // For sells: higher intent = better (positive raw edge = positive)
+        const rawEdge = ((intentPrice - this.currentMidPrice) / this.currentMidPrice) * 10000;
+        const edgeBps = side === 'buy' ? -rawEdge : rawEdge;
+
+        if (edgeBps < minEdgeBps) {
+            return {
+                allowed: false,
+                reason: `adaptive-min-edge: edge ${edgeBps.toFixed(1)} bps < min ${minEdgeBps} bps`,
+            };
+        }
+
+        return { allowed: true };
+    }
+
+    /**
+     * Apply adaptive size multiplier to amount.
+     * Returns adjusted amount and rejection status if multiplier is 0.
+     */
+    private applyAdaptiveSizeMultiplier(amount: number): { adjustedAmount: number; rejected: boolean; reason?: string } {
+        if (!isAdaptiveEnabled()) {
+            return { adjustedAmount: amount, rejected: false };
+        }
+
+        const multiplier = this.getEffectiveSizeMultiplier();
+
+        // If multiplier is 0, reject the trade entirely
+        if (multiplier <= 0) {
+            return {
+                adjustedAmount: 0,
+                rejected: true,
+                reason: 'adaptive-disabled: size multiplier is 0',
+            };
+        }
+
+        // Apply multiplier, clamped to [0, 1.5]
+        const clampedMultiplier = Math.max(0, Math.min(1.5, multiplier));
+        const adjustedAmount = amount * clampedMultiplier;
+
+        return { adjustedAmount, rejected: false };
+    }
+
     async placeOffer(params: OfferParams): Promise<ExecutionResult> {
+        const pairSymbol = `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`;
+
+        // Check adaptive min edge requirement
+        const edgeCheck = this.checkAdaptiveMinEdge(params.side, params.price);
+        if (!edgeCheck.allowed) {
+            logger.info({
+                strategy: this.currentStrategy,
+                side: params.side,
+                price: params.price,
+                midPrice: this.currentMidPrice,
+                reason: edgeCheck.reason,
+            }, 'Order rejected by adaptive min edge gate');
+
+            // Record feedback for adaptive rejection
+            try {
+                feedbackEngine.recordTradeEvent({
+                    pairKey: pairSymbol,
+                    strategy: this.currentStrategy,
+                    action: 'reject',
+                    side: params.side,
+                    intentPrice: params.price,
+                    intentSizeBase: params.amount,
+                    error: edgeCheck.reason,
+                    midPriceAtDecision: this.currentMidPrice ?? undefined,
+                    isBotTrade: true,
+                });
+            } catch { /* feedback should never crash trading */ }
+
+            return { accepted: false, reason: edgeCheck.reason };
+        }
+
+        // Apply adaptive size multiplier
+        const sizeResult = this.applyAdaptiveSizeMultiplier(params.amount);
+        if (sizeResult.rejected) {
+            logger.info({
+                strategy: this.currentStrategy,
+                side: params.side,
+                originalAmount: params.amount,
+                reason: sizeResult.reason,
+            }, 'Order rejected by adaptive size gate');
+
+            try {
+                feedbackEngine.recordTradeEvent({
+                    pairKey: pairSymbol,
+                    strategy: this.currentStrategy,
+                    action: 'reject',
+                    side: params.side,
+                    intentPrice: params.price,
+                    intentSizeBase: params.amount,
+                    error: sizeResult.reason,
+                    midPriceAtDecision: this.currentMidPrice ?? undefined,
+                    isBotTrade: true,
+                });
+            } catch { /* feedback should never crash trading */ }
+
+            return { accepted: false, reason: sizeResult.reason };
+        }
+
+        // Use adjusted amount
+        const adjustedParams = { ...params, amount: sizeResult.adjustedAmount };
+
         // Check slippage if expected price provided
-        if (params.expectedPrice) {
-            const slippageCheck = this.checkSlippage(params.expectedPrice, params.price, params.side);
+        if (adjustedParams.expectedPrice) {
+            const slippageCheck = this.checkSlippage(adjustedParams.expectedPrice, adjustedParams.price, adjustedParams.side);
             if (!slippageCheck.allowed) {
                 logger.warn({
-                    expectedPrice: params.expectedPrice,
-                    actualPrice: params.price,
+                    expectedPrice: adjustedParams.expectedPrice,
+                    actualPrice: adjustedParams.price,
                     slippageBps: slippageCheck.actualSlippageBps,
                     maxSlippageBps: slippageCheck.maxSlippageBps,
                 }, 'Order rejected due to slippage');
 
                 // Record rejected trade
                 tradeHistory.recordTrade({
-                    pair: `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`,
-                    side: params.side.toUpperCase() as 'BUY' | 'SELL',
-                    price: params.price,
-                    amount: params.amount,
+                    pair: pairSymbol,
+                    side: adjustedParams.side.toUpperCase() as 'BUY' | 'SELL',
+                    price: adjustedParams.price,
+                    amount: adjustedParams.amount,
                     filled: 0,
                     fee: 0,
                     pnl: 0,
@@ -129,14 +311,15 @@ export class OfferExecutor {
                 // Record feedback event for analytics
                 try {
                     feedbackEngine.recordTradeEvent({
-                        pairKey: `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`,
+                        pairKey: pairSymbol,
                         strategy: this.currentStrategy,
                         action: 'reject',
-                        side: params.side,
-                        intentPrice: params.price,
-                        intentSizeBase: params.amount,
+                        side: adjustedParams.side,
+                        intentPrice: adjustedParams.price,
+                        intentSizeBase: adjustedParams.amount,
                         error: slippageCheck.reason,
                         midPriceAtDecision: this.currentMidPrice ?? undefined,
+                        isBotTrade: true,
                     });
                 } catch { /* feedback should never crash trading */ }
 
@@ -146,11 +329,11 @@ export class OfferExecutor {
 
         const intent: TradeIntent = {
             pair: this.pair,
-            side: params.side.toUpperCase() as TradeSide,
-            amount: params.amount,
-            price: params.price,
+            side: adjustedParams.side.toUpperCase() as TradeSide,
+            amount: adjustedParams.amount,
+            price: adjustedParams.price,
         };
-        return this.placeOfferIntent(intent, params.flags, params.expectedPrice);
+        return this.placeOfferIntent(intent, adjustedParams.flags, adjustedParams.expectedPrice);
     }
 
     async placeOfferIntent(intent: TradeIntent, flags?: OfferParams['flags'], _expectedPrice?: number): Promise<ExecutionResult> {

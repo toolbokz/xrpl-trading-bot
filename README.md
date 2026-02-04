@@ -116,6 +116,75 @@
 > FEEDBACK_DB_VERBOSE=false              # SQL logging
 > ```
 > 
+> ### Adaptive Learning (`src/analytics/adaptiveLearner.ts`)
+> Automated parameter tuning system that learns from historical trade performance to optimize strategy behavior over time.
+> 
+> **How It Works:**
+> 1. Analyzes trade outcomes from Feedback Engine (last 24 hours by default)
+> 2. Computes performance scores per strategy, pair, and market regime
+> 3. Generates bounded parameter adjustments with exponential smoothing
+> 4. Applies tunings in real-time without changing core strategy logic
+> 
+> **Performance Scoring:**
+> ```
+> score = avgNetEdgeBps - 0.5×slippage - 0.25×spread - 20×partialFillRate
+> ```
+> 
+> **Tunable Parameters:**
+> | Parameter | Range | Description |
+> |-----------|-------|-------------|
+> | `sizeMultiplier` | 0 – 1.5 | Scale position size up/down |
+> | `maxSlippageBps` | 10 – 150 | Allowed slippage tolerance |
+> | `minEdgeBpsToTrade` | 0 – 30 | Minimum edge required to enter |
+> | `coolDownMs` | 0 – 60000 | Pause between trades |
+> | `disabledRegimes` | array | Regimes to skip entirely |
+> 
+> **Heuristics:**
+> | Condition | Action |
+> |-----------|--------|
+> | Negative edge | Reduce size, increase min edge, add cooldown |
+> | High partial fills (>30%) | Reduce position size |
+> | Strong performance | Increase size multiplier (reward) |
+> | Chaotic/illiquid + negative score | Disable regime entirely |
+> 
+> **Smoothing & Guardrails:**
+> - Exponential smoothing (alpha=0.2) prevents sudden swings
+> - Max step constraints: size ±0.1, slippage ±10 bps per update
+> - All parameters clamped to safe bounds
+> - Changes are explainable with human-readable reasons
+> 
+> **Data Storage:**
+> - JSON state at `data/adaptive-state.json`
+> - Atomic writes (temp file + rename)
+> - Survives restarts
+> 
+> **API Endpoints:**
+> | Endpoint | Method | Description |
+> |----------|--------|-------------|
+> | `/api/analytics/adaptive/state` | GET | Current tunings and metadata |
+> | `/api/analytics/adaptive/recompute` | POST | Trigger immediate update |
+> | `/api/analytics/adaptive/toggle` | POST | Enable/disable learning |
+> | `/api/analytics/adaptive/explain` | GET | Tuning + performance metrics |
+> 
+> **Dashboard Panel:**
+> The Adaptive Learning panel displays:
+> - ON/OFF toggle with status indicator
+> - Current market regime
+> - Active tuning values (size multiplier, slippage, min edge, cooldown)
+> - Reason for current tuning
+> - Manual "Recompute" button
+> 
+> **Configuration (`.env`):**
+> ```env
+> ADAPTIVE_LEARNING_ENABLED=true    # Master toggle
+> ADAPTIVE_LOOKBACK_HOURS=24        # Data window for scoring
+> ADAPTIVE_MIN_SAMPLES=25           # Min trades before tuning
+> ADAPTIVE_UPDATE_INTERVAL_MIN=15   # Scheduler interval
+> ADAPTIVE_ALPHA=0.2                # Smoothing factor (0=slow, 1=fast)
+> ADAPTIVE_MAX_SIZE_STEP=0.1        # Max size change per update
+> ADAPTIVE_MAX_SLIPPAGE_STEP=10     # Max slippage bps change
+> ```
+> 
 > ### Flow Metrics (`src/market/flowMetrics.ts`)
 > Real-time market sentiment analysis using trade flow and order book signals.
 > 
@@ -338,6 +407,7 @@ AWS, Heroku, etc.)
 > | **Risk Dashboard** | Exposure, loss limits, kill switch |
 > | **Flow Metrics** | Real-time market sentiment & regime |
 > | **Analytics Panel** | Win rate, profit factor, expectancy, regime matrix |
+> | **Adaptive Learning** | Auto-tuning status, current parameters, recompute |
 > 
 > ## Paper Trading (Simulation)
 > 
@@ -581,3 +651,14 @@ AWS, Heroku, etc.)
 > | `FEEDBACK_DB_PATH` | SQLite database path | `data/feedback.sqlite` |
 > | `FEEDBACK_RETENTION_DAYS` | Days to retain analytics data | `30` |
 > | `FEEDBACK_DB_VERBOSE` | Enable SQL query logging | `false` |
+> 
+> ## Adaptive Learning
+> | Variable | Description | Default |
+> |----------|-------------|---------|
+> | `ADAPTIVE_LEARNING_ENABLED` | Enable adaptive parameter tuning | `true` |
+> | `ADAPTIVE_LOOKBACK_HOURS` | Hours of data to analyze | `24` |
+> | `ADAPTIVE_MIN_SAMPLES` | Minimum trades before tuning | `25` |
+> | `ADAPTIVE_UPDATE_INTERVAL_MIN` | Minutes between updates | `15` |
+> | `ADAPTIVE_ALPHA` | Smoothing factor (0=slow, 1=fast) | `0.2` |
+> | `ADAPTIVE_MAX_SIZE_STEP` | Max size multiplier change per update | `0.1` |
+> | `ADAPTIVE_MAX_SLIPPAGE_STEP` | Max slippage bps change per update | `10` |
