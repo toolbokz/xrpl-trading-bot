@@ -1,12 +1,9 @@
 'use client';
 
-import { ReactNode } from 'react';
 import clsx from 'clsx';
 import { Activity, Play, Pause, AlertTriangle, Wifi, WifiOff } from 'lucide-react';
 
 interface TerminalHeaderProps {
-    /** Pair selector element */
-    pairSelector: ReactNode;
     /** Bot status */
     status: 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
     /** Paper trading mode */
@@ -26,7 +23,6 @@ interface TerminalHeaderProps {
 }
 
 export function TerminalHeader({
-    pairSelector,
     status,
     paper,
     network,
@@ -73,11 +69,6 @@ export function TerminalHeader({
                     <div className={clsx('w-2.5 h-2.5 rounded-full animate-pulse', statusColors[status])} />
                     <span className="text-xs text-slate-400 hidden md:inline">{status}</span>
                 </div>
-            </div>
-
-            {/* Center: Pair Selector */}
-            <div className="flex-1 max-w-md min-w-0">
-                {pairSelector}
             </div>
 
             {/* Right: Controls + Badges */}

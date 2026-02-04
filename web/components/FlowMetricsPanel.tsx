@@ -362,9 +362,9 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
 
     // Full panel
     return (
-        <div className="card p-4 space-y-4">
+        <div className="card h-full flex flex-col overflow-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between p-4 pb-0 shrink-0">
                 <div className="flex items-center gap-2">
                     <Waves size={18} className="text-slate-400" />
                     <h3 className="text-sm font-medium text-slate-200">Flow Sentiment</h3>
@@ -372,57 +372,61 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
                 <RegimeBadge regime={regime} />
             </div>
 
-            {/* Description */}
-            <p className="text-xs text-slate-400">{data?.regime.description}</p>
+            {/* Scrollable body */}
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 pt-3 space-y-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+                {/* Description */}
+                <p className="text-xs text-slate-400">{data?.regime.description}</p>
 
-            {/* Trading status */}
-            <div className="flex gap-2">
-                <div className={clsx(
-                    'text-[10px] px-2 py-1 rounded-full border',
-                    data?.regime.safeForMM
-                        ? 'bg-success/10 border-success/20 text-success'
-                        : 'bg-danger/10 border-danger/20 text-danger'
-                )}>
-                    MM: {data?.regime.safeForMM ? 'Safe' : 'Avoid'}
+                {/* Trading status */}
+                <div className="flex gap-2">
+                    <div className={clsx(
+                        'text-[10px] px-2 py-1 rounded-full border',
+                        data?.regime.safeForMM
+                            ? 'bg-success/10 border-success/20 text-success'
+                            : 'bg-danger/10 border-danger/20 text-danger'
+                    )}>
+                        MM: {data?.regime.safeForMM ? 'Safe' : 'Avoid'}
+                    </div>
+                    <div className={clsx(
+                        'text-[10px] px-2 py-1 rounded-full border',
+                        data?.regime.safeForArb
+                            ? 'bg-success/10 border-success/20 text-success'
+                            : 'bg-danger/10 border-danger/20 text-danger'
+                    )}>
+                        Arb: {data?.regime.safeForArb ? 'Safe' : 'Avoid'}
+                    </div>
                 </div>
-                <div className={clsx(
-                    'text-[10px] px-2 py-1 rounded-full border',
-                    data?.regime.safeForArb
-                        ? 'bg-success/10 border-success/20 text-success'
-                        : 'bg-danger/10 border-danger/20 text-danger'
-                )}>
-                    Arb: {data?.regime.safeForArb ? 'Safe' : 'Avoid'}
-                </div>
+
+                {/* Signals */}
+                {data?.signals && (
+                    <div className="space-y-3 pt-2 border-t border-white/5">
+                        <ImbalanceGauge value={data.signals.imbalance} label="Trade Flow" />
+                        <ImbalanceGauge value={data.signals.depthImbalance} label="Depth Bias" />
+                        <SignalStrengthMeter strength={data.signals.signalStrength} />
+                    </div>
+                )}
+
+                {/* Depth */}
+                {data?.depth && (
+                    <div className="pt-2 border-t border-white/5">
+                        <DepthBar
+                            bidDepth={data.depth.bidDepthBase}
+                            askDepth={data.depth.askDepthBase}
+                        />
+                    </div>
+                )}
+
+                {/* Prices */}
+                {data?.prices && (
+                    <div className="pt-2 border-t border-white/5">
+                        <PriceDisplay {...data.prices} />
+                    </div>
+                )}
+
             </div>
 
-            {/* Signals */}
-            {data?.signals && (
-                <div className="space-y-3 pt-2 border-t border-white/5">
-                    <ImbalanceGauge value={data.signals.imbalance} label="Trade Flow" />
-                    <ImbalanceGauge value={data.signals.depthImbalance} label="Depth Bias" />
-                    <SignalStrengthMeter strength={data.signals.signalStrength} />
-                </div>
-            )}
-
-            {/* Depth */}
-            {data?.depth && (
-                <div className="pt-2 border-t border-white/5">
-                    <DepthBar
-                        bidDepth={data.depth.bidDepthBase}
-                        askDepth={data.depth.askDepthBase}
-                    />
-                </div>
-            )}
-
-            {/* Prices */}
-            {data?.prices && (
-                <div className="pt-2 border-t border-white/5">
-                    <PriceDisplay {...data.prices} />
-                </div>
-            )}
-
-            {/* Last update */}
-            <div className="text-[10px] text-slate-500 text-right">
+            {/* Last update - footer */}
+            <div className="text-[10px] text-slate-500 text-right px-4 py-2 border-t border-white/5 shrink-0">
                 Updated: {data?.timestamp ? new Date(data.timestamp).toLocaleTimeString() : 'N/A'}
             </div>
         </div>

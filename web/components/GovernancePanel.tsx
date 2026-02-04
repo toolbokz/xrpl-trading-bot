@@ -198,9 +198,9 @@ export function GovernancePanel() {
     const ModeIcon = config.icon;
 
     return (
-        <div className={clsx('card p-6 border', config.bgClass)}>
+        <div className={clsx('card border overflow-hidden flex flex-col', config.bgClass)}>
             {/* Header */}
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between p-4 pb-3 shrink-0">
                 <div className="flex items-center gap-3">
                     <div className={clsx('p-2 rounded-lg', config.bgClass)}>
                         <ModeIcon size={20} className={config.textClass} />
@@ -224,103 +224,107 @@ export function GovernancePanel() {
                 </div>
             </div>
 
-            {/* Reasons */}
-            {state.reasons.length > 0 && (
-                <div className="mb-4 p-3 rounded-lg bg-black/20 space-y-1">
-                    {state.reasons.map((reason, i) => (
-                        <div key={i} className="flex items-start gap-2 text-sm">
-                            <AlertTriangle size={14} className={clsx('mt-0.5 flex-shrink-0', config.textClass)} />
-                            <span className="text-slate-300">{reason}</span>
-                        </div>
-                    ))}
-                </div>
-            )}
+            {/* Scrollable body */}
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
 
-            {/* Metrics */}
-            {state.metrics && state.thresholds && state.metrics.tradesCount >= state.thresholds.minTrades && (
-                <div className="space-y-3">
-                    <div className="text-xs text-slate-500 uppercase tracking-wide">
-                        Rolling Metrics ({state.metrics.tradesCount} trades)
+                {/* Reasons */}
+                {state.reasons.length > 0 && (
+                    <div className="mb-4 p-3 rounded-lg bg-black/20 space-y-1">
+                        {state.reasons.map((reason, i) => (
+                            <div key={i} className="flex items-start gap-2 text-sm">
+                                <AlertTriangle size={14} className={clsx('mt-0.5 flex-shrink-0', config.textClass)} />
+                                <span className="text-slate-300">{reason}</span>
+                            </div>
+                        ))}
                     </div>
+                )}
 
-                    <MetricBar
-                        label="Drawdown"
-                        value={state.metrics.drawdownPct}
-                        threshold={state.thresholds.maxDrawdownPct}
-                        format={(v) => `${v.toFixed(1)}%`}
-                        inverse={true}
-                        icon={TrendingDown}
-                    />
-
-                    <MetricBar
-                        label="Profit Factor"
-                        value={state.metrics.profitFactor}
-                        threshold={state.thresholds.minProfitFactor}
-                        format={(v) => v.toFixed(2)}
-                        inverse={false}
-                        icon={Target}
-                    />
-
-                    <MetricBar
-                        label="Expectancy"
-                        value={state.metrics.expectancyBps}
-                        threshold={state.thresholds.minExpectancyBps}
-                        format={(v) => `${v.toFixed(1)} bps`}
-                        inverse={false}
-                        icon={BarChart3}
-                    />
-
-                    <MetricBar
-                        label="Avg Slippage"
-                        value={state.metrics.avgSlippageBps}
-                        threshold={state.thresholds.maxAvgSlippageBps}
-                        format={(v) => `${v.toFixed(1)} bps`}
-                        inverse={true}
-                        icon={Clock}
-                    />
-
-                    {/* Additional metrics as text */}
-                    <div className="grid grid-cols-3 gap-4 pt-2 border-t border-white/5">
-                        <div className="text-center">
-                            <div className="text-xs text-slate-400">Win Rate</div>
-                            <div className="text-sm text-slate-200">{(state.metrics.winRate * 100).toFixed(1)}%</div>
+                {/* Metrics */}
+                {state.metrics && state.thresholds && state.metrics.tradesCount >= state.thresholds.minTrades && (
+                    <div className="space-y-3">
+                        <div className="text-xs text-slate-500 uppercase tracking-wide">
+                            Rolling Metrics ({state.metrics.tradesCount} trades)
                         </div>
-                        <div className="text-center">
-                            <div className="text-xs text-slate-400">Partial Fills</div>
-                            <div className={clsx(
-                                'text-sm',
-                                state.metrics.partialFillRate > state.thresholds.maxPartialFillRate
-                                    ? 'text-danger'
-                                    : 'text-slate-200'
-                            )}>
-                                {(state.metrics.partialFillRate * 100).toFixed(1)}%
+
+                        <MetricBar
+                            label="Drawdown"
+                            value={state.metrics.drawdownPct}
+                            threshold={state.thresholds.maxDrawdownPct}
+                            format={(v) => `${v.toFixed(1)}%`}
+                            inverse={true}
+                            icon={TrendingDown}
+                        />
+
+                        <MetricBar
+                            label="Profit Factor"
+                            value={state.metrics.profitFactor}
+                            threshold={state.thresholds.minProfitFactor}
+                            format={(v) => v.toFixed(2)}
+                            inverse={false}
+                            icon={Target}
+                        />
+
+                        <MetricBar
+                            label="Expectancy"
+                            value={state.metrics.expectancyBps}
+                            threshold={state.thresholds.minExpectancyBps}
+                            format={(v) => `${v.toFixed(1)} bps`}
+                            inverse={false}
+                            icon={BarChart3}
+                        />
+
+                        <MetricBar
+                            label="Avg Slippage"
+                            value={state.metrics.avgSlippageBps}
+                            threshold={state.thresholds.maxAvgSlippageBps}
+                            format={(v) => `${v.toFixed(1)} bps`}
+                            inverse={true}
+                            icon={Clock}
+                        />
+
+                        {/* Additional metrics as text */}
+                        <div className="grid grid-cols-3 gap-4 pt-2 border-t border-white/5">
+                            <div className="text-center">
+                                <div className="text-xs text-slate-400">Win Rate</div>
+                                <div className="text-sm text-slate-200">{(state.metrics.winRate * 100).toFixed(1)}%</div>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-xs text-slate-400">Partial Fills</div>
+                                <div className={clsx(
+                                    'text-sm',
+                                    state.metrics.partialFillRate > state.thresholds.maxPartialFillRate
+                                        ? 'text-danger'
+                                        : 'text-slate-200'
+                                )}>
+                                    {(state.metrics.partialFillRate * 100).toFixed(1)}%
+                                </div>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-xs text-slate-400">Consec. Fails</div>
+                                <div className={clsx(
+                                    'text-sm',
+                                    state.metrics.consecutiveFailures >= state.thresholds.consecFailShutdown
+                                        ? 'text-danger'
+                                        : 'text-slate-200'
+                                )}>
+                                    {state.metrics.consecutiveFailures}
+                                </div>
                             </div>
                         </div>
-                        <div className="text-center">
-                            <div className="text-xs text-slate-400">Consec. Fails</div>
-                            <div className={clsx(
-                                'text-sm',
-                                state.metrics.consecutiveFailures >= state.thresholds.consecFailShutdown
-                                    ? 'text-danger'
-                                    : 'text-slate-200'
-                            )}>
-                                {state.metrics.consecutiveFailures}
-                            </div>
-                        </div>
                     </div>
-                </div>
-            )}
+                )}
 
-            {/* Insufficient data notice */}
-            {state.metrics && state.thresholds && state.metrics.tradesCount < state.thresholds.minTrades && (
-                <div className="text-sm text-slate-400 text-center py-4">
-                    Collecting data... {state.metrics.tradesCount}/{state.thresholds.minTrades} trades
-                </div>
-            )}
+                {/* Insufficient data notice */}
+                {state.metrics && state.thresholds && state.metrics.tradesCount < state.thresholds.minTrades && (
+                    <div className="text-sm text-slate-400 text-center py-4">
+                        Collecting data... {state.metrics.tradesCount}/{state.thresholds.minTrades} trades
+                    </div>
+                )}
+            </div>
 
             {/* Footer */}
             {lastUpdate && (
-                <div className="mt-4 pt-3 border-t border-white/5 flex justify-between text-xs text-slate-500">
+                <div className="px-4 py-3 border-t border-white/5 flex justify-between text-xs text-slate-500 shrink-0">
                     <span>Last check: {lastUpdate.toLocaleTimeString()}</span>
                     {state.evaluatedAt && (
                         <span>Evaluated: {new Date(state.evaluatedAt).toLocaleTimeString()}</span>

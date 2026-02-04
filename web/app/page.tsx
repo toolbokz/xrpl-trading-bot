@@ -5,12 +5,10 @@ import { CandlestickData, UTCTimestamp } from 'lightweight-charts';
 import { TRADING_PAIRS, TradingPair, findPair } from '../lib/tradingPairs';
 
 // Layout components
-import { DashboardLayout } from '../components/DashboardLayout';
+import { AppShell } from '../components/layout/AppShell';
 import { TerminalHeader } from '../components/TerminalHeader';
-import { CompactPairSelector } from '../components/CompactPairSelector';
 
 // Panel components
-import { Panel } from '../components/Panel';
 import { OrderBookPanel } from '../components/OrderBookPanel';
 import { MarketStatsPanel } from '../components/MarketStatsPanel';
 import { ChartPanel } from '../components/ChartPanel';
@@ -21,6 +19,10 @@ import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
 import { AnalyticsPanel } from '../components/AnalyticsPanel';
 import { AdaptivePanel } from '../components/AdaptivePanel';
 import { GovernancePanel } from '../components/GovernancePanel';
+import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
+
+// Mobile layout
+import { MobileDashboard, MobileSection } from '../components/layout/MobileDashboard';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -448,94 +450,214 @@ export default function Page() {
     );
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Render
+    // Detect mobile viewport
+    // ─────────────────────────────────────────────────────────────────────────
+    const [isMobile, setIsMobile] = useState(false);
+
+    useEffect(() => {
+        const checkMobile = () => setIsMobile(window.innerWidth < 1024);
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Header component
+    // ─────────────────────────────────────────────────────────────────────────
+    const headerComponent = (
+        <TerminalHeader
+            status={bot.status}
+            paper={bot.paper}
+            network={bot.network}
+            connected={connected}
+            loading={actionLoading}
+            onRun={() => callAction('run')}
+            onPause={() => callAction('pause')}
+            onKill={() => callAction('kill')}
+            message={actionMessage}
+        />
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Mobile Layout
+    // ─────────────────────────────────────────────────────────────────────────
+    if (isMobile) {
+        return (
+            <MobileDashboard
+                header={headerComponent}
+                flowMetrics={<FlowMetricsPanel pollInterval={2000} compact />}
+                overviewContent={
+                    <MobileSection>
+                        <ChartPanel
+                            data={candleData}
+                            pairKey={currentPair?.key || 'Select Pair'}
+                            currentPrice={currentPrice}
+                            quoteCurrency={bot.quoteCurrency}
+                            spreadBps={bot.spreadBps}
+                        />
+                        <MarketStatsPanel
+                            totalPnl={bot.pnlTotal}
+                            todayPnl={bot.pnlToday}
+                            winRate={bot.winRate}
+                            position={bot.openPosition}
+                            xrpBalance={bot.xrpBalance}
+                            quoteBalance={bot.quoteBalance}
+                            quoteCurrency={bot.quoteCurrency}
+                            nzdRate={bot.nzdRate}
+                        />
+                    </MobileSection>
+                }
+                marketContent={
+                    <MobileSection>
+                        <OrderBookPanel
+                            bids={orderBookBids}
+                            asks={orderBookAsks}
+                            midPrice={midPrice}
+                            spreadBps={bot.spreadBps}
+                        />
+                        <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={50} />
+                    </MobileSection>
+                }
+                tradingContent={
+                    <MobileSection>
+                        <ControlsPanel
+                            pairSelector={pairSelectorElement}
+                            strategy={bot.strategy}
+                            lastLedger={bot.lastLedger}
+                            liquidity={bot.liquidity}
+                            slippageBps={bot.slippageBps}
+                            positionSize={positionSize}
+                            maxExposure={bot.risk.maxExposure}
+                            currentExposure={bot.risk.currentExposure}
+                            dailyLossLimit={bot.risk.dailyLossLimit}
+                            killSwitch={bot.risk.killSwitch}
+                            onPositionSizeChange={setPositionSize}
+                            onApplyPositionSize={updatePositionSize}
+                            loading={actionLoading}
+                            message={positionSizeMessage}
+                        />
+                        <LogsPanel maxRows={50} />
+                    </MobileSection>
+                }
+                analyticsContent={
+                    <MobileSection>
+                        <RegimeHeatmapPanel />
+                        <AnalyticsPanel pollInterval={5000} />
+                        <AdaptivePanel pollInterval={5000} />
+                    </MobileSection>
+                }
+                governanceContent={
+                    <MobileSection>
+                        <GovernancePanel />
+                    </MobileSection>
+                }
+            />
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Desktop Layout - Full-screen professional grid
     // ─────────────────────────────────────────────────────────────────────────
 
     return (
-        <DashboardLayout
-            header={
-                <TerminalHeader
-                    pairSelector={
-                        <CompactPairSelector
-                            pairs={TRADING_PAIRS}
-                            selectedKey={selectedPairKey}
-                            onChange={applyTradingPair}
+        <AppShell header={headerComponent}>
+            <div className="h-full w-full grid gap-2 overflow-hidden
+                grid-cols-[180px_240px_1fr_240px_200px]
+                grid-rows-[minmax(0,0.45fr)_minmax(0,0.55fr)]
+                lg:grid-cols-[200px_260px_1fr_260px_220px]
+                xl:grid-cols-[200px_280px_1fr_300px_260px]
+                2xl:grid-cols-[220px_300px_1fr_320px_280px]"
+            >
+                {/* Left sidebar: Market Stats + Flow Metrics (spans 2 rows) */}
+                <div className="row-span-2 min-h-0 overflow-hidden flex flex-col gap-2">
+                    <div className="shrink-0">
+                        <MarketStatsPanel
+                            totalPnl={bot.pnlTotal}
+                            todayPnl={bot.pnlToday}
+                            winRate={bot.winRate}
+                            position={bot.openPosition}
+                            xrpBalance={bot.xrpBalance}
+                            quoteBalance={bot.quoteBalance}
+                            quoteCurrency={bot.quoteCurrency}
+                            nzdRate={bot.nzdRate}
                         />
-                    }
-                    status={bot.status}
-                    paper={bot.paper}
-                    network={bot.network}
-                    connected={connected}
-                    loading={actionLoading}
-                    onRun={() => callAction('run')}
-                    onPause={() => callAction('pause')}
-                    onKill={() => callAction('kill')}
-                    message={actionMessage}
-                />
-            }
-            flowSidebar={
-                <FlowMetricsPanel pollInterval={2000} />
-            }
-            analyticsSidebar={
-                <>
-                    <GovernancePanel />
-                    <AnalyticsPanel pollInterval={5000} />
-                    <AdaptivePanel pollInterval={5000} />
-                </>
-            }
-            leftTop={
-                <OrderBookPanel
-                    bids={orderBookBids}
-                    asks={orderBookAsks}
-                    midPrice={midPrice}
-                    spreadBps={bot.spreadBps}
-                />
-            }
-            leftBottom={
-                <MarketStatsPanel
-                    totalPnl={bot.pnlTotal}
-                    todayPnl={bot.pnlToday}
-                    winRate={bot.winRate}
-                    position={bot.openPosition}
-                    xrpBalance={bot.xrpBalance}
-                    quoteBalance={bot.quoteBalance}
-                    quoteCurrency={bot.quoteCurrency}
-                    nzdRate={bot.nzdRate}
-                />
-            }
-            centerTop={
-                <ChartPanel
-                    data={candleData}
-                    pairKey={currentPair?.key || 'Select Pair'}
-                    currentPrice={currentPrice}
-                    quoteCurrency={bot.quoteCurrency}
-                    spreadBps={bot.spreadBps}
-                />
-            }
-            centerBottom={
-                <ControlsPanel
-                    pairSelector={pairSelectorElement}
-                    strategy={bot.strategy}
-                    lastLedger={bot.lastLedger}
-                    liquidity={bot.liquidity}
-                    slippageBps={bot.slippageBps}
-                    positionSize={positionSize}
-                    maxExposure={bot.risk.maxExposure}
-                    currentExposure={bot.risk.currentExposure}
-                    dailyLossLimit={bot.risk.dailyLossLimit}
-                    killSwitch={bot.risk.killSwitch}
-                    onPositionSizeChange={setPositionSize}
-                    onApplyPositionSize={updatePositionSize}
-                    loading={actionLoading}
-                    message={positionSizeMessage}
-                />
-            }
-            rightTop={
-                <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={100} />
-            }
-            rightBottom={
-                <LogsPanel maxRows={100} />
-            }
-        />
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                        <FlowMetricsPanel pollInterval={2000} />
+                    </div>
+                </div>
+
+                {/* Trade Tape + Order Book (spans 2 rows, col 2) */}
+                <div className="row-span-2 min-h-0 overflow-hidden flex flex-col gap-2">
+                    <div className="h-[45%] min-h-0 overflow-hidden">
+                        <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={100} />
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                        <OrderBookPanel
+                            bids={orderBookBids}
+                            asks={orderBookAsks}
+                            midPrice={midPrice}
+                            spreadBps={bot.spreadBps}
+                        />
+                    </div>
+                </div>
+
+                {/* Chart (row 1, col 3) */}
+                <div className="min-h-0 overflow-hidden">
+                    <ChartPanel
+                        data={candleData}
+                        pairKey={currentPair?.key || 'Select Pair'}
+                        currentPrice={currentPrice}
+                        quoteCurrency={bot.quoteCurrency}
+                        spreadBps={bot.spreadBps}
+                    />
+                </div>
+
+                {/* Controls column (row-span-2, col 4): Governance, Logs */}
+                <div className="row-span-2 min-h-0 overflow-hidden flex flex-col gap-2">
+                    <div className="shrink-0">
+                        <GovernancePanel />
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                        <LogsPanel maxRows={50} />
+                    </div>
+                </div>
+
+                {/* Analytics sidebar (row 1+2, col 5): Analytics, Adaptive */}
+                <div className="row-span-2 min-h-0 overflow-hidden flex flex-col gap-2">
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                        <AnalyticsPanel pollInterval={5000} />
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                        <AdaptivePanel pollInterval={5000} />
+                    </div>
+                </div>
+
+                {/* Below chart (row 2, col 3): RegimeHeatmap + Controls stacked */}
+                <div className="min-h-0 overflow-hidden flex flex-col gap-2">
+                    <div className="shrink-0">
+                        <RegimeHeatmapPanel />
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                        <ControlsPanel
+                            pairSelector={pairSelectorElement}
+                            strategy={bot.strategy}
+                            lastLedger={bot.lastLedger}
+                            liquidity={bot.liquidity}
+                            slippageBps={bot.slippageBps}
+                            positionSize={positionSize}
+                            maxExposure={bot.risk.maxExposure}
+                            currentExposure={bot.risk.currentExposure}
+                            dailyLossLimit={bot.risk.dailyLossLimit}
+                            killSwitch={bot.risk.killSwitch}
+                            onPositionSizeChange={setPositionSize}
+                            onApplyPositionSize={updatePositionSize}
+                            loading={actionLoading}
+                            message={positionSizeMessage}
+                        />
+                    </div>
+                </div>
+            </div>
+        </AppShell>
     );
 }

@@ -24,6 +24,14 @@ export interface PanelProps {
     footer?: ReactNode;
     /** Compact mode reduces padding */
     compact?: boolean;
+    /** Dense mode for tables - minimal header, tighter spacing */
+    dense?: boolean;
+    /** Enable internal scrolling in body */
+    scrollable?: boolean;
+    /** No padding in body - for charts/tables that need full bleed */
+    noPadding?: boolean;
+    /** Optional subtitle or secondary info */
+    subtitle?: ReactNode;
 }
 
 export function Panel({
@@ -36,26 +44,50 @@ export function Panel({
     fillHeight = false,
     footer,
     compact = false,
+    dense = false,
+    scrollable = false,
+    noPadding = false,
+    subtitle,
 }: PanelProps) {
+    // Determine effective padding mode
+    const effectivePadding = noPadding ? 'p-0' : dense ? 'p-2' : compact ? 'p-3' : 'p-4';
+    const headerPadding = dense ? 'px-2 py-1.5' : compact ? 'px-3 py-2' : 'px-4 py-3';
+
     return (
         <div
             className={clsx(
-                'flex flex-col rounded-2xl bg-card/90 backdrop-blur-sm border border-white/5 shadow-card overflow-hidden',
+                // Base card styling
+                'flex flex-col rounded-2xl bg-card/90 backdrop-blur-sm border border-white/5 shadow-card',
+                // Height handling
                 fillHeight && 'h-full',
+                // Must have min-h-0 for flex child to allow proper shrinking
+                'min-h-0 min-w-0',
+                // Outer overflow hidden for rounded corners
+                'overflow-hidden',
                 className
             )}
         >
             {/* Header */}
             <div className={clsx(
                 'flex items-center justify-between border-b border-white/5 shrink-0',
-                compact ? 'px-3 py-2' : 'px-4 py-3'
+                headerPadding
             )}>
-                <div className="flex items-center gap-2 min-w-0">
-                    {Icon && <Icon size={16} className="text-slate-400 shrink-0" />}
-                    <h3 className="text-sm font-semibold text-slate-100 truncate">{title}</h3>
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                    {Icon && <Icon size={dense ? 14 : 16} className="text-slate-400 shrink-0" />}
+                    <div className="min-w-0 flex-1">
+                        <h3 className={clsx(
+                            'font-semibold text-slate-100 truncate',
+                            dense ? 'text-xs' : 'text-sm'
+                        )}>
+                            {title}
+                        </h3>
+                        {subtitle && (
+                            <div className="text-[10px] text-slate-500 truncate">{subtitle}</div>
+                        )}
+                    </div>
                 </div>
                 {actions && (
-                    <div className="flex items-center gap-2 shrink-0 ml-2">
+                    <div className="flex items-center gap-1 shrink-0 ml-2">
                         {actions}
                     </div>
                 )}
@@ -64,9 +96,12 @@ export function Panel({
             {/* Body */}
             <div
                 className={clsx(
-                    'overflow-hidden',
+                    // Flex child sizing
                     fillHeight ? 'flex-1 min-h-0' : '',
-                    compact ? 'p-3' : 'p-4',
+                    // Scrolling behavior
+                    scrollable ? 'overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent' : 'overflow-hidden',
+                    // Padding
+                    effectivePadding,
                     bodyClassName
                 )}
             >
@@ -77,7 +112,7 @@ export function Panel({
             {footer && (
                 <div className={clsx(
                     'border-t border-white/5 shrink-0',
-                    compact ? 'px-3 py-2' : 'px-4 py-3'
+                    dense ? 'px-2 py-1.5' : compact ? 'px-3 py-2' : 'px-4 py-3'
                 )}>
                     {footer}
                 </div>

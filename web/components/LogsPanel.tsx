@@ -2,46 +2,100 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
-import { ScrollText, Trash2, ArrowDown } from 'lucide-react';
+import { ScrollText, Trash2, ArrowDown, RefreshCw } from 'lucide-react';
 import { Panel, PanelAction, PanelBadge } from './Panel';
+
+type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
 interface LogEntry {
     id: string;
     ts: number;
-    level: 'info' | 'warn' | 'error' | 'debug';
+    level: LogLevel;
     message: string;
     source?: string;
+    data?: Record<string, unknown>;
+}
+
+interface LogsResponse {
+    logs: LogEntry[];
+    counts: Record<LogLevel, number>;
+    total: number;
 }
 
 interface LogsPanelProps {
     maxRows?: number;
+    pollInterval?: number;
 }
 
-export function LogsPanel({ maxRows = 100 }: LogsPanelProps) {
+export function LogsPanel({ maxRows = 100, pollInterval = 2000 }: LogsPanelProps) {
     const [logs, setLogs] = useState<LogEntry[]>([]);
+    const [counts, setCounts] = useState<Record<LogLevel, number>>({
+        trace: 0, debug: 0, info: 0, warn: 0, error: 0, fatal: 0
+    });
     const [autoScroll, setAutoScroll] = useState(true);
     const [filter, setFilter] = useState<'all' | 'warn' | 'error'>('all');
+    const [isPolling, setIsPolling] = useState(true);
+    const [lastFetch, setLastFetch] = useState<number>(0);
     const containerRef = useRef<HTMLDivElement>(null);
+    const lastLogIdRef = useRef<string | null>(null);
 
-    // Mock some initial logs - in production, connect to backend log stream
-    useEffect(() => {
-        const mockLogs: LogEntry[] = [
-            { id: '1', ts: Date.now() - 5000, level: 'info', message: 'Bot initialized', source: 'runtime' },
-            { id: '2', ts: Date.now() - 4000, level: 'info', message: 'Connected to XRPL', source: 'xrpl' },
-            { id: '3', ts: Date.now() - 3000, level: 'debug', message: 'Order book subscribed', source: 'market' },
-        ];
-        setLogs(mockLogs);
-    }, []);
+    // Fetch logs from API
+    const fetchLogs = useCallback(async (since?: number) => {
+        try {
+            const params = new URLSearchParams({ limit: String(maxRows) });
+            if (since) {
+                params.set('since', String(since));
+            }
 
-    const addLog = useCallback((entry: Omit<LogEntry, 'id' | 'ts'>) => {
-        setLogs((prev) => [
-            { ...entry, id: crypto.randomUUID(), ts: Date.now() },
-            ...prev,
-        ].slice(0, maxRows));
+            const res = await fetch(`/api/bot/logs?${params}`);
+            if (!res.ok) return;
+
+            const data: LogsResponse = await res.json();
+
+            if (since && data.logs.length > 0) {
+                // Incremental update - prepend new logs
+                setLogs((prev) => {
+                    const newLogs = data.logs.filter(
+                        (log) => !prev.some((p) => p.id === log.id)
+                    );
+                    return [...newLogs, ...prev].slice(0, maxRows);
+                });
+            } else if (!since) {
+                // Full fetch
+                setLogs(data.logs);
+            }
+
+            setCounts(data.counts);
+            setLastFetch(Date.now());
+
+            if (data.logs.length > 0 && data.logs[0]) {
+                lastLogIdRef.current = data.logs[0].id;
+            }
+        } catch (err) {
+            console.error('Failed to fetch logs:', err);
+        }
     }, [maxRows]);
+
+    // Initial fetch
+    useEffect(() => {
+        fetchLogs();
+    }, [fetchLogs]);
+
+    // Polling for new logs
+    useEffect(() => {
+        if (!isPolling) return;
+
+        const interval = setInterval(() => {
+            // Fetch logs newer than our last fetch timestamp
+            fetchLogs(lastFetch || undefined);
+        }, pollInterval);
+
+        return () => clearInterval(interval);
+    }, [isPolling, pollInterval, lastFetch, fetchLogs]);
 
     const clearLogs = useCallback(() => {
         setLogs([]);
+        lastLogIdRef.current = null;
     }, []);
 
     useEffect(() => {
@@ -52,26 +106,34 @@ export function LogsPanel({ maxRows = 100 }: LogsPanelProps) {
 
     const filteredLogs = filter === 'all'
         ? logs
-        : logs.filter((l) => l.level === filter || (filter === 'warn' && l.level === 'error'));
+        : logs.filter((l) => {
+            if (filter === 'error') return l.level === 'error' || l.level === 'fatal';
+            if (filter === 'warn') return l.level === 'warn' || l.level === 'error' || l.level === 'fatal';
+            return true;
+        });
 
     const formatTime = (ts: number) => new Date(ts).toLocaleTimeString('en-US', { hour12: false });
 
-    const levelColors = {
+    const levelColors: Record<LogLevel, string> = {
+        trace: 'text-slate-600',
+        debug: 'text-slate-500',
         info: 'text-sky-400',
         warn: 'text-amber-400',
         error: 'text-red-400',
-        debug: 'text-slate-500',
+        fatal: 'text-red-500',
     };
 
-    const levelBg = {
+    const levelBg: Record<LogLevel, string> = {
+        trace: 'bg-slate-500/5',
+        debug: 'bg-slate-500/10',
         info: 'bg-sky-500/10',
         warn: 'bg-amber-500/10',
         error: 'bg-red-500/10',
-        debug: 'bg-slate-500/10',
+        fatal: 'bg-red-500/20',
     };
 
-    const errorCount = logs.filter((l) => l.level === 'error').length;
-    const warnCount = logs.filter((l) => l.level === 'warn').length;
+    const errorCount = counts.error + counts.fatal;
+    const warnCount = counts.warn;
 
     return (
         <Panel
@@ -100,6 +162,12 @@ export function LogsPanel({ maxRows = 100 }: LogsPanelProps) {
                         ))}
                     </div>
                     <PanelAction
+                        icon={RefreshCw}
+                        onClick={() => setIsPolling(!isPolling)}
+                        label={isPolling ? 'Pause updates' : 'Resume updates'}
+                        active={isPolling}
+                    />
+                    <PanelAction
                         icon={ArrowDown}
                         onClick={() => setAutoScroll(!autoScroll)}
                         label="Auto-scroll"
@@ -119,20 +187,25 @@ export function LogsPanel({ maxRows = 100 }: LogsPanelProps) {
                 className="h-full overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
             >
                 {filteredLogs.length === 0 ? (
-                    <div className="text-center text-slate-500 text-xs py-8">No logs</div>
+                    <div className="text-center text-slate-500 text-xs py-8">
+                        {isPolling ? 'Waiting for logs...' : 'No logs'}
+                    </div>
                 ) : (
                     filteredLogs.map((log) => (
                         <div
                             key={log.id}
                             className={clsx(
                                 'flex items-start gap-2 px-3 py-1.5 border-b border-white/5 text-xs',
-                                levelBg[log.level]
+                                levelBg[log.level] || levelBg.info
                             )}
                         >
                             <span className="text-slate-500 font-mono text-[10px] shrink-0">
                                 {formatTime(log.ts)}
                             </span>
-                            <span className={clsx('font-semibold uppercase text-[10px] w-10 shrink-0', levelColors[log.level])}>
+                            <span className={clsx(
+                                'font-semibold uppercase text-[10px] w-10 shrink-0',
+                                levelColors[log.level] || levelColors.info
+                            )}>
                                 {log.level}
                             </span>
                             <span className="text-slate-300 break-all flex-1">{log.message}</span>
