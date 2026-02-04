@@ -1,6 +1,6 @@
 import EventEmitter from 'events';
 import { TradingPair } from '../config';
-import { logger } from '../analytics/logger';
+import { marketLog as logger } from '../analytics/logger';
 import { XRPLWebSocket } from '../xrpl/client';
 import { OrderBookState, BookOffer as NormalizedOffer } from '../utils/types';
 

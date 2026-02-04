@@ -2,7 +2,7 @@ import { Client, Wallet, TransactionMetadata, Amount, IssuedCurrencyAmount, drop
 import { ExecutionResult, OrderBookState } from '../utils/types';
 import { RiskEngine } from '../risk/riskEngine';
 import { StrategyConfig, TradingPair } from '../config';
-import { logger } from '../analytics/logger';
+import { executionLog as logger } from '../analytics/logger';
 import { tradeHistory } from '../analytics/tradeHistory';
 import { feedbackEngine } from '../analytics/feedbackEngine';
 import { computeCostRealism } from '../analytics/costRealism';
@@ -56,6 +56,9 @@ export class OfferExecutor {
     // Governance layer overrides (Capital Protection - defense in depth)
     private governanceSizeMultiplier: number = 1.0;
     private governanceMode: 'ALLOW' | 'THROTTLE' | 'PAUSE' | 'SHUTDOWN' = 'ALLOW';
+
+    // Regime policy layer overrides (regime-based sizing)
+    private regimePolicySizeMultiplier: number = 1.0;
 
     constructor(
         private readonly client: Client,
@@ -147,6 +150,25 @@ export class OfferExecutor {
         this.governanceMode = 'ALLOW';
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Regime Policy Layer
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Set regime policy size multiplier.
+     * Applied in combination with adaptive and governance multipliers.
+     */
+    setRegimePolicySizeMultiplier(value: number): void {
+        this.regimePolicySizeMultiplier = Math.max(0, Math.min(1.2, value));
+    }
+
+    /**
+     * Clear regime policy overrides (called between strategy ticks).
+     */
+    clearRegimePolicyOverrides(): void {
+        this.regimePolicySizeMultiplier = 1.0;
+    }
+
     /**
      * Get current governance state for diagnostics.
      */
@@ -166,9 +188,12 @@ export class OfferExecutor {
 
     /**
      * Get the effective size multiplier (adaptive override → 1.0).
+     * This is then further modified by governance and regime policy multipliers.
      */
     private getEffectiveSizeMultiplier(): number {
-        return this.adaptiveSizeMultiplier ?? 1.0;
+        const adaptive = this.adaptiveSizeMultiplier ?? 1.0;
+        // Combine with governance and regime policy multipliers
+        return adaptive * this.governanceSizeMultiplier * this.regimePolicySizeMultiplier;
     }
 
     /**

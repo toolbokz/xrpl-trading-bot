@@ -3,7 +3,7 @@ import { OrderBookTracker } from '../market/orderBookTracker';
 import { StrategyConfig, TradingPair, FlowConfig } from '../config';
 import { OfferExecutor } from '../execution/offerExecutor';
 import { RiskEngine } from '../risk/riskEngine';
-import { logger } from '../analytics/logger';
+import { strategyLog as logger } from '../analytics/logger';
 import {
     isRegimeSafeForMM,
     getRegimeSizeMultiplier,

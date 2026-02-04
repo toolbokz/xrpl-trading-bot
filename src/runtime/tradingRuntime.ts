@@ -1,7 +1,7 @@
 import { Wallet, isValidClassicAddress, Client, TransactionStream } from 'xrpl';
 import { AppConfig, TradingPair, FlowConfig, loadConfig } from '../config';
 import { TRADING_PAIRS, isValidPairKey } from '../config/tradingPairs';
-import { logger } from '../analytics/logger';
+import { runtimeLog as logger } from '../analytics/logger';
 import { XRPLWebSocket } from '../xrpl/client';
 import { OrderBookTracker } from '../market/orderBookTracker';
 import { RiskEngine } from '../risk/riskEngine';
@@ -10,7 +10,7 @@ import { ScalperStrategy } from '../strategies/scalper';
 import { AMMService } from '../market/amm';
 import { AMMArbitrageStrategy } from '../strategies/ammArbitrage';
 import { PathArbitrageStrategy } from '../strategies/pathArbitrage';
-import { Strategy } from '../strategies/types';
+import { Strategy, StrategyRegimePolicyContext } from '../strategies/types';
 import { getWallet, initWallet } from '../xrpl/wallet';
 import { ExecutionResult } from '../utils/types';
 import { closeBreakerStore } from '../persistence/breakerStore';
@@ -37,6 +37,12 @@ import {
     CapitalProtectionConfig,
     loadCapitalProtectionConfig,
 } from '../risk/capitalProtection';
+import {
+    RegimePolicyEngine,
+    RegimePolicy,
+    loadRegimePolicyConfig,
+    getRegimePolicyEngine,
+} from '../analytics/regimePolicy';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -103,6 +109,7 @@ export class TradingRuntime {
     private capitalProtection: CapitalProtectionEngine | null = null;
     private capitalProtectionConfig: CapitalProtectionConfig | null = null;
     private lastGovernanceDecision: CapitalProtectionDecision | null = null;
+    private regimePolicyEngine: RegimePolicyEngine | null = null;
     private readonly baseConfig: AppConfig;
 
     constructor(config?: AppConfig) {
@@ -202,6 +209,19 @@ export class TradingRuntime {
                 config: cpConfig,
             });
             logger.info({ enabled: cpConfig.enabled }, 'Capital protection engine initialized');
+
+            // Initialize regime policy engine
+            const rpConfig = loadRegimePolicyConfig();
+            if (rpConfig.enabled) {
+                this.regimePolicyEngine = getRegimePolicyEngine();
+                // Initial policy computation (non-blocking, best-effort)
+                try {
+                    this.regimePolicyEngine.recompute();
+                } catch (err) {
+                    logger.warn({ err }, 'Initial regime policy computation failed');
+                }
+                logger.info({ enabled: true }, 'Regime policy engine initialized');
+            }
 
             // Start CPU watchdog to prevent runaway CPU usage
             this.cpuWatchdog = startCpuWatchdog(() => {
@@ -353,9 +373,13 @@ export class TradingRuntime {
                 governance: governanceDecision,
                 globalSizeMultiplier,
                 globalCooldownMs,
+                // regimePolicy will be set per-strategy below
             };
 
             const regime: FlowRegime = flowMetrics.regime;
+
+            // Get current regime policy (cached, fast)
+            const regimePolicy = this.regimePolicyEngine?.getCurrentPolicy() ?? null;
 
             for (const strategy of this.strategies) {
                 // Rate limit strategy execution to prevent CPU spikes
@@ -370,7 +394,7 @@ export class TradingRuntime {
                     continue;
                 }
 
-                // Check if regime is disabled by governance
+                // Check if regime is disabled by governance (capital protection)
                 if (governanceDecision?.disabledRegimes?.includes(regime)) {
                     logger.debug({
                         strategy: strategy.name,
@@ -378,6 +402,51 @@ export class TradingRuntime {
                         reasons: governanceDecision.reasons,
                     }, 'Skipping strategy - regime disabled by capital protection');
                     continue;
+                }
+
+                // ─────────────────────────────────────────────────────────────
+                // Regime Policy Gate
+                // ─────────────────────────────────────────────────────────────
+                let regimePolicyContext: StrategyRegimePolicyContext | undefined;
+
+                if (this.regimePolicyEngine && regimePolicy) {
+                    const isRegimeDisabledGlobal = regimePolicy.global.disabledRegimes.includes(regime);
+                    const strategyPolicy = regimePolicy.strategies[strategy.name];
+                    const isRegimeDisabledStrategy = strategyPolicy?.disabledRegimes.includes(regime) ?? false;
+                    const isDisabled = isRegimeDisabledGlobal || isRegimeDisabledStrategy;
+
+                    // Get size multiplier from regime policy
+                    const regimeSizeMultiplier = this.regimePolicyEngine.getEffectiveSizeMultiplier(strategy.name, regime);
+                    const currentRegimeSizePolicy = strategyPolicy?.sizeByRegime[regime]
+                        ?? regimePolicy.global.sizeByRegime[regime]
+                        ?? null;
+
+                    regimePolicyContext = {
+                        currentRegime: regime,
+                        isRegimeDisabledGlobal,
+                        isRegimeDisabledStrategy,
+                        isRegimeDisabled: isDisabled,
+                        regimeSizeMultiplier,
+                        policy: regimePolicy,
+                        currentRegimeSizePolicy,
+                    };
+
+                    // Skip strategy if regime is disabled by regime policy
+                    if (isDisabled) {
+                        logger.debug({
+                            strategy: strategy.name,
+                            regime,
+                            global: isRegimeDisabledGlobal,
+                            strategySpecific: isRegimeDisabledStrategy,
+                        }, 'Skipping strategy - regime disabled by regime policy');
+                        continue;
+                    }
+
+                    // Apply regime policy size multiplier to executor (multiplied with governance multiplier)
+                    if (this.executor && regimeSizeMultiplier < 1.0) {
+                        const combinedMultiplier = globalSizeMultiplier * regimeSizeMultiplier;
+                        this.executor.setRegimePolicySizeMultiplier(combinedMultiplier);
+                    }
                 }
 
                 // Apply governance size multiplier to executor
@@ -414,12 +483,19 @@ export class TradingRuntime {
                     }
                 }
 
-                await strategy.tick(ctx);
+                // Build strategy-specific context with regime policy
+                const strategyCtx = {
+                    ...ctx,
+                    regimePolicy: regimePolicyContext,
+                };
+
+                await strategy.tick(strategyCtx);
 
                 // Clear overrides after each strategy to avoid cross-contamination
                 if (this.executor) {
                     this.executor.clearAdaptiveOverrides();
                     this.executor.clearGovernanceOverrides();
+                    this.executor.clearRegimePolicyOverrides();
                 }
             }
         } finally {
@@ -456,6 +532,22 @@ export class TradingRuntime {
             decision: this.lastGovernanceDecision,
             config: this.capitalProtectionConfig,
         };
+    }
+
+    /**
+     * Get the current regime policy.
+     * Returns null if regime policy is disabled or not initialized.
+     */
+    getRegimePolicy(): RegimePolicy | null {
+        return this.regimePolicyEngine?.getCurrentPolicy() ?? null;
+    }
+
+    /**
+     * Recompute the regime policy (trigger manual update).
+     * Returns the new policy or null if regime policy is disabled.
+     */
+    recomputeRegimePolicy(): RegimePolicy | null {
+        return this.regimePolicyEngine?.recompute() ?? null;
     }
 
     /**

@@ -1,7 +1,7 @@
 import { Client, SubscribeRequest, BookOffer, LedgerStreamResponse, TransactionStream, Currency, RippledError, isValidClassicAddress } from 'xrpl';
 import EventEmitter from 'events';
 import { XRPLConfig, TradingPair } from '../config';
-import { logger } from '../analytics/logger';
+import { xrplLog as logger } from '../analytics/logger';
 import { nextBackoffWithJitter, BackoffState } from '../utils/backoff';
 import { sleep } from '../utils/sleep';
 import { getWalletAddress } from './wallet';

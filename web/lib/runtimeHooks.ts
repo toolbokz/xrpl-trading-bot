@@ -52,3 +52,11 @@ export const ensureRuntimeHooks = (): TradingRuntime => {
     }
     return runtime;
 };
+
+/**
+ * Get the existing runtime instance without creating one.
+ * Returns undefined if the runtime hasn't been initialized yet.
+ */
+export const getRuntime = (): TradingRuntime | undefined => {
+    return globalRefs._tradingRuntime;
+};

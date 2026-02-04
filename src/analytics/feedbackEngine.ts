@@ -145,6 +145,52 @@ export interface DrawdownPoint {
 }
 
 /**
+ * Regime heatmap cell stats
+ */
+export interface RegimeHeatmapCell {
+    regime: FlowRegime;
+    trades: number;
+    winRate: number;
+    profitFactor: number;
+    expectancyBps: number;
+    avgEdgeBps: number;
+    avgSlippageBps: number;
+    avgSpreadBps: number;
+    partialFillRate: number;
+    /** Composite score: expectancyBps - 0.5*avgSlippageBps - 0.25*avgSpreadBps - 20*partialFillRate */
+    score: number;
+}
+
+/**
+ * Regime heatmap options
+ */
+export interface RegimeHeatmapOptions {
+    /** Lookback window in hours (default: 24) */
+    lookbackHours?: number;
+    /** Minimum trades required for valid stats (default: 5) */
+    minTrades?: number;
+    /** Include per-strategy breakdown */
+    byStrategy?: boolean;
+}
+
+/**
+ * Regime heatmap response
+ */
+export interface RegimeHeatmapResponse {
+    /** Global regime stats (across all strategies) */
+    global: Record<FlowRegime, RegimeHeatmapCell>;
+    /** Per-strategy regime stats */
+    perStrategy: Record<string, Record<FlowRegime, RegimeHeatmapCell>>;
+    /** Query metadata */
+    meta: {
+        lookbackHours: number;
+        minTrades: number;
+        totalTrades: number;
+        computedAt: number;
+    };
+}
+
+/**
  * Complete analytics response
  */
 export interface AnalyticsResponse {
@@ -495,6 +541,222 @@ class FeedbackEngine {
             byRegime: this.getRegimeMatrix(filters),
             byStrategy: this.getStrategyStats(filters),
             drawdown: this.getRollingDrawdown(filters),
+        };
+    }
+
+    /**
+     * Get regime heatmap with detailed stats for policy computation.
+     * Returns both global (across all strategies) and per-strategy breakdowns.
+     */
+    getRegimeHeatmap(options: RegimeHeatmapOptions = {}): RegimeHeatmapResponse {
+        const lookbackHours = options.lookbackHours ?? 24;
+        const minTrades = options.minTrades ?? 5;
+        const byStrategy = options.byStrategy ?? true;
+
+        const ALL_REGIMES: FlowRegime[] = ['quiet', 'normal', 'trendingUp', 'trendingDown', 'chaotic', 'illiquid'];
+
+        if (!this.ensureInitialized()) {
+            return this.emptyRegimeHeatmap(lookbackHours, minTrades, ALL_REGIMES);
+        }
+
+        try {
+            const sinceMs = Date.now() - lookbackHours * 60 * 60 * 1000;
+            const events = queryTradeEvents({ sinceMs });
+
+            // Filter to bot fills only
+            const fills = events.filter(e =>
+                (e.action === 'fill' || (e.action === 'offer_create' && e.fillPrice)) &&
+                e.isBotTrade === 1
+            );
+
+            // Enrich with regime from snapshots
+            const enriched = fills.map(event => {
+                const snapshot = getSnapshotNear(event.pairKey, event.ts, 10000);
+                return { event, regime: snapshot?.flowRegime ?? null, spreadBps: snapshot?.spreadBps ?? null };
+            }).filter(e => e.regime !== null) as Array<{
+                event: TradeEventRecord;
+                regime: FlowRegime;
+                spreadBps: number | null;
+            }>;
+
+            // Global aggregation by regime
+            const globalCells = this.computeRegimeHeatmapCells(enriched, ALL_REGIMES, minTrades);
+
+            // Per-strategy aggregation
+            const perStrategy: Record<string, Record<FlowRegime, RegimeHeatmapCell>> = {};
+
+            if (byStrategy) {
+                const strategies = new Set(enriched.map(e => e.event.strategy));
+                for (const strategy of strategies) {
+                    const strategyEnriched = enriched.filter(e => e.event.strategy === strategy);
+                    perStrategy[strategy] = this.computeRegimeHeatmapCells(strategyEnriched, ALL_REGIMES, minTrades);
+                }
+            }
+
+            return {
+                global: globalCells,
+                perStrategy,
+                meta: {
+                    lookbackHours,
+                    minTrades,
+                    totalTrades: enriched.length,
+                    computedAt: Date.now(),
+                },
+            };
+        } catch (err) {
+            logger.warn({ err }, 'Failed to compute regime heatmap');
+            return this.emptyRegimeHeatmap(lookbackHours, minTrades, ALL_REGIMES);
+        }
+    }
+
+    /**
+     * Compute heatmap cells for a set of enriched events
+     */
+    private computeRegimeHeatmapCells(
+        enriched: Array<{ event: TradeEventRecord; regime: FlowRegime; spreadBps: number | null }>,
+        regimes: FlowRegime[],
+        minTrades: number
+    ): Record<FlowRegime, RegimeHeatmapCell> {
+        const result: Record<FlowRegime, RegimeHeatmapCell> = {} as Record<FlowRegime, RegimeHeatmapCell>;
+
+        for (const regime of regimes) {
+            const regimeEvents = enriched.filter(e => e.regime === regime);
+            const trades = regimeEvents.length;
+
+            if (trades < minTrades) {
+                // Insufficient data - return null/zero cell
+                result[regime] = this.emptyHeatmapCell(regime);
+                continue;
+            }
+
+            let wins = 0;
+            let losses = 0;
+            let totalGain = 0;
+            let totalLoss = 0;
+            let sumEdgeBps = 0;
+            let edgeCount = 0;
+            let sumSlippageBps = 0;
+            let slippageCount = 0;
+            let sumSpreadBps = 0;
+            let spreadCount = 0;
+            let partialCount = 0;
+            let totalTradeSize = 0;
+
+            for (const { event, spreadBps } of regimeEvents) {
+                const pnl = this.computeEventPnl(event);
+                const edge = this.computeEdgeBps(event);
+                const slippage = event.slippageBpsVsIntent ?? this.computeSlippageBps(event);
+
+                if (pnl > 0) {
+                    wins++;
+                    totalGain += pnl;
+                } else {
+                    losses++;
+                    totalLoss += Math.abs(pnl);
+                }
+
+                if (edge !== null) {
+                    sumEdgeBps += edge;
+                    edgeCount++;
+                }
+
+                if (slippage !== null) {
+                    sumSlippageBps += Math.abs(slippage);
+                    slippageCount++;
+                }
+
+                if (spreadBps !== null) {
+                    sumSpreadBps += spreadBps;
+                    spreadCount++;
+                }
+
+                if (event.isPartial === 1) {
+                    partialCount++;
+                }
+
+                if (event.fillSizeBase) {
+                    totalTradeSize += event.fillSizeBase;
+                }
+            }
+
+            const winRate = trades > 0 ? wins / trades : 0;
+            const avgTradeSize = trades > 0 ? totalTradeSize / trades : 1;
+            const profitFactor = totalLoss > 0 ? totalGain / totalLoss : (totalGain > 0 ? 10 : 1);
+
+            // Expectancy in bps
+            const avgWin = wins > 0 ? totalGain / wins : 0;
+            const avgLoss = losses > 0 ? totalLoss / losses : 0;
+            const expectancy = (winRate * avgWin) - ((1 - winRate) * avgLoss);
+            const expectancyBps = avgTradeSize > 0 ? (expectancy / avgTradeSize) * 10000 : 0;
+
+            const avgEdgeBps = edgeCount > 0 ? sumEdgeBps / edgeCount : 0;
+            const avgSlippageBps = slippageCount > 0 ? sumSlippageBps / slippageCount : 0;
+            const avgSpreadBps = spreadCount > 0 ? sumSpreadBps / spreadCount : 0;
+            const partialFillRate = trades > 0 ? partialCount / trades : 0;
+
+            // Composite score: expectancyBps - 0.5*avgSlippageBps - 0.25*avgSpreadBps - 20*partialFillRate
+            // This penalizes high slippage/spread and partial fills
+            let score = expectancyBps - (0.5 * avgSlippageBps) - (0.25 * avgSpreadBps) - (20 * partialFillRate);
+
+            // Clamp score to [-100, 100] to avoid outliers
+            score = Math.max(-100, Math.min(100, score));
+
+            result[regime] = {
+                regime,
+                trades,
+                winRate,
+                profitFactor: Number.isFinite(profitFactor) ? profitFactor : 10,
+                expectancyBps: Number.isFinite(expectancyBps) ? expectancyBps : 0,
+                avgEdgeBps,
+                avgSlippageBps,
+                avgSpreadBps,
+                partialFillRate,
+                score,
+            };
+        }
+
+        return result;
+    }
+
+    /**
+     * Return empty heatmap cell for insufficient data
+     */
+    private emptyHeatmapCell(regime: FlowRegime): RegimeHeatmapCell {
+        return {
+            regime,
+            trades: 0,
+            winRate: 0,
+            profitFactor: 1,
+            expectancyBps: 0,
+            avgEdgeBps: 0,
+            avgSlippageBps: 0,
+            avgSpreadBps: 0,
+            partialFillRate: 0,
+            score: 0,
+        };
+    }
+
+    /**
+     * Return empty regime heatmap for error cases
+     */
+    private emptyRegimeHeatmap(
+        lookbackHours: number,
+        minTrades: number,
+        regimes: FlowRegime[]
+    ): RegimeHeatmapResponse {
+        const global: Record<FlowRegime, RegimeHeatmapCell> = {} as Record<FlowRegime, RegimeHeatmapCell>;
+        for (const regime of regimes) {
+            global[regime] = this.emptyHeatmapCell(regime);
+        }
+        return {
+            global,
+            perStrategy: {},
+            meta: {
+                lookbackHours,
+                minTrades,
+                totalTrades: 0,
+                computedAt: Date.now(),
+            },
         };
     }
 
@@ -1039,4 +1301,9 @@ class FeedbackEngine {
 export const feedbackEngine = new FeedbackEngine();
 
 // Convenience re-exports
-export type { TradeEventRecord, MarketSnapshotRecord, TradeAction, QueryFilters };
+export type {
+    TradeEventRecord,
+    MarketSnapshotRecord,
+    TradeAction,
+    QueryFilters,
+};

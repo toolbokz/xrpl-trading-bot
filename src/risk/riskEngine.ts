@@ -1,6 +1,6 @@
 import { Client } from 'xrpl';
 import { RiskConfig, TradingPair } from '../config';
-import { logger } from '../analytics/logger';
+import { riskLog as logger } from '../analytics/logger';
 import { hasAdequateReserves, loadReserveConfig, type ReserveConfig } from '../xrpl/reserve';
 
 export interface TradeIntent {
