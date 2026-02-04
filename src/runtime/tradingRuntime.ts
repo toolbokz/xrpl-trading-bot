@@ -109,9 +109,10 @@ export class TradingRuntime {
         assertAllowedPair(config.tradingPair);
 
         // Wallet init is required for network safety checks even in paper mode.
-        let walletCtx: ReturnType<typeof initWallet>;
+        // Now async to support encrypted mainnet secrets with passphrase prompt.
+        let walletCtx: Awaited<ReturnType<typeof initWallet>>;
         try {
-            walletCtx = initWallet(config);
+            walletCtx = await initWallet(config);
         } catch (err) {
             logger.error({ err }, 'Wallet initialization failed');
             throw err instanceof Error ? err : new Error('Wallet initialization failed');

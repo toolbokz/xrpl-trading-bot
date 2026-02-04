@@ -1,10 +1,11 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { Client, Wallet } from 'xrpl';
-import { walletFromSecretNumbers } from 'xrpl/dist/npm/Wallet/walletFromSecretNumbers';
 import { loadConfig } from '../../../../src/config';
 import { getSharedClient } from '../../../lib/xrplClient';
 import { logger } from '../../../../src/analytics/logger';
+import { walletFromSecretNumbers } from '../../../../src/xrpl/wallet';
+import { decryptFromBase64 } from '../../../../src/security/secretBox';
 
 export const config = {
     api: { bodyParser: false },
@@ -138,11 +139,26 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
         } else if (cfg.walletSecretNumbers) {
             // Secret numbers format: "123456,234567,345678,..." (8 numbers)
             try {
-                const secretNums = cfg.walletSecretNumbers.split(',').map(n => n.trim());
-                const wallet = walletFromSecretNumbers(secretNums);
+                const wallet = walletFromSecretNumbers(cfg.walletSecretNumbers);
                 address = wallet.classicAddress;
             } catch (err) {
                 logger.error({ err }, 'Failed to derive wallet from secret numbers');
+            }
+        } else {
+            // Try encrypted secret numbers
+            const isTestnet = cfg.xrpl.network?.toLowerCase() === 'testnet';
+            const encKey = isTestnet ? 'XRPL_SECRET_NUMBERS_TESTNET_ENC' : 'XRPL_SECRET_NUMBERS_MAINNET_ENC';
+            const encryptedSecrets = process.env[encKey];
+            const passphrase = process.env.XRPL_SECRET_PASSPHRASE;
+
+            if (encryptedSecrets && passphrase) {
+                try {
+                    const decrypted = decryptFromBase64(encryptedSecrets, passphrase);
+                    const wallet = walletFromSecretNumbers(decrypted);
+                    address = wallet.classicAddress;
+                } catch (err) {
+                    logger.error({ err }, 'Failed to decrypt/derive wallet from encrypted secret numbers');
+                }
             }
         }
 

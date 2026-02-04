@@ -19,6 +19,7 @@
         "lint": "next lint web --no-inline-config",
         "faucet": "ts-node --transpile-only scripts/createTestnetWallet.ts",
         "fund:rlusd:testnet": "ts-node --transpile-only scripts/fundExistingRlusdTestnet.ts",
+        "encrypt:mainnet-secret": "ts-node --transpile-only scripts/encrypt-mainnet-secret-numbers.ts",
         "test": "vitest",
         "clean": "rm -rf dist web/.next node_modules web/node_modules",
         "reinstall": "npm run clean && npm install"
