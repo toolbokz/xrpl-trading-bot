@@ -1,5 +1,6 @@
 import { OrderBookState } from '../utils/types';
 import { Trade, TradeAggression } from '../market/tradeTape';
+import { FlowMetrics } from '../market/flowMetrics';
 
 export interface StrategyContext {
     orderBook: OrderBookState;
@@ -10,6 +11,8 @@ export interface StrategyContext {
     tradeStats?: TradeAggression | undefined;
     /** Volume-Weighted Average Price over 60s window */
     vwap?: number | null | undefined;
+    /** Flow metrics with regime classification (computed from trade tape + order book) */
+    flow?: FlowMetrics | undefined;
 }
 
 export interface Strategy {

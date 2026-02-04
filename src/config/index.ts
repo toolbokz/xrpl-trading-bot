@@ -41,6 +41,31 @@ export interface RiskConfig {
     reserveFloorXRP: number;
 }
 
+export interface FlowConfig {
+    /** Time window for trade flow analysis in ms (default: 60000) */
+    flowWindowMs: number;
+    /** Time window for short-term aggression in ms (default: 10000) */
+    aggressionWindowMs: number;
+    /** Number of order book levels to consider for depth (default: 10) */
+    depthLevels: number;
+    /** Imbalance threshold to classify as trending (default: 0.3) */
+    trendingThreshold: number;
+    /** Spread threshold in bps to classify as chaotic (default: 200) */
+    chaoticSpreadBps: number;
+    /** Minimum trades in window to classify as not-illiquid (default: 3) */
+    minTradesForLiquidity: number;
+    /** Minimum total depth (bid+ask) in base to classify as not-illiquid (default: 100) */
+    minDepthForLiquidity: number;
+    /** Combined signal threshold for quiet regime (default: 0.1) */
+    quietThreshold: number;
+    /** Enable regime-based strategy filtering (default: true) */
+    enableRegimeFilter: boolean;
+    /** Enable adverse selection protection (default: true) */
+    enableAdverseSelectionProtection: boolean;
+    /** Maximum quote skew in bps based on imbalance (default: 10) */
+    maxQuoteSkewBps: number;
+}
+
 export interface StrategyConfig {
     minSpreadBps: number;
     positionSize: number;
@@ -73,6 +98,7 @@ export interface AppConfig {
     paperTrading: boolean;
     risk: RiskConfig;
     strategy: StrategyConfig;
+    flow: FlowConfig;
     analytics: {
         logLevel: 'info' | 'debug' | 'warn' | 'error';
         csvExportPath: string;
@@ -148,6 +174,20 @@ export const loadConfig = (): AppConfig => {
         orderBookStaleMs: toNumber(process.env.ORDERBOOK_STALE_MS, 5_000), // Default 5 seconds
     };
 
+    const flow: FlowConfig = {
+        flowWindowMs: toNumber(process.env.FLOW_WINDOW_MS, 60_000),
+        aggressionWindowMs: toNumber(process.env.FLOW_AGGRESSION_WINDOW_MS, 10_000),
+        depthLevels: toNumber(process.env.FLOW_DEPTH_LEVELS, 10),
+        trendingThreshold: toNumber(process.env.FLOW_TRENDING_THRESHOLD, 0.3),
+        chaoticSpreadBps: toNumber(process.env.FLOW_CHAOTIC_SPREAD_BPS, 200),
+        minTradesForLiquidity: toNumber(process.env.FLOW_MIN_TRADES_LIQUIDITY, 3),
+        minDepthForLiquidity: toNumber(process.env.FLOW_MIN_DEPTH_LIQUIDITY, 100),
+        quietThreshold: toNumber(process.env.FLOW_QUIET_THRESHOLD, 0.1),
+        enableRegimeFilter: toBool(process.env.FLOW_ENABLE_REGIME_FILTER as EnvBool, true),
+        enableAdverseSelectionProtection: toBool(process.env.FLOW_ENABLE_ADVERSE_SELECTION as EnvBool, true),
+        maxQuoteSkewBps: toNumber(process.env.FLOW_MAX_QUOTE_SKEW_BPS, 10),
+    };
+
     const xrpl: XRPLConfig = {
         endpoint,
         network,
@@ -168,6 +208,7 @@ export const loadConfig = (): AppConfig => {
         paperTrading,
         risk,
         strategy,
+        flow,
         analytics: {
             logLevel: (process.env.LOG_LEVEL as AppConfig['analytics']['logLevel']) || 'info',
             csvExportPath: process.env.CSV_EXPORT_PATH || 'pnl.csv',

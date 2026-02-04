@@ -1,25 +1,60 @@
 import { Strategy, StrategyContext } from './types';
 import { AMMService } from '../market/amm';
-import { StrategyConfig, TradingPair } from '../config';
+import { StrategyConfig, TradingPair, FlowConfig } from '../config';
 import { OfferExecutor } from '../execution/offerExecutor';
 import { logger } from '../analytics/logger';
+import { isRegimeSafeForArb, getRegimeDescription, getRegimeSizeMultiplier } from '../market/flowMetrics';
+
+/**
+ * Default flow config when not provided (should be passed from TradingRuntime)
+ */
+const DEFAULT_FLOW_CONFIG: Partial<FlowConfig> = {
+    enableRegimeFilter: true,
+};
 
 export class AMMArbitrageStrategy implements Strategy {
     name = 'amm-arbitrage';
     private lastLedger = 0;
+    private flowConfig: Partial<FlowConfig>;
+    private lastLoggedRegime: string | null = null;
 
     constructor(
         private readonly amm: AMMService,
         private readonly config: StrategyConfig,
         private readonly pair: TradingPair,
-        private readonly executor: OfferExecutor
-    ) { }
+        private readonly executor: OfferExecutor,
+        flowConfig?: Partial<FlowConfig>
+    ) {
+        this.flowConfig = flowConfig ?? DEFAULT_FLOW_CONFIG;
+    }
 
     async tick(ctx: StrategyContext): Promise<void> {
         if (ctx.ledgerIndex === this.lastLedger) return;
         this.lastLedger = ctx.ledgerIndex;
-        const { orderBook } = ctx;
+        const { orderBook, flow } = ctx;
         if (!orderBook.bids.length || !orderBook.asks.length) return;
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Flow Regime Filter (skip dangerous regimes)
+        // ─────────────────────────────────────────────────────────────────────
+        if (flow && this.flowConfig.enableRegimeFilter !== false) {
+            // Log regime changes
+            if (flow.regime !== this.lastLoggedRegime) {
+                logger.info({
+                    regime: flow.regime,
+                    description: getRegimeDescription(flow.regime),
+                }, 'AMM Arb: 🌊 Flow regime changed');
+                this.lastLoggedRegime = flow.regime;
+            }
+
+            if (!isRegimeSafeForArb(flow.regime)) {
+                logger.debug({
+                    regime: flow.regime,
+                    reason: getRegimeDescription(flow.regime),
+                }, 'AMM Arb: ⚠️ Skipping tick - regime unsafe for arbitrage');
+                return;
+            }
+        }
 
         const firstBid = orderBook.bids[0];
         const firstAsk = orderBook.asks[0];
@@ -48,11 +83,42 @@ export class AMMArbitrageStrategy implements Strategy {
 
         if (Math.abs(diffBps) < this.config.ammArbMinProfitBps) return;
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Position Sizing (scale based on regime)
+        // ─────────────────────────────────────────────────────────────────────
+        const sizeMultiplier = flow ? getRegimeSizeMultiplier(flow) : 1.0;
+        const adjustedPositionSize = this.config.positionSize * sizeMultiplier;
+
+        if (adjustedPositionSize <= 0) {
+            logger.debug({ sizeMultiplier, regime: flow?.regime }, 'AMM Arb: ⚠️ Position size zero after regime adjustment');
+            return;
+        }
+
         const side: 'buy' | 'sell' = diffBps > 0 ? 'buy' : 'sell';
         const price = side === 'buy' ? bestBid : bestAsk;
-        const res = await this.executor.placeOffer({ side, price, amount: this.config.positionSize, flags: { immediateOrCancel: true } });
+
+        logger.info({
+            side,
+            price: price.toFixed(6),
+            diffBps: diffBps.toFixed(2),
+            positionSize: adjustedPositionSize.toFixed(4),
+            sizeMultiplier: sizeMultiplier.toFixed(2),
+            regime: flow?.regime ?? 'unknown',
+        }, 'AMM Arb: 🎯 Executing arbitrage opportunity');
+
+        const res = await this.executor.placeOffer({
+            side,
+            price,
+            amount: adjustedPositionSize,
+            flags: { immediateOrCancel: true }
+        });
         if (res.accepted) {
-            logger.info({ side, price, diffBps }, 'Executed AMM arbitrage leg');
+            logger.info({
+                side,
+                price: price.toFixed(6),
+                diffBps: diffBps.toFixed(2),
+                regime: flow?.regime ?? 'unknown',
+            }, 'AMM Arb: ✅ Executed AMM arbitrage leg');
         }
     }
 }

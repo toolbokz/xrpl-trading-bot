@@ -1,9 +1,16 @@
 import { Strategy, StrategyContext } from './types';
 import { OrderBookTracker } from '../market/orderBookTracker';
-import { StrategyConfig, TradingPair } from '../config';
+import { StrategyConfig, TradingPair, FlowConfig } from '../config';
 import { OfferExecutor } from '../execution/offerExecutor';
 import { RiskEngine } from '../risk/riskEngine';
 import { logger } from '../analytics/logger';
+import {
+    isRegimeSafeForMM,
+    getRegimeSizeMultiplier,
+    calculateQuoteSkew,
+    hasAdverseSelectionRisk,
+    getRegimeDescription,
+} from '../market/flowMetrics';
 
 interface PositionState {
     side: 'flat' | 'long' | 'short';
@@ -11,17 +18,31 @@ interface PositionState {
     cooldownUntil?: number | undefined;
 }
 
+/**
+ * Default flow config when not provided (should be passed from TradingRuntime)
+ */
+const DEFAULT_FLOW_CONFIG: Partial<FlowConfig> = {
+    enableRegimeFilter: true,
+    enableAdverseSelectionProtection: true,
+    maxQuoteSkewBps: 10,
+};
+
 export class ScalperStrategy implements Strategy {
     name = 'orderbook-scalper';
     private position: PositionState = { side: 'flat' };
+    private flowConfig: Partial<FlowConfig>;
+    private lastLoggedRegime: string | null = null;
 
     constructor(
         private readonly tracker: OrderBookTracker,
         private readonly config: StrategyConfig,
         private readonly pair: TradingPair,
         private readonly executor: OfferExecutor,
-        private readonly risk: RiskEngine
-    ) { }
+        private readonly risk: RiskEngine,
+        flowConfig?: Partial<FlowConfig>
+    ) {
+        this.flowConfig = flowConfig ?? DEFAULT_FLOW_CONFIG;
+    }
 
     setPositionSize(size: number): void {
         if (Number.isFinite(size) && size > 0) {
@@ -29,8 +50,16 @@ export class ScalperStrategy implements Strategy {
         }
     }
 
-    async tick(_ctx: StrategyContext): Promise<void> {
+    /**
+     * Update flow configuration at runtime (e.g., from API).
+     */
+    setFlowConfig(config: Partial<FlowConfig>): void {
+        this.flowConfig = { ...this.flowConfig, ...config };
+    }
+
+    async tick(ctx: StrategyContext): Promise<void> {
         const state = this.tracker.getState();
+        const flow = ctx.flow;
 
         // Log order book state
         if (!state.bids.length || !state.asks.length) {
@@ -52,20 +81,70 @@ export class ScalperStrategy implements Strategy {
             return;
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Flow Regime Filter (skip dangerous regimes)
+        // ─────────────────────────────────────────────────────────────────────
+        if (flow && this.flowConfig.enableRegimeFilter !== false) {
+            // Log regime changes
+            if (flow.regime !== this.lastLoggedRegime) {
+                logger.info({
+                    regime: flow.regime,
+                    description: getRegimeDescription(flow.regime),
+                    imbalance: flow.imbalance.toFixed(3),
+                    signalStrength: flow.signalStrength.toFixed(3),
+                }, 'Scalper: 🌊 Flow regime changed');
+                this.lastLoggedRegime = flow.regime;
+            }
+
+            if (!isRegimeSafeForMM(flow.regime)) {
+                logger.debug({
+                    regime: flow.regime,
+                    reason: getRegimeDescription(flow.regime),
+                }, 'Scalper: ⚠️ Skipping tick - regime unsafe for market-making');
+                return;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Adverse Selection Protection (retreat from informed flow)
+        // ─────────────────────────────────────────────────────────────────────
+        if (flow && this.flowConfig.enableAdverseSelectionProtection !== false) {
+            if (hasAdverseSelectionRisk(flow)) {
+                logger.info({
+                    signalStrength: flow.signalStrength.toFixed(3),
+                    vwapDeviationBps: flow.vwapDeviationBps.toFixed(1),
+                    regime: flow.regime,
+                }, 'Scalper: 🛑 Adverse selection risk detected - retreating');
+                return;
+            }
+        }
+
         const issuer = this.pair.quoteIssuer || this.pair.baseIssuer || this.pair.issuer;
         if (!issuer) {
             logger.info({ pair: this.pair }, 'Scalper: ❌ No issuer configured for trading pair');
             return;
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Position Sizing (scale based on regime)
+        // ─────────────────────────────────────────────────────────────────────
+        const basePositionSize = this.config.positionSize;
+        const sizeMultiplier = flow ? getRegimeSizeMultiplier(flow) : 1.0;
+        const adjustedPositionSize = basePositionSize * sizeMultiplier;
+
+        if (adjustedPositionSize <= 0) {
+            logger.debug({ sizeMultiplier, regime: flow?.regime }, 'Scalper: ⚠️ Position size zero after regime adjustment');
+            return;
+        }
+
         const riskIntent = {
             issuer,
-            size: this.config.positionSize,
-            potentialLoss: this.config.positionSize * (this.config.stopLossBps / 10_000)
+            size: adjustedPositionSize,
+            potentialLoss: adjustedPositionSize * (this.config.stopLossBps / 10_000)
         };
         if (this.risk.approveIntent(riskIntent, this.pair) === false) {
             logger.info({
-                positionSize: this.config.positionSize,
+                positionSize: adjustedPositionSize.toFixed(4),
                 potentialLoss: riskIntent.potentialLoss.toFixed(4)
             }, 'Scalper: ❌ Risk engine rejected trade intent');
             return;
@@ -75,14 +154,28 @@ export class ScalperStrategy implements Strategy {
         const bestAsk = state.asks[0]?.price ?? 0;
         const spreadBps = state.spread;
 
-        // Log market conditions every tick
+        // ─────────────────────────────────────────────────────────────────────
+        // Quote Skew (adjust prices based on flow imbalance)
+        // ─────────────────────────────────────────────────────────────────────
+        const maxSkewBps = this.flowConfig.maxQuoteSkewBps ?? 10;
+        const skewBps = flow ? calculateQuoteSkew(flow, maxSkewBps) : 0;
+
+        // Positive imbalance (more buys) → raise our bid less, raise our ask more
+        // Negative imbalance (more sells) → raise our bid more, lower our ask more
+        const skewFactor = skewBps / 10_000;
+
+        // Log market conditions every tick (with flow data)
         logger.info({
             bestBid: bestBid.toFixed(6),
             bestAsk: bestAsk.toFixed(6),
             spreadBps: spreadBps.toFixed(2),
             minSpreadBps: this.config.minSpreadBps,
             position: this.position.side,
-            positionSize: this.config.positionSize
+            positionSize: adjustedPositionSize.toFixed(4),
+            sizeMultiplier: sizeMultiplier.toFixed(2),
+            skewBps: skewBps.toFixed(2),
+            regime: flow?.regime ?? 'unknown',
+            imbalance: flow?.imbalance?.toFixed(3) ?? 'N/A',
         }, 'Scalper: 📊 Market conditions');
 
         if (spreadBps < this.config.minSpreadBps) {
@@ -102,18 +195,30 @@ export class ScalperStrategy implements Strategy {
             'Scalper: ✅ Spread profitable, evaluating trade');
 
         if (this.position.side === 'flat') {
-            const price = bestBid * 1.0001;
+            // Apply skew to entry price: positive imbalance → bid less aggressively
+            const price = bestBid * (1.0001 - skewFactor);
+
             logger.info({
                 side: 'BUY',
                 price: price.toFixed(6),
-                amount: this.config.positionSize,
-                flags: 'IOC (Immediate-Or-Cancel)'
+                amount: adjustedPositionSize.toFixed(4),
+                flags: 'IOC (Immediate-Or-Cancel)',
+                skewApplied: skewBps.toFixed(2),
             }, 'Scalper: 🚀 Placing BUY order');
 
-            const res = await this.executor.placeOffer({ side: 'buy', price, amount: this.config.positionSize, flags: { immediateOrCancel: true } });
+            const res = await this.executor.placeOffer({
+                side: 'buy',
+                price,
+                amount: adjustedPositionSize,
+                flags: { immediateOrCancel: true }
+            });
             if (res.accepted) {
                 this.position = { side: 'long', entryPrice: price };
-                logger.info({ price: price.toFixed(6), spreadBps: spreadBps.toFixed(2) }, 'Scalper: ✅ Entered LONG position');
+                logger.info({
+                    price: price.toFixed(6),
+                    spreadBps: spreadBps.toFixed(2),
+                    regime: flow?.regime ?? 'unknown',
+                }, 'Scalper: ✅ Entered LONG position');
             } else {
                 logger.info({ result: res }, 'Scalper: ❌ BUY order not accepted');
             }
@@ -121,10 +226,15 @@ export class ScalperStrategy implements Strategy {
         }
 
         if (this.position.side === 'long' && this.position.entryPrice) {
-            const targetExit = bestAsk * 0.9999;
+            // Apply skew to exit price: positive imbalance → ask more aggressively
+            const targetExit = bestAsk * (0.9999 + skewFactor);
             const takeProfit = targetExit > this.position.entryPrice;
             const stopLossLevel = this.position.entryPrice * (1 - this.config.stopLossBps / 10_000);
             const isStopLoss = bestBid < stopLossLevel;
+
+            // Enhanced stop-loss during trending down regime
+            const enhancedStopLoss = flow?.regime === 'trendingDown' &&
+                bestBid < this.position.entryPrice * (1 - this.config.stopLossBps / 20_000);
 
             logger.info({
                 entryPrice: this.position.entryPrice.toFixed(6),
@@ -132,24 +242,40 @@ export class ScalperStrategy implements Strategy {
                 stopLossLevel: stopLossLevel.toFixed(6),
                 currentBid: bestBid.toFixed(6),
                 takeProfit,
-                isStopLoss
+                isStopLoss,
+                enhancedStopLoss,
+                regime: flow?.regime ?? 'unknown',
             }, 'Scalper: 📈 Evaluating exit for LONG position');
 
-            if (takeProfit || isStopLoss) {
+            if (takeProfit || isStopLoss || enhancedStopLoss) {
+                const exitReason = enhancedStopLoss
+                    ? 'ENHANCED STOP (trending down)'
+                    : (isStopLoss ? 'STOP LOSS' : 'TAKE PROFIT');
+
                 logger.info({
                     side: 'SELL',
                     price: targetExit.toFixed(6),
-                    amount: this.config.positionSize,
-                    reason: isStopLoss ? 'STOP LOSS' : 'TAKE PROFIT'
+                    amount: adjustedPositionSize.toFixed(4),
+                    reason: exitReason,
                 }, 'Scalper: 🚀 Placing SELL order');
 
-                const res = await this.executor.placeOffer({ side: 'sell', price: targetExit, amount: this.config.positionSize, flags: { immediateOrCancel: true } });
+                const res = await this.executor.placeOffer({
+                    side: 'sell',
+                    price: targetExit,
+                    amount: adjustedPositionSize,
+                    flags: { immediateOrCancel: true }
+                });
                 if (res.accepted) {
-                    this.position = { side: 'flat', cooldownUntil: isStopLoss ? Date.now() + this.config.cooldownMs : undefined };
+                    const shouldCooldown = isStopLoss || enhancedStopLoss;
+                    this.position = {
+                        side: 'flat',
+                        cooldownUntil: shouldCooldown ? Date.now() + this.config.cooldownMs : undefined
+                    };
                     logger.info({
                         exitPrice: targetExit.toFixed(6),
-                        reason: isStopLoss ? 'STOP LOSS' : 'TAKE PROFIT',
-                        cooldown: isStopLoss ? `${this.config.cooldownMs}ms` : 'none'
+                        reason: exitReason,
+                        cooldown: shouldCooldown ? `${this.config.cooldownMs}ms` : 'none',
+                        regime: flow?.regime ?? 'unknown',
                     }, 'Scalper: ✅ Exited LONG position');
                 } else {
                     logger.info({ result: res }, 'Scalper: ❌ SELL order not accepted');

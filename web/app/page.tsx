@@ -17,6 +17,7 @@ import { ChartPanel } from '../components/ChartPanel';
 import { ControlsPanel } from '../components/ControlsPanel';
 import { TradeTapePanel } from '../components/TradeTapePanel';
 import { LogsPanel } from '../components/LogsPanel';
+import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -468,6 +469,9 @@ export default function Page() {
                     onKill={() => callAction('kill')}
                     message={actionMessage}
                 />
+            }
+            flowSidebar={
+                <FlowMetricsPanel pollInterval={2000} />
             }
             leftTop={
                 <OrderBookPanel

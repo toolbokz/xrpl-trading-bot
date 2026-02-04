@@ -1,5 +1,5 @@
 import { Wallet, isValidClassicAddress, Client, TransactionStream } from 'xrpl';
-import { AppConfig, TradingPair, loadConfig } from '../config';
+import { AppConfig, TradingPair, FlowConfig, loadConfig } from '../config';
 import { TRADING_PAIRS, isValidPairKey } from '../config/tradingPairs';
 import { logger } from '../analytics/logger';
 import { XRPLWebSocket } from '../xrpl/client';
@@ -20,6 +20,7 @@ import { isCpuHealthy, startCpuWatchdog, CpuWatchdog } from '../monitoring/cpuWa
 import { TradeTape, setGlobalTradeTape } from '../market/tradeTape';
 import { TradeTapeService } from '../market/tradeTapeService';
 import { BackendHttpServer, startBackendHttpServer, stopBackendHttpServer } from '../server/httpServer';
+import { FlowMetrics, computeFlowMetrics } from '../market/flowMetrics';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -31,6 +32,7 @@ const cloneConfig = (cfg: AppConfig): AppConfig => ({
     paperTrading: cfg.paperTrading,
     risk: { ...cfg.risk, issuerBlacklist: new Set(cfg.risk.issuerBlacklist) },
     strategy: { ...cfg.strategy },
+    flow: { ...cfg.flow },
     analytics: { ...cfg.analytics },
 });
 
@@ -81,6 +83,7 @@ export class TradingRuntime {
     private tradeTape: TradeTape | null = null;
     private tradeTapeService: TradeTapeService | null = null;
     private httpServer: BackendHttpServer | null = null;
+    private currentFlowMetrics: FlowMetrics | null = null;
     private readonly baseConfig: AppConfig;
 
     constructor(config?: AppConfig) {
@@ -159,9 +162,9 @@ export class TradingRuntime {
             this.tradeTapeService = tradeTapeService;
 
             this.strategies = [
-                new ScalperStrategy(tracker, config.strategy, config.tradingPair, executor, risk),
-                new AMMArbitrageStrategy(amm, config.strategy, config.tradingPair, executor),
-                new PathArbitrageStrategy(client, config.strategy, config.tradingPair, executor, config.paperTrading),
+                new ScalperStrategy(tracker, config.strategy, config.tradingPair, executor, risk, config.flow),
+                new AMMArbitrageStrategy(amm, config.strategy, config.tradingPair, executor, config.flow),
+                new PathArbitrageStrategy(client, config.strategy, config.tradingPair, executor, config.paperTrading, config.flow),
             ];
 
             this.xrpl = xrpl;
@@ -233,12 +236,19 @@ export class TradingRuntime {
             }
 
             // Build strategy context with trade tape data
+            const orderBookState = this.tracker.getState();
+
+            // Compute flow metrics from trade tape and order book
+            const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
+            this.currentFlowMetrics = flowMetrics;
+
             const ctx = {
-                orderBook: this.tracker.getState(),
+                orderBook: orderBookState,
                 ledgerIndex: this.xrpl.getLedgerIndex(),
                 trades: this.tradeTape?.getRecent(60_000),
                 tradeStats: this.tradeTape?.getAggression(10_000),
                 vwap: this.tradeTape?.getVWAP(60_000),
+                flow: flowMetrics,
             };
             for (const strategy of this.strategies) {
                 // Rate limit strategy execution to prevent CPU spikes
@@ -261,6 +271,20 @@ export class TradingRuntime {
         }
         this.reset();
         logger.info('Trading runtime stopped');
+    }
+
+    /**
+     * Get the current flow metrics. Returns null if not started or no metrics computed yet.
+     */
+    getFlowMetrics(): FlowMetrics | null {
+        return this.currentFlowMetrics;
+    }
+
+    /**
+     * Get the flow configuration.
+     */
+    getFlowConfig(): FlowConfig {
+        return this.baseConfig.flow;
     }
 
     /**

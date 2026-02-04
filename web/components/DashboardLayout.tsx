@@ -2,10 +2,12 @@
 
 import { ReactNode, useState } from 'react';
 import clsx from 'clsx';
-import { BarChart3, BookOpen, Activity, Settings, ScrollText } from 'lucide-react';
+import { BarChart3, BookOpen, Activity, Settings, ScrollText, Waves } from 'lucide-react';
 
 interface DashboardLayoutProps {
     header: ReactNode;
+    /** Optional flow metrics sidebar (far left on desktop, drawer on mobile) */
+    flowSidebar?: ReactNode;
     /** Left column content (Order Book, Stats) */
     leftTop: ReactNode;
     leftBottom: ReactNode;
@@ -30,6 +32,7 @@ type TabId = typeof TABS[number]['id'];
 
 export function DashboardLayout({
     header,
+    flowSidebar,
     leftTop,
     leftBottom,
     centerTop,
@@ -38,6 +41,7 @@ export function DashboardLayout({
     rightBottom,
 }: DashboardLayoutProps) {
     const [activeTab, setActiveTab] = useState<TabId>('chart');
+    const [flowOpen, setFlowOpen] = useState(false);
 
     return (
         <div className="h-[100dvh] w-full bg-gradient-to-br from-[#05080f] via-[#0b1221] to-[#090c14] text-slate-100 overflow-hidden">
@@ -50,27 +54,70 @@ export function DashboardLayout({
 
                 {/* Desktop Grid Layout (lg+) */}
                 <div className="hidden lg:grid flex-1 min-h-0 grid-cols-12 gap-4">
-                    {/* Left Column (3 cols) */}
-                    <div className="col-span-3 flex flex-col gap-4 min-h-0">
-                        <div className="flex-[1.2] min-h-0">{leftTop}</div>
-                        <div className="flex-[0.8] min-h-0">{leftBottom}</div>
-                    </div>
+                    {flowSidebar ? (
+                        <>
+                            {/* Flow Sidebar (2 cols) */}
+                            <aside className="col-span-2 flex flex-col min-h-0">
+                                {flowSidebar}
+                            </aside>
 
-                    {/* Center Column (6 cols) */}
-                    <div className="col-span-6 flex flex-col gap-4 min-h-0">
-                        <div className="flex-[1.4] min-h-0">{centerTop}</div>
-                        <div className="flex-[0.6] min-h-0">{centerBottom}</div>
-                    </div>
+                            {/* Main Content Area (10 cols) */}
+                            <section className="col-span-10 grid grid-cols-12 gap-4 min-h-0">
+                                {/* Left Column (3 cols) */}
+                                <div className="col-span-3 flex flex-col gap-4 min-h-0">
+                                    <div className="flex-[1.2] min-h-0">{leftTop}</div>
+                                    <div className="flex-[0.8] min-h-0">{leftBottom}</div>
+                                </div>
 
-                    {/* Right Column (3 cols) */}
-                    <div className="col-span-3 flex flex-col gap-4 min-h-0">
-                        <div className="flex-[1.2] min-h-0">{rightTop}</div>
-                        <div className="flex-[0.8] min-h-0">{rightBottom}</div>
-                    </div>
+                                {/* Center Column (6 cols) */}
+                                <div className="col-span-6 flex flex-col gap-4 min-h-0">
+                                    <div className="flex-[1.4] min-h-0">{centerTop}</div>
+                                    <div className="flex-[0.6] min-h-0">{centerBottom}</div>
+                                </div>
+
+                                {/* Right Column (3 cols) */}
+                                <div className="col-span-3 flex flex-col gap-4 min-h-0">
+                                    <div className="flex-[1.2] min-h-0">{rightTop}</div>
+                                    <div className="flex-[0.8] min-h-0">{rightBottom}</div>
+                                </div>
+                            </section>
+                        </>
+                    ) : (
+                        <>
+                            {/* Left Column (3 cols) */}
+                            <div className="col-span-3 flex flex-col gap-4 min-h-0">
+                                <div className="flex-[1.2] min-h-0">{leftTop}</div>
+                                <div className="flex-[0.8] min-h-0">{leftBottom}</div>
+                            </div>
+
+                            {/* Center Column (6 cols) */}
+                            <div className="col-span-6 flex flex-col gap-4 min-h-0">
+                                <div className="flex-[1.4] min-h-0">{centerTop}</div>
+                                <div className="flex-[0.6] min-h-0">{centerBottom}</div>
+                            </div>
+
+                            {/* Right Column (3 cols) */}
+                            <div className="col-span-3 flex flex-col gap-4 min-h-0">
+                                <div className="flex-[1.2] min-h-0">{rightTop}</div>
+                                <div className="flex-[0.8] min-h-0">{rightBottom}</div>
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 {/* Mobile/Tablet Tab Layout (below lg) */}
                 <div className="flex lg:hidden flex-col flex-1 min-h-0">
+                    {/* Flow toggle button (only if flowSidebar exists) */}
+                    {flowSidebar && (
+                        <button
+                            onClick={() => setFlowOpen(true)}
+                            className="self-end mb-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card/80 border border-white/10 text-slate-300 hover:text-white hover:bg-card transition-colors"
+                        >
+                            <Waves size={14} />
+                            <span className="text-xs font-medium">Flow</span>
+                        </button>
+                    )}
+
                     {/* Tab content */}
                     <div className="flex-1 min-h-0 mb-3">
                         {activeTab === 'chart' && (
@@ -119,6 +166,31 @@ export function DashboardLayout({
                     </nav>
                 </div>
             </div>
+
+            {/* Mobile Flow Drawer Overlay */}
+            {flowSidebar && flowOpen && (
+                <div className="lg:hidden fixed inset-0 z-50">
+                    <button
+                        className="absolute inset-0 bg-black/50"
+                        onClick={() => setFlowOpen(false)}
+                        aria-label="Close flow overlay"
+                    />
+                    <div className="absolute left-0 top-0 bottom-0 w-[280px] p-3 bg-[#0b1221] border-r border-white/10 flex flex-col">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="text-sm font-semibold text-slate-200">Flow Metrics</div>
+                            <button
+                                onClick={() => setFlowOpen(false)}
+                                className="text-slate-400 hover:text-white transition-colors"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div className="flex-1 min-h-0 overflow-hidden">
+                            {flowSidebar}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

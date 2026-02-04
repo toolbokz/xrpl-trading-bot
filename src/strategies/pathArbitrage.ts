@@ -1,10 +1,11 @@
 import { Amount, Client } from 'xrpl';
 import { Strategy, StrategyContext } from './types';
-import { StrategyConfig, TradingPair } from '../config';
+import { StrategyConfig, TradingPair, FlowConfig } from '../config';
 import { OfferExecutor } from '../execution/offerExecutor';
 import { logger } from '../analytics/logger';
 import { toXrplCurrency } from '../xrpl/currency';
 import { getBreakerStore, BreakerState, BreakerStore } from '../persistence/breakerStore';
+import { isRegimeSafeForArb, getRegimeDescription, getRegimeSizeMultiplier } from '../market/flowMetrics';
 
 /**
  * Environment-based feature flags for path arbitrage.
@@ -151,13 +152,16 @@ export class PathArbitrageStrategy implements Strategy {
     private readonly pathArbConfig: PathArbConfig;
     private readonly circuitBreaker: CircuitBreaker;
     private breakerInitialized = false;
+    private flowConfig: Partial<FlowConfig>;
+    private lastLoggedRegime: string | null = null;
 
     constructor(
         private readonly client: Client,
         private readonly config: StrategyConfig,
         private readonly pair: TradingPair,
         private readonly executor: OfferExecutor,
-        private readonly paperTrading: boolean
+        private readonly paperTrading: boolean,
+        flowConfig?: Partial<FlowConfig>
     ) {
         this.pathArbConfig = loadPathArbConfig();
         this.circuitBreaker = new CircuitBreaker(
@@ -166,6 +170,7 @@ export class PathArbitrageStrategy implements Strategy {
             this.pathArbConfig.circuitBreakerCooldownMs,
             `path_arb_${pair.baseCurrency}_${pair.quoteCurrency}` // Unique key per pair
         );
+        this.flowConfig = flowConfig ?? { enableRegimeFilter: true };
 
         if (!this.pathArbConfig.enabled) {
             logger.info({}, 'Path arbitrage strategy DISABLED by env (PATH_ARB_ENABLED != true)');
@@ -197,11 +202,45 @@ export class PathArbitrageStrategy implements Strategy {
         this.lastLedger = ctx.ledgerIndex;
         if (!ctx.orderBook.bids.length || !ctx.orderBook.asks.length) return;
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Flow Regime Filter (skip dangerous regimes)
+        // ─────────────────────────────────────────────────────────────────────
+        const flow = ctx.flow;
+        if (flow && this.flowConfig.enableRegimeFilter !== false) {
+            // Log regime changes
+            if (flow.regime !== this.lastLoggedRegime) {
+                logger.info({
+                    regime: flow.regime,
+                    description: getRegimeDescription(flow.regime),
+                }, 'Path Arb: 🌊 Flow regime changed');
+                this.lastLoggedRegime = flow.regime;
+            }
+
+            if (!isRegimeSafeForArb(flow.regime)) {
+                logger.debug({
+                    regime: flow.regime,
+                    reason: getRegimeDescription(flow.regime),
+                }, 'Path Arb: ⚠️ Skipping tick - regime unsafe for arbitrage');
+                return;
+            }
+        }
+
         // Use configurable staleness threshold (default: 5000ms)
         const stalenessMs = this.config.orderBookStaleMs ?? 5_000;
         const bookAge = Date.now() - ctx.orderBook.lastUpdated;
         if (bookAge > stalenessMs) {
             logger.debug({ bookAge, stalenessMs }, 'PathArb: order book stale, skipping tick');
+            return;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Position Sizing (scale based on regime)
+        // ─────────────────────────────────────────────────────────────────────
+        const sizeMultiplier = flow ? getRegimeSizeMultiplier(flow) : 1.0;
+        const adjustedPositionSize = this.config.positionSize * sizeMultiplier;
+
+        if (adjustedPositionSize <= 0) {
+            logger.debug({ sizeMultiplier, regime: flow?.regime }, 'Path Arb: ⚠️ Position size zero after regime adjustment');
             return;
         }
 
@@ -224,8 +263,8 @@ export class PathArbitrageStrategy implements Strategy {
         if (!issuer) return;
 
         const destAmount = quoteIssued
-            ? { currency: quoteIssued.currency, issuer: quoteIssued.issuer, value: this.config.positionSize.toString() }
-            : this.config.positionSize.toString(); // XRP as string drops
+            ? { currency: quoteIssued.currency, issuer: quoteIssued.issuer, value: adjustedPositionSize.toString() }
+            : adjustedPositionSize.toString(); // XRP as string drops
 
         // source_currency must be full currency object for issued currencies
         const sourceCurrency = baseIssued
@@ -243,7 +282,7 @@ export class PathArbitrageStrategy implements Strategy {
         if (!paths.result?.alternatives?.length) return;
         const best = paths.result.alternatives[0] as any;
         const sourceValue = this.amountToNumber(best.source_amount as Amount | string | undefined);
-        const destValue = this.config.positionSize; // requested destination amount
+        const destValue = adjustedPositionSize; // requested destination amount
         if (!Number.isFinite(sourceValue) || sourceValue <= 0 || destValue <= 0) return;
         const computedRate = sourceValue / destValue;
         const bestBid = ctx.orderBook.bids[0]?.price ?? 0;
@@ -259,8 +298,17 @@ export class PathArbitrageStrategy implements Strategy {
         // Dry-run mode: log but don't execute
         if (this.pathArbConfig.dryRun) {
             logger.info(
-                { side, price, edgeBps, dryRun: true, circuitBreaker: this.circuitBreaker.getStatus() },
-                'Path arbitrage opportunity detected (DRY-RUN - no execution)'
+                {
+                    side,
+                    price: price.toFixed(6),
+                    edgeBps: edgeBps.toFixed(2),
+                    positionSize: adjustedPositionSize.toFixed(4),
+                    sizeMultiplier: sizeMultiplier.toFixed(2),
+                    regime: flow?.regime ?? 'unknown',
+                    dryRun: true,
+                    circuitBreaker: this.circuitBreaker.getStatus()
+                },
+                'Path Arb: 🎯 Opportunity detected (DRY-RUN - no execution)'
             );
             // Record simulated trade for circuit breaker testing
             this.circuitBreaker.recordTrade(edgeBps);
@@ -272,11 +320,18 @@ export class PathArbitrageStrategy implements Strategy {
             const res = await this.executor.placeOffer({
                 side,
                 price,
-                amount: this.config.positionSize,
+                amount: adjustedPositionSize,
                 flags: { immediateOrCancel: true }
             });
             if (res.accepted) {
-                logger.info({ side, price, edgeBps, paperTrading: true }, 'Executed path arbitrage leg (paper)');
+                logger.info({
+                    side,
+                    price: price.toFixed(6),
+                    edgeBps: edgeBps.toFixed(2),
+                    positionSize: adjustedPositionSize.toFixed(4),
+                    regime: flow?.regime ?? 'unknown',
+                    paperTrading: true
+                }, 'Path Arb: ✅ Executed path arbitrage leg (paper)');
                 // Record trade for circuit breaker
                 // In paper trading, assume we got the expected edge
                 this.circuitBreaker.recordTrade(edgeBps);
@@ -289,18 +344,25 @@ export class PathArbitrageStrategy implements Strategy {
             const res = await this.executor.placeOffer({
                 side,
                 price,
-                amount: this.config.positionSize,
+                amount: adjustedPositionSize,
                 flags: { immediateOrCancel: true }
             });
             if (res.accepted) {
-                logger.info({ side, price, edgeBps, live: true }, 'Executed path arbitrage leg (LIVE)');
+                logger.info({
+                    side,
+                    price: price.toFixed(6),
+                    edgeBps: edgeBps.toFixed(2),
+                    positionSize: adjustedPositionSize.toFixed(4),
+                    regime: flow?.regime ?? 'unknown',
+                    live: true
+                }, 'Path Arb: ✅ Executed path arbitrage leg (LIVE)');
                 // Record trade - use expected edge for now, ideally would use actual fill
                 this.circuitBreaker.recordTrade(edgeBps);
             } else {
-                logger.warn({ side, price, edgeBps }, 'Path arbitrage offer rejected');
+                logger.warn({ side, price: price.toFixed(6), edgeBps: edgeBps.toFixed(2) }, 'Path Arb: ❌ Offer rejected');
             }
         } catch (err: any) {
-            logger.error({ err: err?.message, side, price, edgeBps }, 'Path arbitrage execution error');
+            logger.error({ err: err?.message, side, price: price.toFixed(6), edgeBps: edgeBps.toFixed(2) }, 'Path Arb: ❌ Execution error');
             // Record as loss on execution error
             this.circuitBreaker.recordTrade(-Math.abs(edgeBps));
         }
