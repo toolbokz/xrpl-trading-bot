@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
+import { getRuntime } from '../../../../lib/runtimeHooks';
 
 export const config = {
     api: { bodyParser: false },
@@ -60,7 +61,6 @@ function handler(req: LocalRequest, res: NextApiResponse<GovernanceStateResponse
     try {
         // Get governance status from runtime via runtimeHooks
         // The runtime exposes getGovernanceStatus() which returns the last decision
-        const { getRuntime } = require('../../../../lib/runtimeHooks');
         const runtime = getRuntime();
 
         if (!runtime) {
@@ -114,7 +114,7 @@ function handler(req: LocalRequest, res: NextApiResponse<GovernanceStateResponse
                 } : null,
                 sizeMultiplier: decision?.sizeMultiplier ?? 1.0,
                 cooldownMs: decision?.cooldownMs ?? 0,
-                evaluatedAt: decision?.evaluatedAt ? new Date(decision.evaluatedAt).toISOString() : null,
+                evaluatedAt: decision?.timestamp ? new Date(decision.timestamp).toISOString() : null,
             },
         };
 
