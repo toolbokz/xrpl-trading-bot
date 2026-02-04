@@ -2,12 +2,14 @@
 
 import { ReactNode, useState } from 'react';
 import clsx from 'clsx';
-import { BarChart3, BookOpen, Activity, Settings, ScrollText, Waves } from 'lucide-react';
+import { BarChart3, BookOpen, Activity, Settings, ScrollText, Waves, TrendingUp } from 'lucide-react';
 
 interface DashboardLayoutProps {
     header: ReactNode;
     /** Optional flow metrics sidebar (far left on desktop, drawer on mobile) */
     flowSidebar?: ReactNode;
+    /** Optional analytics panel (below flow on desktop, separate tab on mobile) */
+    analyticsSidebar?: ReactNode;
     /** Left column content (Order Book, Stats) */
     leftTop: ReactNode;
     leftBottom: ReactNode;
@@ -26,6 +28,7 @@ const TABS = [
     { id: 'trades', label: 'Trades', icon: Activity },
     { id: 'controls', label: 'Controls', icon: Settings },
     { id: 'logs', label: 'Logs', icon: ScrollText },
+    { id: 'analytics', label: 'Stats', icon: TrendingUp },
 ] as const;
 
 type TabId = typeof TABS[number]['id'];
@@ -33,6 +36,7 @@ type TabId = typeof TABS[number]['id'];
 export function DashboardLayout({
     header,
     flowSidebar,
+    analyticsSidebar,
     leftTop,
     leftBottom,
     centerTop,
@@ -57,8 +61,15 @@ export function DashboardLayout({
                     {flowSidebar ? (
                         <>
                             {/* Flow Sidebar (2 cols) */}
-                            <aside className="col-span-2 flex flex-col min-h-0">
-                                {flowSidebar}
+                            <aside className="col-span-2 flex flex-col gap-4 min-h-0">
+                                <div className={analyticsSidebar ? 'flex-[1.2] min-h-0' : 'flex-1 min-h-0'}>
+                                    {flowSidebar}
+                                </div>
+                                {analyticsSidebar && (
+                                    <div className="flex-[0.8] min-h-0 overflow-hidden">
+                                        {analyticsSidebar}
+                                    </div>
+                                )}
                             </aside>
 
                             {/* Main Content Area (10 cols) */}
@@ -139,6 +150,9 @@ export function DashboardLayout({
                         )}
                         {activeTab === 'logs' && (
                             <div className="h-full">{rightBottom}</div>
+                        )}
+                        {activeTab === 'analytics' && analyticsSidebar && (
+                            <div className="h-full overflow-y-auto">{analyticsSidebar}</div>
                         )}
                     </div>
 

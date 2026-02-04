@@ -4,6 +4,7 @@ import { RiskEngine } from '../risk/riskEngine';
 import { StrategyConfig, TradingPair } from '../config';
 import { logger } from '../analytics/logger';
 import { tradeHistory } from '../analytics/tradeHistory';
+import { feedbackEngine } from '../analytics/feedbackEngine';
 import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './offerBuilder';
 
 /**
@@ -42,6 +43,9 @@ export interface SlippageCheckResult {
 }
 
 export class OfferExecutor {
+    private currentStrategy: string = 'unknown';
+    private currentMidPrice: number | null = null;
+
     constructor(
         private readonly client: Client,
         private readonly wallet: Wallet | null,
@@ -50,6 +54,22 @@ export class OfferExecutor {
         private readonly pair: TradingPair,
         private readonly strategyConfig?: StrategyConfig
     ) { }
+
+    /**
+     * Set the current strategy name for feedback tracking.
+     * Called by strategies before executing trades.
+     */
+    setCurrentStrategy(strategy: string): void {
+        this.currentStrategy = strategy;
+    }
+
+    /**
+     * Set the current mid-price for slippage/edge calculations.
+     * Called by strategies before executing trades.
+     */
+    setCurrentMidPrice(midPrice: number | null): void {
+        this.currentMidPrice = midPrice;
+    }
 
     /**
      * Check if the actual price vs expected price is within slippage tolerance
@@ -105,6 +125,20 @@ export class OfferExecutor {
                     status: 'REJECTED',
                 });
 
+                // Record feedback event for analytics
+                try {
+                    feedbackEngine.recordTradeEvent({
+                        pairKey: `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`,
+                        strategy: this.currentStrategy,
+                        action: 'reject',
+                        side: params.side,
+                        intentPrice: params.price,
+                        intentSizeBase: params.amount,
+                        error: slippageCheck.reason,
+                        midPriceAtDecision: this.currentMidPrice ?? undefined,
+                    });
+                } catch { /* feedback should never crash trading */ }
+
                 return { accepted: false, reason: slippageCheck.reason };
             }
         }
@@ -136,6 +170,23 @@ export class OfferExecutor {
                 paper: true,
                 status: 'FILLED',
             });
+
+            // Record feedback event for paper trades
+            try {
+                feedbackEngine.recordTradeEvent({
+                    pairKey: pairSymbol,
+                    strategy: this.currentStrategy,
+                    action: 'fill',
+                    side: intent.side.toLowerCase() as 'buy' | 'sell',
+                    intentPrice: intent.price,
+                    intentSizeBase: intent.amount,
+                    fillPrice: intent.price,
+                    fillSizeBase: intent.amount,
+                    resultCode: 'paper-mode',
+                    isBotTrade: true,
+                    midPriceAtDecision: this.currentMidPrice ?? undefined,
+                });
+            } catch { /* feedback should never crash trading */ }
 
             return { accepted: true, reason: 'paper-mode' };
         }
@@ -173,8 +224,22 @@ export class OfferExecutor {
     }
 
     async cancelOffer(offerSequence: number): Promise<ExecutionResult> {
+        const pairSymbol = `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`;
+
         if (this.paper) {
             logger.info({ offerSequence }, 'Paper trade: simulated cancel');
+
+            // Record feedback for paper cancel
+            try {
+                feedbackEngine.recordTradeEvent({
+                    pairKey: pairSymbol,
+                    strategy: this.currentStrategy,
+                    action: 'offer_cancel',
+                    resultCode: 'paper-mode',
+                    isBotTrade: true,
+                });
+            } catch { /* feedback should never crash trading */ }
+
             return { accepted: true };
         }
         if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
@@ -269,7 +334,7 @@ export class OfferExecutor {
             const slippageBps = expectedPrice && expectedPrice > 0
                 ? Math.round(((effectivePrice - expectedPrice) / expectedPrice) * 10000)
                 : 0;
-            
+
             return {
                 takerGotAmount: originalGetsNum,
                 takerPaidAmount: originalPaysNum,
@@ -288,46 +353,46 @@ export class OfferExecutor {
         // - ModifiedNode on Offer entries that were consumed
         // - CreatedNode/DeletedNode for the offer itself
         // - Balance changes in AccountRoot or RippleState (trustline)
-        
+
         for (const node of meta.AffectedNodes) {
             // Check for Offer nodes that were consumed (filled against)
             if ('ModifiedNode' in node && node.ModifiedNode.LedgerEntryType === 'Offer') {
                 const modified = node.ModifiedNode;
                 const prev = modified.PreviousFields;
                 const final = modified.FinalFields;
-                
+
                 if (prev && final) {
                     // The difference in TakerGets/TakerPays shows how much was consumed
                     const prevGets = prev.TakerGets ? this.amountToNumber(prev.TakerGets as Amount) : 0;
                     const finalGets = final.TakerGets ? this.amountToNumber(final.TakerGets as Amount) : 0;
                     const prevPays = prev.TakerPays ? this.amountToNumber(prev.TakerPays as Amount) : 0;
                     const finalPays = final.TakerPays ? this.amountToNumber(final.TakerPays as Amount) : 0;
-                    
+
                     // Amount consumed = previous - final
                     takerGotAmount += Math.max(0, prevGets - finalGets);
                     takerPaidAmount += Math.max(0, prevPays - finalPays);
                 }
             }
-            
+
             // Check for Offer nodes that were fully consumed (deleted)
             if ('DeletedNode' in node && node.DeletedNode.LedgerEntryType === 'Offer') {
                 const deleted = node.DeletedNode;
                 const prev = deleted.PreviousFields;
                 const final = deleted.FinalFields;
-                
+
                 // For deleted nodes, final fields show what remained before deletion
                 // We need previous fields to know the starting amount
                 if (prev) {
                     const prevGets = prev.TakerGets ? this.amountToNumber(prev.TakerGets as Amount) : 0;
                     const prevPays = prev.TakerPays ? this.amountToNumber(prev.TakerPays as Amount) : 0;
-                    
+
                     takerGotAmount += prevGets;
                     takerPaidAmount += prevPays;
                 } else if (final) {
                     // No previous fields means entire offer was consumed
                     const finalGets = final.TakerGets ? this.amountToNumber(final.TakerGets as Amount) : 0;
                     const finalPays = final.TakerPays ? this.amountToNumber(final.TakerPays as Amount) : 0;
-                    
+
                     takerGotAmount += finalGets;
                     takerPaidAmount += finalPays;
                 }
@@ -342,10 +407,10 @@ export class OfferExecutor {
 
         // Calculate fill ratio based on the "gets" side (what we receive)
         const fillRatio = originalGetsNum > 0 ? Math.min(1, takerGotAmount / originalGetsNum) : 0;
-        
+
         // Calculate effective price (what we paid per unit received)
         const effectivePrice = takerGotAmount > 0 ? takerPaidAmount / takerGotAmount : 0;
-        
+
         // Calculate slippage in basis points
         // Positive = worse execution, negative = better execution
         const slippageBps = expectedPrice && expectedPrice > 0
@@ -460,6 +525,23 @@ export class OfferExecutor {
                         paper: false,
                         status: 'REJECTED',
                     });
+
+                    // Record feedback for failed trade
+                    try {
+                        feedbackEngine.recordTradeEvent({
+                            pairKey: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
+                            strategy: this.currentStrategy,
+                            action: 'error',
+                            side: intent.side.toLowerCase() as 'buy' | 'sell',
+                            intentPrice: intent.price,
+                            intentSizeBase: intent.amount,
+                            txHash: res.result.hash,
+                            resultCode: txResult ?? undefined,
+                            error: txResult ?? 'unknown-error',
+                            isBotTrade: true,
+                            midPriceAtDecision: this.currentMidPrice ?? undefined,
+                        });
+                    } catch { /* feedback should never crash trading */ }
                 }
 
                 return { accepted: false, reason: txResult };
@@ -513,6 +595,25 @@ export class OfferExecutor {
                     status,
                     slippageBps: fillResult.slippageBps,
                 });
+
+                // Record feedback for successful fill
+                try {
+                    feedbackEngine.recordTradeEvent({
+                        pairKey: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
+                        strategy: this.currentStrategy,
+                        action: 'fill',
+                        side: intent.side.toLowerCase() as 'buy' | 'sell',
+                        intentPrice: intent.price,
+                        intentSizeBase: intent.amount,
+                        fillPrice: fillResult.effectivePrice || intent.price,
+                        fillSizeBase: fillResult.takerGotAmount || intent.amount,
+                        txHash: res.result.hash,
+                        ledgerIndex: (res.result as any).ledger_index,
+                        resultCode: txResult ?? 'tesSUCCESS',
+                        isBotTrade: true,
+                        midPriceAtDecision: this.currentMidPrice ?? undefined,
+                    });
+                } catch { /* feedback should never crash trading */ }
             }
 
             return {
@@ -538,6 +639,21 @@ export class OfferExecutor {
                     paper: false,
                     status: 'REJECTED',
                 });
+
+                // Record feedback for error
+                try {
+                    feedbackEngine.recordTradeEvent({
+                        pairKey: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
+                        strategy: this.currentStrategy,
+                        action: 'error',
+                        side: intent.side.toLowerCase() as 'buy' | 'sell',
+                        intentPrice: intent.price,
+                        intentSizeBase: intent.amount,
+                        error: err?.message || 'submit-failed',
+                        isBotTrade: true,
+                        midPriceAtDecision: this.currentMidPrice ?? undefined,
+                    });
+                } catch { /* feedback should never crash trading */ }
             }
 
             return { accepted: false, reason: err?.message || 'submit-failed' };

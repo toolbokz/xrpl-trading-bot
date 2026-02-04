@@ -21,6 +21,7 @@ import { TradeTape, setGlobalTradeTape } from '../market/tradeTape';
 import { TradeTapeService } from '../market/tradeTapeService';
 import { BackendHttpServer, startBackendHttpServer, stopBackendHttpServer } from '../server/httpServer';
 import { FlowMetrics, computeFlowMetrics } from '../market/flowMetrics';
+import { feedbackEngine } from '../analytics/feedbackEngine';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -242,6 +243,19 @@ export class TradingRuntime {
             const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
             this.currentFlowMetrics = flowMetrics;
 
+            // Record market snapshot for analytics (non-blocking, best-effort)
+            const pairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
+            try {
+                feedbackEngine.recordSnapshot({
+                    pairKey,
+                    ledgerIndex: this.xrpl.getLedgerIndex(),
+                    orderBook: orderBookState,
+                    flow: flowMetrics,
+                });
+            } catch {
+                // Feedback recording should never crash trading
+            }
+
             const ctx = {
                 orderBook: orderBookState,
                 ledgerIndex: this.xrpl.getLedgerIndex(),
@@ -349,6 +363,13 @@ export class TradingRuntime {
             await closeBreakerStore();
         } catch (err) {
             logger.warn({ err }, 'Failed to close breaker store');
+        }
+
+        // Close feedback engine
+        try {
+            feedbackEngine.shutdown();
+        } catch (err) {
+            logger.warn({ err }, 'Failed to close feedback engine');
         }
 
         // Step 5: Stop backend HTTP server

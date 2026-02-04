@@ -1,0 +1,380 @@
+/**
+ * Analytics Panel Component
+ * 
+ * Displays trading analytics including win rate, profit factor, expectancy,
+ * slippage metrics, and regime performance matrix.
+ */
+
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import { BarChart3, TrendingUp, TrendingDown, AlertTriangle, Activity, Target, Percent } from 'lucide-react';
+import clsx from 'clsx';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types (matching API response)
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface AnalyticsSummary {
+    trades: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    profitFactor: number;
+    expectancy: number;
+    avgSlippageBps: number;
+    totalPnlApprox: number;
+    maxDrawdown: number;
+    avgEdgeBps: number;
+}
+
+interface RegimeStats {
+    regime: string;
+    trades: number;
+    winRate: number;
+    expectancy: number;
+    profitFactor: number;
+    avgSlippageBps: number;
+}
+
+interface StrategyStats {
+    strategy: string;
+    trades: number;
+    winRate: number;
+    expectancy: number;
+    profitFactor: number;
+}
+
+interface AnalyticsApiResponse {
+    requestId: string;
+    timestamp: string;
+    filters: {
+        pairKey: string | null;
+        sinceMs: number | null;
+    };
+    summary: AnalyticsSummary;
+    byRegime: RegimeStats[];
+    byStrategy: StrategyStats[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Regime Display Config
+// ─────────────────────────────────────────────────────────────────────────────
+
+const REGIME_LABELS: Record<string, { label: string; color: string }> = {
+    quiet: { label: 'Quiet', color: 'text-slate-400' },
+    normal: { label: 'Normal', color: 'text-emerald-400' },
+    trendingUp: { label: 'Up Trend', color: 'text-blue-400' },
+    trendingDown: { label: 'Down Trend', color: 'text-amber-400' },
+    chaotic: { label: 'Chaotic', color: 'text-red-400' },
+    illiquid: { label: 'Illiquid', color: 'text-red-500' },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper Components
+// ─────────────────────────────────────────────────────────────────────────────
+
+function StatCard({
+    label,
+    value,
+    suffix = '',
+    positive,
+    icon: Icon
+}: {
+    label: string;
+    value: string | number;
+    suffix?: string;
+    positive?: boolean | null;
+    icon?: typeof Activity;
+}) {
+    return (
+        <div className="bg-white/5 rounded-lg p-2.5 border border-white/5">
+            <div className="flex items-center gap-1.5 mb-1">
+                {Icon && <Icon size={12} className="text-slate-500" />}
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider">{label}</span>
+            </div>
+            <div className={clsx(
+                'text-sm font-mono font-medium',
+                positive === true && 'text-emerald-400',
+                positive === false && 'text-red-400',
+                positive === null && 'text-slate-300'
+            )}>
+                {value}{suffix}
+            </div>
+        </div>
+    );
+}
+
+function ProgressBar({ value, max, color = 'bg-sky-500' }: { value: number; max: number; color?: string }) {
+    const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+    return (
+        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+            <div
+                className={clsx('h-full rounded-full transition-all', color)}
+                style={{ width: `${pct}%` }}
+            />
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Component
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface AnalyticsPanelProps {
+    /** Polling interval in ms (default: 15000) */
+    pollInterval?: number;
+    /** Trading pair to filter (optional) */
+    pairKey?: string;
+}
+
+export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanelProps) {
+    const [data, setData] = useState<AnalyticsApiResponse | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    const fetchAnalytics = useCallback(async () => {
+        try {
+            const params = new URLSearchParams();
+            if (pairKey) params.set('pair', pairKey);
+
+            const url = `/api/analytics/summary${params.toString() ? `?${params}` : ''}`;
+            const res = await fetch(url);
+
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            const json: AnalyticsApiResponse = await res.json();
+            setData(json);
+            setError(null);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to fetch analytics');
+        } finally {
+            setLoading(false);
+        }
+    }, [pairKey]);
+
+    useEffect(() => {
+        fetchAnalytics();
+        const interval = setInterval(fetchAnalytics, pollInterval);
+        return () => clearInterval(interval);
+    }, [fetchAnalytics, pollInterval]);
+
+    // Loading state
+    if (loading && !data) {
+        return (
+            <div className="card h-full flex flex-col">
+                <div className="flex items-center gap-2 p-3 border-b border-white/5">
+                    <BarChart3 size={14} className="text-slate-400" />
+                    <span className="text-xs font-medium text-slate-200">Analytics</span>
+                </div>
+                <div className="flex-1 flex items-center justify-center">
+                    <div className="flex items-center gap-2 text-slate-400">
+                        <Activity size={16} className="animate-pulse" />
+                        <span className="text-sm">Loading analytics...</span>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Error state
+    if (error && !data) {
+        return (
+            <div className="card h-full flex flex-col">
+                <div className="flex items-center gap-2 p-3 border-b border-white/5">
+                    <BarChart3 size={14} className="text-slate-400" />
+                    <span className="text-xs font-medium text-slate-200">Analytics</span>
+                </div>
+                <div className="flex-1 flex items-center justify-center">
+                    <div className="flex items-center gap-2 text-red-400">
+                        <AlertTriangle size={16} />
+                        <span className="text-sm">{error}</span>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // No data state
+    if (!data || data.summary.trades === 0) {
+        return (
+            <div className="card h-full flex flex-col">
+                <div className="flex items-center gap-2 p-3 border-b border-white/5">
+                    <BarChart3 size={14} className="text-slate-400" />
+                    <span className="text-xs font-medium text-slate-200">Analytics</span>
+                </div>
+                <div className="flex-1 flex flex-col items-center justify-center p-4 text-center">
+                    <BarChart3 size={28} className="text-slate-600 mb-2" />
+                    <p className="text-sm text-slate-400">No trade data yet</p>
+                    <p className="text-xs text-slate-500">Analytics will appear after trades execute</p>
+                </div>
+            </div>
+        );
+    }
+
+    const { summary, byRegime, byStrategy } = data;
+
+    return (
+        <div className="card h-full flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between p-3 border-b border-white/5 shrink-0">
+                <div className="flex items-center gap-2">
+                    <BarChart3 size={14} className="text-slate-400" />
+                    <span className="text-xs font-medium text-slate-200">Analytics</span>
+                </div>
+                <span className="text-[10px] text-slate-500">
+                    {summary.trades} trades
+                </span>
+            </div>
+
+            {/* Content - scrollable */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-4">
+                {/* Key Metrics */}
+                <div className="grid grid-cols-2 gap-2">
+                    <StatCard
+                        label="Win Rate"
+                        value={(summary.winRate * 100).toFixed(1)}
+                        suffix="%"
+                        positive={summary.winRate > 0.5 ? true : summary.winRate < 0.4 ? false : null}
+                        icon={Percent}
+                    />
+                    <StatCard
+                        label="Profit Factor"
+                        value={summary.profitFactor === Infinity ? '∞' : summary.profitFactor.toFixed(2)}
+                        positive={summary.profitFactor > 1 ? true : summary.profitFactor < 1 ? false : null}
+                        icon={TrendingUp}
+                    />
+                    <StatCard
+                        label="Expectancy"
+                        value={summary.expectancy.toFixed(4)}
+                        positive={summary.expectancy > 0 ? true : summary.expectancy < 0 ? false : null}
+                        icon={Target}
+                    />
+                    <StatCard
+                        label="Avg Slippage"
+                        value={summary.avgSlippageBps.toFixed(1)}
+                        suffix=" bps"
+                        positive={summary.avgSlippageBps < 5 ? true : summary.avgSlippageBps > 20 ? false : null}
+                        icon={Activity}
+                    />
+                </div>
+
+                {/* Max Drawdown */}
+                <div className="bg-white/5 rounded-lg p-2.5 border border-white/5">
+                    <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[10px] text-slate-500 uppercase tracking-wider">Max Drawdown</span>
+                        <span className={clsx(
+                            'text-xs font-mono',
+                            summary.maxDrawdown > 0.1 ? 'text-red-400' : 'text-slate-300'
+                        )}>
+                            {(summary.maxDrawdown * 100).toFixed(1)}%
+                        </span>
+                    </div>
+                    <ProgressBar
+                        value={summary.maxDrawdown * 100}
+                        max={50}
+                        color={summary.maxDrawdown > 0.1 ? 'bg-red-500' : 'bg-slate-400'}
+                    />
+                </div>
+
+                {/* Regime Matrix */}
+                <div>
+                    <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">By Regime</div>
+                    <div className="space-y-1.5">
+                        {byRegime.filter(r => r.trades > 0).map(regime => {
+                            const config = REGIME_LABELS[regime.regime] || { label: regime.regime, color: 'text-slate-400' };
+                            return (
+                                <div
+                                    key={regime.regime}
+                                    className="flex items-center justify-between text-xs bg-white/5 rounded px-2 py-1.5"
+                                >
+                                    <span className={config.color}>{config.label}</span>
+                                    <div className="flex items-center gap-3 text-slate-400">
+                                        <span>{regime.trades} trades</span>
+                                        <span className={clsx(
+                                            'font-mono',
+                                            regime.winRate > 0.5 ? 'text-emerald-400' : regime.winRate < 0.4 ? 'text-red-400' : ''
+                                        )}>
+                                            {(regime.winRate * 100).toFixed(0)}%
+                                        </span>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {byRegime.filter(r => r.trades > 0).length === 0 && (
+                            <div className="text-xs text-slate-500 text-center py-2">No regime data</div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Strategy Stats */}
+                {byStrategy.length > 0 && (
+                    <div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">By Strategy</div>
+                        <div className="space-y-1.5">
+                            {byStrategy.map(strat => (
+                                <div
+                                    key={strat.strategy}
+                                    className="flex items-center justify-between text-xs bg-white/5 rounded px-2 py-1.5"
+                                >
+                                    <span className="text-slate-300 truncate max-w-[100px]">{strat.strategy}</span>
+                                    <div className="flex items-center gap-3 text-slate-400">
+                                        <span>{strat.trades}</span>
+                                        <span className={clsx(
+                                            'font-mono',
+                                            strat.winRate > 0.5 ? 'text-emerald-400' : strat.winRate < 0.4 ? 'text-red-400' : ''
+                                        )}>
+                                            {(strat.winRate * 100).toFixed(0)}%
+                                        </span>
+                                        <span className={clsx(
+                                            'font-mono',
+                                            strat.profitFactor > 1 ? 'text-emerald-400' : 'text-red-400'
+                                        )}>
+                                            {strat.profitFactor === Infinity ? '∞' : strat.profitFactor.toFixed(1)}
+                                        </span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Win/Loss Bar */}
+                <div className="bg-white/5 rounded-lg p-2.5 border border-white/5">
+                    <div className="flex items-center justify-between text-[10px] mb-1.5">
+                        <span className="text-emerald-400">{summary.wins} W</span>
+                        <span className="text-slate-500">
+                            {summary.trades > 0
+                                ? `${((summary.wins / summary.trades) * 100).toFixed(0)}% / ${((summary.losses / summary.trades) * 100).toFixed(0)}%`
+                                : '—'}
+                        </span>
+                        <span className="text-red-400">{summary.losses} L</span>
+                    </div>
+                    <div className="h-2 bg-white/10 rounded-full overflow-hidden flex">
+                        {summary.trades > 0 && (
+                            <>
+                                <div
+                                    className="h-full bg-emerald-500 transition-all"
+                                    style={{ width: `${(summary.wins / summary.trades) * 100}%` }}
+                                />
+                                <div
+                                    className="h-full bg-red-500 transition-all"
+                                    style={{ width: `${(summary.losses / summary.trades) * 100}%` }}
+                                />
+                            </>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Footer */}
+            <div className="text-[9px] text-slate-600 text-right px-3 py-1.5 border-t border-white/5 shrink-0">
+                Updated: {data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : 'N/A'}
+            </div>
+        </div>
+    );
+}
+
+export default AnalyticsPanel;

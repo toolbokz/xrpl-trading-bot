@@ -74,6 +74,102 @@
 > 2. **AMMArbitrageStrategy** - Order book vs AMM arbitrage
 > 3. **PathArbitrageStrategy** - Multi-hop payment path discovery
 > 
+> ### Feedback Engine (`src/analytics/feedbackEngine.ts`)
+> Production analytics system that records every trade with market context and computes profitability metrics.
+> 
+> **Data Storage:**
+> - SQLite database at `data/feedback.sqlite`
+> - WAL mode for reliability
+> - Automatic 30-day data pruning
+> 
+> **Recorded Data:**
+> | Table | Contents |
+> |-------|----------|
+> | `trade_events` | Every trade action (fills, cancels, errors) with strategy, prices, slippage |
+> | `market_snapshots` | Order book state + FlowMetrics at time of each trade |
+> 
+> **Computed Analytics:**
+> | Metric | Description |
+> |--------|-------------|
+> | **Win Rate** | Percentage of profitable trades |
+> | **Profit Factor** | Gross profit / Gross loss |
+> | **Expectancy** | Expected value per trade |
+> | **Avg Slippage (bps)** | Fill price vs mid price deviation |
+> | **Max Drawdown** | Largest equity decline from peak |
+> | **Edge (bps)** | Fill price vs intent price improvement |
+> 
+> **Regime Matrix:**
+> Performance breakdown by market regime (bullish/bearish/neutral) to identify which conditions are most profitable.
+> 
+> **Per-Strategy Stats:**
+> Separate analytics for each strategy (scalper, AMM arb, path arb) to compare effectiveness.
+> 
+> **API Endpoint:**
+> ```
+> GET /api/analytics/summary?hours=24&strategy=scalper
+> ```
+> 
+> **Configuration:**
+> ```env
+> FEEDBACK_DB_PATH=data/feedback.sqlite  # Database location
+> FEEDBACK_RETENTION_DAYS=30             # Days to keep data
+> FEEDBACK_DB_VERBOSE=false              # SQL logging
+> ```
+> 
+> ### Flow Metrics (`src/market/flowMetrics.ts`)
+> Real-time market sentiment analysis using trade flow and order book signals.
+> 
+> **Data Sources:**
+> - **Trade Tape**: Recent executed trades from XRPL transaction stream
+> - **Order Book**: Live bid/ask depth from `OrderBookTracker`
+> 
+> **Computed Metrics:**
+> | Metric | Description |
+> |--------|-------------|
+> | **Trade Flow Imbalance** | Buy vs sell volume ratio (-1 to +1) |
+> | **Depth Imbalance** | Bid vs ask liquidity bias (-1 to +1) |
+> | **Combined Signal** | Weighted average of flow + depth |
+> | **Signal Strength** | Confidence level (0 to 1) |
+> | **VWAP** | Volume-weighted average price |
+> | **VWAP Deviation** | Current price vs VWAP (basis points) |
+> | **Spread (bps)** | Best bid-ask spread |
+> 
+> **Market Regimes:**
+> | Regime | Description | Strategy Impact |
+> |--------|-------------|-----------------|
+> | **Quiet** | Low volume, tight spreads | Safe for market making |
+> | **Normal** | Balanced flow, healthy depth | All strategies active |
+> | **Trending Up** | Strong buy pressure | Reduce short exposure |
+> | **Trending Down** | Strong sell pressure | Reduce long exposure |
+> | **Chaotic** | High volatility, erratic flow | Pause trading |
+> | **Illiquid** | Thin order book, wide spreads | Avoid all trades |
+> 
+> **Strategy Integration:**
+> - **Scalper**: Skews quotes toward favorable flow, reduces size in adverse regimes
+> - **AMM Arb**: Pauses during chaotic/illiquid conditions
+> - **Path Arb**: Reduces position size when regime is unfavorable
+> 
+> **Dashboard Panel:**
+> The Flow Metrics sidebar displays:
+> - Current regime badge with color coding
+> - Trade flow imbalance gauge (buy/sell pressure)
+> - Depth bias indicator
+> - Signal strength meter
+> - Best bid/ask with spread
+> - VWAP and deviation from mid price
+> 
+> **Configuration (`.env`):**
+> ```env
+> FLOW_DEPTH_LEVELS=5          # Order book levels to analyze
+> FLOW_TRADE_WINDOW_MS=30000   # Trade lookback window
+> FLOW_MIN_TRADES=3            # Min trades for valid signal
+> FLOW_IMBALANCE_WEIGHT=0.6    # Weight for trade flow vs depth
+> FLOW_QUIET_THRESHOLD=0.15    # Below this = quiet regime
+> FLOW_TREND_THRESHOLD=0.4     # Above this = trending
+> FLOW_CHAOTIC_THRESHOLD=0.7   # Above this = chaotic
+> FLOW_MIN_DEPTH_BASE=10       # Min depth for liquid market
+> ```
+> 
 > ## Data Flow
 > 
 > ```
@@ -240,6 +336,8 @@ AWS, Heroku, etc.)
 > | **Active Orders** | Open orders on the DEX |
 > | **Recent Trades** | Trade history with P&L |
 > | **Risk Dashboard** | Exposure, loss limits, kill switch |
+> | **Flow Metrics** | Real-time market sentiment & regime |
+> | **Analytics Panel** | Win rate, profit factor, expectancy, regime matrix |
 > 
 > ## Paper Trading (Simulation)
 > 
@@ -464,3 +562,22 @@ AWS, Heroku, etc.)
 > |----------|-------------|---------|
 > | `REDIS_URL` | Redis for circuit breaker | - |
 > | `PATH_ARB_BREAKER_STORE` | Breaker storage (redis/file/auto) | `auto` |
+> 
+> ## Flow Metrics
+> | Variable | Description | Default |
+> |----------|-------------|---------|
+> | `FLOW_DEPTH_LEVELS` | Order book levels to analyze | `5` |
+> | `FLOW_TRADE_WINDOW_MS` | Trade lookback window (ms) | `30000` |
+> | `FLOW_MIN_TRADES` | Min trades for valid signal | `3` |
+> | `FLOW_IMBALANCE_WEIGHT` | Trade flow vs depth weight | `0.6` |
+> | `FLOW_QUIET_THRESHOLD` | Threshold for quiet regime | `0.15` |
+> | `FLOW_TREND_THRESHOLD` | Threshold for trending regime | `0.4` |
+> | `FLOW_CHAOTIC_THRESHOLD` | Threshold for chaotic regime | `0.7` |
+> | `FLOW_MIN_DEPTH_BASE` | Min depth for liquid market | `10` |
+> 
+> ## Feedback Engine (Analytics)
+> | Variable | Description | Default |
+> |----------|-------------|---------|
+> | `FEEDBACK_DB_PATH` | SQLite database path | `data/feedback.sqlite` |
+> | `FEEDBACK_RETENTION_DAYS` | Days to retain analytics data | `30` |
+> | `FEEDBACK_DB_VERBOSE` | Enable SQL query logging | `false` |
