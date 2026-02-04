@@ -34,11 +34,27 @@
     /* 32px */
 }
 
+/* Full viewport lock - prevents body scroll on desktop */
+html,
 body {
     @apply text-slate-100 antialiased;
     background-color: #0b1021;
     font-size: var(--text-base);
     line-height: 1.5;
+    /* Prevent body scroll - dashboard is viewport-locked */
+    overflow: hidden;
+    height: 100%;
+    width: 100%;
+}
+
+/* Allow scrolling on mobile (< 1024px) */
+@media (max-width: 1023px) {
+
+    html,
+    body {
+        overflow: auto;
+        overflow-x: hidden;
+    }
 }
 
 .card {
@@ -164,5 +180,22 @@ body {
     /* Control rows */
     .control-row {
         @apply flex items-center justify-between rounded-xl bg-white/5 px-4 py-3;
+    }
+
+    /* Safe area insets for mobile devices with notches */
+    .safe-area-inset-bottom {
+        padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+
+    .safe-area-inset-top {
+        padding-top: env(safe-area-inset-top, 0);
+    }
+
+    /* Grid utilities for dashboard layout */
+    .grid-full {
+        display: grid;
+        min-height: 0;
+        min-width: 0;
+        overflow: hidden;
     }
 }

@@ -1,7 +1,28 @@
 import { OrderBookState } from '../utils/types';
 import { Trade, TradeAggression } from '../market/tradeTape';
-import { FlowMetrics } from '../market/flowMetrics';
+import { FlowMetrics, FlowRegime } from '../market/flowMetrics';
 import { CapitalProtectionDecision } from '../risk/capitalProtection';
+import { RegimePolicy, RegimeSizePolicy } from '../analytics/regimePolicy';
+
+/**
+ * Regime policy context for a specific strategy
+ */
+export interface StrategyRegimePolicyContext {
+    /** Current regime (from flow metrics) */
+    currentRegime: FlowRegime;
+    /** Whether the current regime is disabled globally */
+    isRegimeDisabledGlobal: boolean;
+    /** Whether the current regime is disabled for this strategy */
+    isRegimeDisabledStrategy: boolean;
+    /** Combined: whether regime is disabled (global OR strategy) */
+    isRegimeDisabled: boolean;
+    /** Size multiplier from regime policy (for this strategy + regime) */
+    regimeSizeMultiplier: number;
+    /** Full regime policy (for advanced strategies that want to inspect) */
+    policy: RegimePolicy | null;
+    /** Size policy details for current regime */
+    currentRegimeSizePolicy: RegimeSizePolicy | null;
+}
 
 export interface StrategyContext {
     orderBook: OrderBookState;
@@ -20,6 +41,8 @@ export interface StrategyContext {
     globalSizeMultiplier?: number | undefined;
     /** Global cooldown in ms from governance (0 = no cooldown) */
     globalCooldownMs?: number | undefined;
+    /** Regime policy context for this strategy (if regime policy is enabled) */
+    regimePolicy?: StrategyRegimePolicyContext | undefined;
 }
 
 export interface Strategy {
