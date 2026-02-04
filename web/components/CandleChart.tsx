@@ -5,7 +5,7 @@ import { createChart, CandlestickData, IChartApi, ISeriesApi } from 'lightweight
 
 export type CandleChartProps = {
     data: CandlestickData[];
-    height?: number;
+    height?: number | string;
 };
 
 const BINANCE_COLORS = {
@@ -25,9 +25,12 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
     useEffect(() => {
         if (!containerRef.current) return;
 
+        // Get actual pixel height from container
+        const containerHeight = containerRef.current.clientHeight || (typeof height === 'number' ? height : 320);
+
         const chart = createChart(containerRef.current, {
             width: containerRef.current.clientWidth || 600,
-            height: height,
+            height: containerHeight,
             layout: {
                 background: { color: BINANCE_COLORS.background },
                 textColor: BINANCE_COLORS.text,
@@ -78,15 +81,22 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
 
         const handleResize = () => {
             if (containerRef.current && chartRef.current) {
+                const newHeight = containerRef.current.clientHeight || (typeof height === 'number' ? height : 320);
                 chartRef.current.applyOptions({
                     width: containerRef.current.clientWidth || 600,
+                    height: newHeight,
                 });
             }
         };
         window.addEventListener('resize', handleResize);
 
+        // Also observe container size changes
+        const resizeObserver = new ResizeObserver(handleResize);
+        resizeObserver.observe(containerRef.current);
+
         return () => {
             window.removeEventListener('resize', handleResize);
+            resizeObserver.disconnect();
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
@@ -101,5 +111,9 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
         chartRef.current.timeScale().fitContent();
     }, [data]);
 
-    return <div ref={containerRef} style={{ width: '100%', height }} />;
+    const style = typeof height === 'number'
+        ? { width: '100%', height }
+        : { width: '100%', height: '100%' };
+
+    return <div ref={containerRef} style={style} />;
 }

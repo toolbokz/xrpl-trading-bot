@@ -1,8 +1,15 @@
 import { OrderBookState } from '../utils/types';
+import { Trade, TradeAggression } from '../market/tradeTape';
 
 export interface StrategyContext {
     orderBook: OrderBookState;
     ledgerIndex: number;
+    /** Recent trades within 60s window (optional, for trade-tape-aware strategies) */
+    trades?: Trade[] | undefined;
+    /** Trade aggression stats within 10s window (buy/sell volume & count) */
+    tradeStats?: TradeAggression | undefined;
+    /** Volume-Weighted Average Price over 60s window */
+    vwap?: number | null | undefined;
 }
 
 export interface Strategy {

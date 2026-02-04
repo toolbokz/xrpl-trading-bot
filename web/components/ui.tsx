@@ -13,7 +13,7 @@ export const Badge = ({ children, tone = 'neutral' }: { children: ReactNode; ton
 };
 
 export const StatCard = ({ label, value, delta, positive }: { label: string; value: string; delta?: string; positive?: boolean }) => (
-    <div className="card p-4 flex flex-col gap-2">
+    <div className="card p-5 flex flex-col gap-2">
         <div className="stat-label">{label}</div>
         <div className="stat-value flex items-center gap-2">
             <span>{value}</span>

@@ -4,29 +4,74 @@
 
 :root {
     color-scheme: dark;
+    /* Typography scale */
+    --text-xs: 0.6875rem;
+    /* 11px */
+    --text-sm: 0.8125rem;
+    /* 13px */
+    --text-base: 0.875rem;
+    /* 14px */
+    --text-lg: 1rem;
+    /* 16px */
+    --text-xl: 1.25rem;
+    /* 20px */
+    --text-2xl: 1.5rem;
+    /* 24px */
+    /* Spacing scale */
+    --space-1: 0.25rem;
+    /* 4px */
+    --space-2: 0.5rem;
+    /* 8px */
+    --space-3: 0.75rem;
+    /* 12px */
+    --space-4: 1rem;
+    /* 16px */
+    --space-5: 1.25rem;
+    /* 20px */
+    --space-6: 1.5rem;
+    /* 24px */
+    --space-8: 2rem;
+    /* 32px */
 }
 
 body {
     @apply text-slate-100 antialiased;
     background-color: #0b1021;
+    font-size: var(--text-base);
+    line-height: 1.5;
 }
 
 .card {
-    /* Base card styling shared across panels; bg-opacity uses Tailwind alpha utility */
+    /* Base card styling shared across panels */
     @apply bg-card bg-opacity-90 backdrop-blur-sm rounded-2xl shadow-card border border-white/5;
 }
 
+/* Consistent panel headers */
+.panel-header {
+    @apply text-lg font-semibold text-slate-100;
+    font-size: var(--text-lg);
+}
+
 .stat-label {
-    @apply text-xs uppercase tracking-wide text-slate-400;
+    @apply uppercase tracking-wide text-slate-400;
+    font-size: var(--text-xs);
+    letter-spacing: 0.05em;
 }
 
 .stat-value {
-    @apply text-2xl font-semibold text-slate-50;
+    @apply font-semibold text-slate-50;
+    font-size: var(--text-2xl);
+}
+
+/* Consistent small text */
+.text-caption {
+    font-size: var(--text-xs);
+    @apply text-slate-500;
 }
 
 @layer utilities {
 
-    /* Bridge custom color/shadow tokens into utility classes for @apply usage. */
+    /* Bridge custom color/shadow tokens into utility classes */
     .bg-surface {
         background-color: #0b1021;
     }
@@ -38,11 +83,20 @@ body {
     .shadow-card {
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
     }
+
+    /* Consistent gap utilities */
+    .gap-panel {
+        gap: var(--space-4);
+    }
+
+    .gap-section {
+        gap: var(--space-6);
+    }
 }
 
 @layer components {
 
-    /* Button system used for bot controls */
+    /* Button system */
     .btn {
         @apply inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed;
     }
@@ -57,5 +111,58 @@ body {
 
     .btn-kill {
         @apply bg-danger/15 border-danger/25 text-danger hover:bg-danger/25;
+    }
+
+    /* Trade tape flash animation */
+    .animate-flash {
+        animation: flash 1s ease-out;
+    }
+
+    @keyframes flash {
+        0% {
+            background-color: rgba(255, 255, 255, 0.3);
+        }
+
+        100% {
+            background-color: transparent;
+        }
+    }
+
+    /* Scrollbar styling */
+    .scrollbar-thin {
+        scrollbar-width: thin;
+    }
+
+    .scrollbar-thumb-slate-700::-webkit-scrollbar-thumb {
+        background-color: rgb(51, 65, 85);
+        border-radius: 9999px;
+    }
+
+    .scrollbar-track-transparent::-webkit-scrollbar-track {
+        background-color: transparent;
+    }
+
+    .scrollbar-thin::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    /* Stat boxes for consistent styling */
+    .stat-box {
+        @apply rounded-xl bg-white/5 px-3 py-2;
+    }
+
+    .stat-box-label {
+        font-size: var(--text-xs);
+        @apply text-slate-400 uppercase tracking-wide;
+    }
+
+    .stat-box-value {
+        font-size: var(--text-base);
+        @apply text-slate-100 font-mono;
+    }
+
+    /* Control rows */
+    .control-row {
+        @apply flex items-center justify-between rounded-xl bg-white/5 px-4 py-3;
     }
 }

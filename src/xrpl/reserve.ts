@@ -41,11 +41,12 @@ const DROPS_PER_XRP = 1_000_000;
 
 /**
  * Fetch current network reserve requirements from server_state.
- * Returns base and owner reserve values in XRP.
+ * Returns base and owner reserve values in XRP, or null if client is not connected.
  */
-export async function getNetworkReserves(client: Client): Promise<{ baseReserveXRP: number; ownerReserveXRP: number }> {
+export async function getNetworkReserves(client: Client): Promise<{ baseReserveXRP: number; ownerReserveXRP: number } | null> {
     if (!client.isConnected()) {
-        throw new Error('XRPL client not connected');
+        logger.debug('XRPL client not connected, skipping reserve check');
+        return null;
     }
 
     const response = await client.request({
@@ -68,13 +69,15 @@ export async function getNetworkReserves(client: Client): Promise<{ baseReserveX
 
 /**
  * Fetch account info including owner count and balance.
+ * Returns null if client is not connected.
  */
 export async function getAccountInfo(
     client: Client,
     account: string
-): Promise<{ ownerCount: number; balanceXRP: number }> {
+): Promise<{ ownerCount: number; balanceXRP: number } | null> {
     if (!client.isConnected()) {
-        throw new Error('XRPL client not connected');
+        logger.debug('XRPL client not connected, skipping account info fetch');
+        return null;
     }
 
     const response = await client.request({
@@ -100,17 +103,22 @@ export async function getAccountInfo(
  * @param client - Connected XRPL client
  * @param account - Account address
  * @param config - Optional buffer configuration
- * @returns Detailed reserve requirement including available balance
+ * @returns Detailed reserve requirement including available balance, or null if client not connected
  */
 export async function calculateReserveRequirement(
     client: Client,
     account: string,
     config?: ReserveConfig
-): Promise<ReserveRequirement> {
+): Promise<ReserveRequirement | null> {
     const [networkReserves, accountInfo] = await Promise.all([
         getNetworkReserves(client),
         getAccountInfo(client, account),
     ]);
+
+    // If client disconnected during fetch, return null to skip this tick
+    if (!networkReserves || !accountInfo) {
+        return null;
+    }
 
     const { baseReserveXRP, ownerReserveXRP } = networkReserves;
     const { ownerCount, balanceXRP } = accountInfo;
@@ -145,15 +153,21 @@ export async function calculateReserveRequirement(
  * @param account - Account address
  * @param minAvailableXRP - Minimum available balance after reserves (default: 0)
  * @param config - Optional buffer configuration
- * @returns true if account has sufficient reserves
+ * @returns Object with adequate flag and requirement, or { adequate: true, requirement: null } if client not connected (skip tick)
  */
 export async function hasAdequateReserves(
     client: Client,
     account: string,
     minAvailableXRP: number = 0,
     config?: ReserveConfig
-): Promise<{ adequate: boolean; requirement: ReserveRequirement }> {
+): Promise<{ adequate: boolean; requirement: ReserveRequirement | null; skipped?: boolean }> {
     const requirement = await calculateReserveRequirement(client, account, config);
+
+    // If client disconnected, skip this tick but don't trigger shutdown
+    if (!requirement) {
+        logger.debug({ account }, 'Skipping reserve check - client not connected');
+        return { adequate: true, requirement: null, skipped: true };
+    }
 
     const adequate = requirement.availableXRP >= minAvailableXRP;
 

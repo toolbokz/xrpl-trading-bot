@@ -18,9 +18,9 @@ let connectPromise: Promise<void> | null = null;
 let lastConnectAttempt = 0;
 let currentEndpointIndex = 0;
 let reconnectAttempt = 0;
-const MIN_RECONNECT_INTERVAL = 10000; // 10 seconds between reconnect attempts
-const MAX_RECONNECT_DELAY = 15_000; // Cap reconnect delay at 15 seconds
-const INITIAL_RECONNECT_DELAY = 1_000; // Start with 1 second delay
+const MIN_RECONNECT_INTERVAL = 2000; // 2 seconds between reconnect attempts (reduced from 10s)
+const MAX_RECONNECT_DELAY = 10_000; // Cap reconnect delay at 10 seconds (reduced from 15s)
+const INITIAL_RECONNECT_DELAY = 500; // Start with 500ms delay (reduced from 1s)
 
 /**
  * Calculate exponential backoff with jitter for reconnect attempts.

@@ -78,14 +78,20 @@ export class RiskEngine {
 
     async checkReserves(account: string): Promise<boolean> {
         // Use dynamic reserve calculation accounting for owner count
-        const { adequate, requirement } = await hasAdequateReserves(
+        const { adequate, requirement, skipped } = await hasAdequateReserves(
             this.client,
             account,
             this.risk.reserveFloorXRP, // Use config value as minimum available balance
             this.reserveConfig
         );
 
-        if (!adequate) {
+        // If check was skipped (client not connected), allow tick to continue
+        // The reconnection logic will handle restoring the connection
+        if (skipped) {
+            return true;
+        }
+
+        if (!adequate && requirement) {
             logger.warn({
                 balance: requirement.balanceXRP,
                 required: requirement.requiredXRP,
@@ -111,5 +117,30 @@ export class RiskEngine {
 
     isShutdown(): boolean {
         return this.risk.emergencyShutdown;
+    }
+
+    /**
+     * Get current risk status for dashboard/API.
+     */
+    getStatus(): {
+        maxExposure: number;
+        currentExposure: number;
+        dailyLossLimit: number;
+        dailyLossCurrent: number;
+        killSwitch: boolean;
+        consecutiveFailures: number;
+        maxTradeSize: number;
+        reserveFloorXRP: number;
+    } {
+        return {
+            maxExposure: this.risk.maxExposurePerIssuer,
+            currentExposure: 0, // TODO: track open position value
+            dailyLossLimit: this.risk.maxDailyLoss,
+            dailyLossCurrent: this.dailyLoss,
+            killSwitch: this.risk.emergencyShutdown,
+            consecutiveFailures: this.consecutiveFailures,
+            maxTradeSize: this.risk.maxTradeSize,
+            reserveFloorXRP: this.risk.reserveFloorXRP,
+        };
     }
 }

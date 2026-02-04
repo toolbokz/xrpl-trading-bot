@@ -1,4 +1,4 @@
-import { Wallet, isValidClassicAddress, Client } from 'xrpl';
+import { Wallet, isValidClassicAddress, Client, TransactionStream } from 'xrpl';
 import { AppConfig, TradingPair, loadConfig } from '../config';
 import { TRADING_PAIRS, isValidPairKey } from '../config/tradingPairs';
 import { logger } from '../analytics/logger';
@@ -17,6 +17,9 @@ import { closeBreakerStore } from '../persistence/breakerStore';
 import { enforceLocalOnly } from '../security/localOnly';
 import { throttleStrategy } from '../utils/rateLimiter';
 import { isCpuHealthy, startCpuWatchdog, CpuWatchdog } from '../monitoring/cpuWatchdog';
+import { TradeTape, setGlobalTradeTape } from '../market/tradeTape';
+import { TradeTapeService } from '../market/tradeTapeService';
+import { BackendHttpServer, startBackendHttpServer, stopBackendHttpServer } from '../server/httpServer';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -75,6 +78,9 @@ export class TradingRuntime {
     private started = false;
     private shutdownInProgress = false;
     private cpuWatchdog: CpuWatchdog | null = null;
+    private tradeTape: TradeTape | null = null;
+    private tradeTapeService: TradeTapeService | null = null;
+    private httpServer: BackendHttpServer | null = null;
     private readonly baseConfig: AppConfig;
 
     constructor(config?: AppConfig) {
@@ -130,6 +136,27 @@ export class TradingRuntime {
             const executor = new OfferExecutor(client, wallet, risk, config.paperTrading, config.tradingPair, config.strategy);
             const amm = new AMMService(client);
 
+            // Initialize trade tape for capturing executed trades
+            const tradeTape = new TradeTape(config.tradingPair);
+            const tradeTapeService = new TradeTapeService(tradeTape, config.tradingPair, wallet?.classicAddress ?? null);
+
+            // Wire up transaction listener for trade capture
+            let txCount = 0;
+            xrpl.on('transaction', (tx: TransactionStream) => {
+                txCount++;
+                // Log every 5000 transactions to show stream is working (reduced to avoid noise)
+                if (txCount % 5000 === 0) {
+                    logger.info({ txCount, lastTxType: tx.transaction?.TransactionType }, 'TradeTape: Transaction stream active');
+                }
+                tradeTapeService.processTransaction(tx);
+            });
+
+            // Set global reference for API routes
+            setGlobalTradeTape(tradeTape);
+
+            this.tradeTape = tradeTape;
+            this.tradeTapeService = tradeTapeService;
+
             this.strategies = [
                 new ScalperStrategy(tracker, config.strategy, config.tradingPair, executor, risk),
                 new AMMArbitrageStrategy(amm, config.strategy, config.tradingPair, executor),
@@ -148,6 +175,10 @@ export class TradingRuntime {
                 logger.warn('CPU watchdog triggered - trading paused due to high CPU');
             });
 
+            // Start backend HTTP server for SSE streaming
+            this.httpServer = await startBackendHttpServer();
+            logger.info({ httpPort: this.httpServer.getPort() }, 'Backend HTTP server for trade streaming ready');
+
             logger.info('Trading runtime started');
         } catch (err) {
             await xrpl.disconnect().catch(() => undefined);
@@ -157,10 +188,20 @@ export class TradingRuntime {
     }
 
     async tick(): Promise<void> {
-        if (!this.started || !this.xrpl || !this.tracker || !this.risk) {
-            throw new Error('Trading runtime not started');
+        // Silently skip if runtime not ready or shutting down
+        if (!this.started || this.shutdownInProgress) {
+            return;
+        }
+        if (!this.xrpl || !this.tracker || !this.risk) {
+            return;
         }
         if (this.tickInFlight) return; // avoid overlapping ticks
+
+        // Skip tick if XRPL client is disconnected (will reconnect automatically)
+        if (!this.xrpl.isConnected()) {
+            logger.debug('Skipping tick - XRPL client reconnecting');
+            return;
+        }
 
         // CPU safety: skip tick if CPU is overloaded
         if (!isCpuHealthy()) {
@@ -170,6 +211,11 @@ export class TradingRuntime {
 
         this.tickInFlight = true;
         try {
+            // Re-check after acquiring tickInFlight lock (state may have changed)
+            if (!this.tracker || !this.risk || !this.xrpl) {
+                return;
+            }
+
             // Check for daily loss reset at UTC midnight
             this.risk.checkAndResetDaily();
 
@@ -179,7 +225,20 @@ export class TradingRuntime {
                 if (!reservesOk) return;
             }
             await this.tracker.refresh();
-            const ctx = { orderBook: this.tracker.getState(), ledgerIndex: this.xrpl.getLedgerIndex() };
+
+            // Final null check before accessing state (may have been killed during refresh)
+            if (!this.tracker || !this.xrpl) {
+                return;
+            }
+
+            // Build strategy context with trade tape data
+            const ctx = {
+                orderBook: this.tracker.getState(),
+                ledgerIndex: this.xrpl.getLedgerIndex(),
+                trades: this.tradeTape?.getRecent(60_000),
+                tradeStats: this.tradeTape?.getAggression(10_000),
+                vwap: this.tradeTape?.getVWAP(60_000),
+            };
             for (const strategy of this.strategies) {
                 // Rate limit strategy execution to prevent CPU spikes
                 await throttleStrategy();
@@ -218,7 +277,7 @@ export class TradingRuntime {
         }
         this.shutdownInProgress = true;
 
-        const totalSteps = 6;
+        const totalSteps = 7;
         let currentStep = 0;
 
         const logStep = (description: string) => {
@@ -267,13 +326,21 @@ export class TradingRuntime {
             logger.warn({ err }, 'Failed to close breaker store');
         }
 
-        // Step 5: Disconnect XRPL cleanly
+        // Step 5: Stop backend HTTP server
+        logStep('Stopping backend HTTP server');
+        try {
+            await stopBackendHttpServer();
+        } catch (err) {
+            logger.warn({ err }, 'Failed to stop HTTP server');
+        }
+
+        // Step 6: Disconnect XRPL cleanly
         logStep('Disconnecting XRPL client');
         if (this.xrpl) {
             await this.xrpl.disconnect().catch((err) => logger.warn({ err }, 'XRPL disconnect failed during shutdown'));
         }
 
-        // Step 6: Reset state
+        // Step 7: Reset state
         logStep('Resetting runtime state');
         this.reset();
 
@@ -396,12 +463,53 @@ export class TradingRuntime {
         return this.walletAddress;
     }
 
+    /**
+     * Get the current config (read-only).
+     */
+    getConfig(): AppConfig {
+        return this.baseConfig;
+    }
+
+    /**
+     * Get the current risk status for dashboard/API.
+     */
+    getRiskStatus(): {
+        maxExposure: number;
+        currentExposure: number;
+        dailyLossLimit: number;
+        dailyLossCurrent: number;
+        killSwitch: boolean;
+        consecutiveFailures: number;
+        maxTradeSize: number;
+        reserveFloorXRP: number;
+    } | null {
+        return this.risk?.getStatus() ?? null;
+    }
+
+    /**
+     * Get the trade tape instance (for API routes).
+     */
+    getTradeTape(): TradeTape | null {
+        return this.tradeTape;
+    }
+
+    /**
+     * Get the trade tape service instance.
+     */
+    getTradeTapeService(): TradeTapeService | null {
+        return this.tradeTapeService;
+    }
+
     private reset(): void {
         // Stop CPU watchdog
         if (this.cpuWatchdog) {
             this.cpuWatchdog.stop();
             this.cpuWatchdog = null;
         }
+
+        // Clear global trade tape reference
+        setGlobalTradeTape(null);
+
         this.xrpl = null;
         this.tracker = null;
         this.risk = null;
@@ -411,5 +519,8 @@ export class TradingRuntime {
         this.tickInFlight = false;
         this.started = false;
         this.shutdownInProgress = false;
+        this.tradeTape = null;
+        this.tradeTapeService = null;
+        this.httpServer = null;
     }
 }

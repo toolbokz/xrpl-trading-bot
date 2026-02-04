@@ -63,6 +63,10 @@ export class XRPLWebSocket extends EventEmitter {
         }
     }
 
+    isConnected(): boolean {
+        return this.connected && this.client.isConnected();
+    }
+
     getClient(): Client {
         return this.client;
     }
@@ -75,19 +79,29 @@ export class XRPLWebSocket extends EventEmitter {
         // Note: Most public XRPL servers (xrplcluster.com, s1.ripple.com, etc.)
         // do NOT allow book subscriptions. We only subscribe to ledger stream
         // and use polling (book_offers) for order book data during each tick.
+        //
+        // Trade tape: Subscribe to transactions stream to capture executed trades.
+        // This is supported by most public servers.
+
+        const streams: ('ledger' | 'transactions')[] = ['ledger'];
+
+        // Enable transactions stream for trade tape (configurable)
+        if (process.env.TRADE_TAPE_ENABLED !== 'false') {
+            streams.push('transactions');
+        }
 
         const req: SubscribeRequest = {
             id: 'xrpl-subscribe',
             command: 'subscribe',
-            streams: ['ledger'],
+            streams,
         };
-        logger.info({ req }, 'Subscribing to XRPL ledger stream');
+        logger.info({ req, streams }, 'Subscribing to XRPL streams');
         try {
             await this.safeRequest(req);
-            logger.info('Ledger subscription acknowledged - using polling for order book data');
+            logger.info({ streams }, 'XRPL subscription acknowledged - using polling for order book data');
         } catch (err: any) {
             // Log but don't throw - we can still poll
-            logger.warn({ err: err?.message || err }, 'Ledger subscription failed');
+            logger.warn({ err: err?.message || err }, 'XRPL subscription failed');
         }
     }
 
