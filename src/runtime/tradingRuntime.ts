@@ -31,6 +31,12 @@ import {
     startAdaptiveScheduler,
     stopAdaptiveScheduler,
 } from '../analytics/adaptiveScheduler';
+import {
+    CapitalProtectionEngine,
+    CapitalProtectionDecision,
+    CapitalProtectionConfig,
+    loadCapitalProtectionConfig,
+} from '../risk/capitalProtection';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -94,6 +100,9 @@ export class TradingRuntime {
     private tradeTapeService: TradeTapeService | null = null;
     private httpServer: BackendHttpServer | null = null;
     private currentFlowMetrics: FlowMetrics | null = null;
+    private capitalProtection: CapitalProtectionEngine | null = null;
+    private capitalProtectionConfig: CapitalProtectionConfig | null = null;
+    private lastGovernanceDecision: CapitalProtectionDecision | null = null;
     private readonly baseConfig: AppConfig;
 
     constructor(config?: AppConfig) {
@@ -184,6 +193,16 @@ export class TradingRuntime {
             this.walletAddress = wallet?.classicAddress ?? null;
             this.started = true;
 
+            // Initialize capital protection engine
+            const cpConfig = loadCapitalProtectionConfig();
+            this.capitalProtectionConfig = cpConfig;
+            this.capitalProtection = new CapitalProtectionEngine({
+                feedbackEngine,
+                riskEngine: risk,
+                config: cpConfig,
+            });
+            logger.info({ enabled: cpConfig.enabled }, 'Capital protection engine initialized');
+
             // Start CPU watchdog to prevent runaway CPU usage
             this.cpuWatchdog = startCpuWatchdog(() => {
                 logger.warn('CPU watchdog triggered - trading paused due to high CPU');
@@ -273,6 +292,57 @@ export class TradingRuntime {
                 // Feedback recording should never crash trading
             }
 
+            // ─────────────────────────────────────────────────────────────────
+            // Capital Protection Gate
+            // ─────────────────────────────────────────────────────────────────
+            let governanceDecision: CapitalProtectionDecision | undefined;
+            let globalSizeMultiplier = 1.0;
+            let globalCooldownMs = 0;
+
+            if (this.capitalProtection) {
+                governanceDecision = this.capitalProtection.evaluate(pairKey);
+                this.lastGovernanceDecision = governanceDecision;
+
+                // Handle SHUTDOWN - initiate graceful shutdown
+                if (governanceDecision.mode === 'SHUTDOWN') {
+                    logger.error({
+                        reasons: governanceDecision.reasons,
+                        metrics: governanceDecision.metrics,
+                    }, 'Capital protection triggered SHUTDOWN');
+                    // Set emergency shutdown flag and exit tick
+                    if (this.risk) {
+                        // Mirror the shutdown state to RiskEngine for consistency
+                        this.baseConfig.risk.emergencyShutdown = true;
+                    }
+                    return;
+                }
+
+                // Handle PAUSE - skip all strategies
+                if (governanceDecision.mode === 'PAUSE') {
+                    logger.info({
+                        reasons: governanceDecision.reasons,
+                        cooldownMs: governanceDecision.cooldownMs,
+                    }, 'Capital protection: PAUSE - skipping strategies');
+                    return;
+                }
+
+                // Handle THROTTLE - apply global size multiplier and cooldown
+                if (governanceDecision.mode === 'THROTTLE') {
+                    globalSizeMultiplier = governanceDecision.sizeMultiplier;
+                    globalCooldownMs = governanceDecision.cooldownMs;
+                    logger.debug({
+                        reasons: governanceDecision.reasons,
+                        sizeMultiplier: globalSizeMultiplier,
+                        cooldownMs: globalCooldownMs,
+                    }, 'Capital protection: THROTTLE active');
+                }
+
+                // Apply governance cooldown if any
+                if (globalCooldownMs > 0) {
+                    await new Promise(resolve => setTimeout(resolve, globalCooldownMs));
+                }
+            }
+
             const ctx = {
                 orderBook: orderBookState,
                 ledgerIndex: this.xrpl.getLedgerIndex(),
@@ -280,6 +350,9 @@ export class TradingRuntime {
                 tradeStats: this.tradeTape?.getAggression(10_000),
                 vwap: this.tradeTape?.getVWAP(60_000),
                 flow: flowMetrics,
+                governance: governanceDecision,
+                globalSizeMultiplier,
+                globalCooldownMs,
             };
 
             const regime: FlowRegime = flowMetrics.regime;
@@ -287,6 +360,30 @@ export class TradingRuntime {
             for (const strategy of this.strategies) {
                 // Rate limit strategy execution to prevent CPU spikes
                 await throttleStrategy();
+
+                // Check if strategy is disabled by governance
+                if (governanceDecision?.disabledStrategies?.includes(strategy.name)) {
+                    logger.debug({
+                        strategy: strategy.name,
+                        reasons: governanceDecision.reasons,
+                    }, 'Skipping strategy - disabled by capital protection');
+                    continue;
+                }
+
+                // Check if regime is disabled by governance
+                if (governanceDecision?.disabledRegimes?.includes(regime)) {
+                    logger.debug({
+                        strategy: strategy.name,
+                        regime,
+                        reasons: governanceDecision.reasons,
+                    }, 'Skipping strategy - regime disabled by capital protection');
+                    continue;
+                }
+
+                // Apply governance size multiplier to executor
+                if (this.executor && globalSizeMultiplier < 1.0) {
+                    this.executor.setGovernanceSizeMultiplier(globalSizeMultiplier);
+                }
 
                 // Apply adaptive learning gates and tunings
                 if (isAdaptiveEnabled() && this.executor) {
@@ -322,6 +419,7 @@ export class TradingRuntime {
                 // Clear overrides after each strategy to avoid cross-contamination
                 if (this.executor) {
                     this.executor.clearAdaptiveOverrides();
+                    this.executor.clearGovernanceOverrides();
                 }
             }
         } finally {
@@ -347,6 +445,17 @@ export class TradingRuntime {
      */
     getFlowMetrics(): FlowMetrics | null {
         return this.currentFlowMetrics;
+    }
+
+    /**
+     * Get the current governance decision from capital protection layer.
+     * Returns null if not started or capital protection is disabled.
+     */
+    getGovernanceStatus(): { decision: CapitalProtectionDecision | null; config: CapitalProtectionConfig | null } {
+        return {
+            decision: this.lastGovernanceDecision,
+            config: this.capitalProtectionConfig,
+        };
     }
 
     /**
@@ -630,5 +739,8 @@ export class TradingRuntime {
         this.tradeTape = null;
         this.tradeTapeService = null;
         this.httpServer = null;
+        this.capitalProtection = null;
+        this.capitalProtectionConfig = null;
+        this.lastGovernanceDecision = null;
     }
 }

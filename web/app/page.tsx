@@ -20,6 +20,7 @@ import { LogsPanel } from '../components/LogsPanel';
 import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
 import { AnalyticsPanel } from '../components/AnalyticsPanel';
 import { AdaptivePanel } from '../components/AdaptivePanel';
+import { GovernancePanel } from '../components/GovernancePanel';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -477,6 +478,7 @@ export default function Page() {
             }
             analyticsSidebar={
                 <>
+                    <GovernancePanel />
                     <AnalyticsPanel pollInterval={5000} />
                     <AdaptivePanel pollInterval={5000} />
                 </>

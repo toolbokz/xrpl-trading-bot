@@ -53,6 +53,10 @@ export class OfferExecutor {
     private adaptiveSizeMultiplier: number | null = null;
     private adaptiveMinEdgeBps: number | null = null;
 
+    // Governance layer overrides (Capital Protection - defense in depth)
+    private governanceSizeMultiplier: number = 1.0;
+    private governanceMode: 'ALLOW' | 'THROTTLE' | 'PAUSE' | 'SHUTDOWN' = 'ALLOW';
+
     constructor(
         private readonly client: Client,
         private readonly wallet: Wallet | null,
@@ -113,6 +117,44 @@ export class OfferExecutor {
         this.adaptiveMaxSlippageBps = null;
         this.adaptiveSizeMultiplier = null;
         this.adaptiveMinEdgeBps = null;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Governance Layer (Capital Protection - Defense in Depth)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Set governance size multiplier (Capital Protection throttling).
+     * Applied AFTER adaptive multiplier as a hard cap.
+     */
+    setGovernanceSizeMultiplier(value: number): void {
+        this.governanceSizeMultiplier = Math.max(0, Math.min(1, value));
+    }
+
+    /**
+     * Set governance mode for defense-in-depth gating.
+     * PAUSE/SHUTDOWN modes will reject all orders at executor level.
+     */
+    setGovernanceMode(mode: 'ALLOW' | 'THROTTLE' | 'PAUSE' | 'SHUTDOWN'): void {
+        this.governanceMode = mode;
+    }
+
+    /**
+     * Clear all governance overrides (reset to normal operation).
+     */
+    clearGovernanceOverrides(): void {
+        this.governanceSizeMultiplier = 1.0;
+        this.governanceMode = 'ALLOW';
+    }
+
+    /**
+     * Get current governance state for diagnostics.
+     */
+    getGovernanceState(): { mode: string; sizeMultiplier: number } {
+        return {
+            mode: this.governanceMode,
+            sizeMultiplier: this.governanceSizeMultiplier,
+        };
     }
 
     /**
@@ -225,6 +267,37 @@ export class OfferExecutor {
     async placeOffer(params: OfferParams): Promise<ExecutionResult> {
         const pairSymbol = `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`;
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Defense-in-depth: Governance layer gate (Capital Protection)
+        // This is a HARD STOP that cannot be bypassed by strategies
+        // ─────────────────────────────────────────────────────────────────────
+        if (this.governanceMode === 'SHUTDOWN' || this.governanceMode === 'PAUSE') {
+            const reason = `governance-blocked: mode=${this.governanceMode}`;
+            logger.warn({
+                strategy: this.currentStrategy,
+                side: params.side,
+                price: params.price,
+                amount: params.amount,
+                governanceMode: this.governanceMode,
+            }, 'Order REJECTED by governance layer (defense-in-depth)');
+
+            try {
+                feedbackEngine.recordTradeEvent({
+                    pairKey: pairSymbol,
+                    strategy: this.currentStrategy,
+                    action: 'reject',
+                    side: params.side,
+                    intentPrice: params.price,
+                    intentSizeBase: params.amount,
+                    error: reason,
+                    midPriceAtDecision: this.currentMidPrice ?? undefined,
+                    isBotTrade: true,
+                });
+            } catch { /* feedback should never crash trading */ }
+
+            return { accepted: false, reason };
+        }
+
         // Check adaptive min edge requirement
         const edgeCheck = this.checkAdaptiveMinEdge(params.side, params.price);
         if (!edgeCheck.allowed) {
@@ -281,8 +354,21 @@ export class OfferExecutor {
             return { accepted: false, reason: sizeResult.reason };
         }
 
+        // Apply governance size multiplier (Capital Protection throttling)
+        // This is applied AFTER adaptive multiplier as an additional hard cap
+        let governanceAdjustedAmount = sizeResult.adjustedAmount;
+        if (this.governanceMode === 'THROTTLE' && this.governanceSizeMultiplier < 1.0) {
+            governanceAdjustedAmount = sizeResult.adjustedAmount * this.governanceSizeMultiplier;
+            logger.debug({
+                strategy: this.currentStrategy,
+                originalAmount: sizeResult.adjustedAmount,
+                governanceMultiplier: this.governanceSizeMultiplier,
+                adjustedAmount: governanceAdjustedAmount,
+            }, 'Order size reduced by governance throttle');
+        }
+
         // Use adjusted amount
-        const adjustedParams = { ...params, amount: sizeResult.adjustedAmount };
+        const adjustedParams = { ...params, amount: governanceAdjustedAmount };
 
         // Check slippage if expected price provided
         if (adjustedParams.expectedPrice) {

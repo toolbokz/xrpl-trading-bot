@@ -588,6 +588,163 @@ class FeedbackEngine {
     }
 
     /**
+     * Rolling risk metrics for capital protection layer
+     */
+    getRollingRiskMetrics(params: {
+        pairKey?: string;
+        lookbackTrades: number;
+    }): {
+        tradesCount: number;
+        profitFactor: number;
+        expectancyBps: number;
+        drawdownPct: number;
+        avgSlippageBps: number;
+        partialFillRate: number;
+        winRate: number;
+    } {
+        if (!this.ensureInitialized()) {
+            return this.emptyRollingRiskMetrics();
+        }
+
+        try {
+            // Query most recent trades, optionally filtered by pair
+            const filters: QueryFilters = {};
+            if (params.pairKey) {
+                filters.pairKey = params.pairKey;
+            }
+
+            const events = queryTradeEvents(filters);
+
+            // Filter to bot fills only
+            const fills = events.filter(e =>
+                (e.action === 'fill' || (e.action === 'offer_create' && e.fillPrice)) &&
+                e.isBotTrade === 1
+            );
+
+            // Sort by timestamp descending and take lookback
+            const sorted = [...fills].sort((a, b) => b.ts - a.ts);
+            const lookback = sorted.slice(0, params.lookbackTrades);
+
+            if (lookback.length === 0) {
+                return this.emptyRollingRiskMetrics();
+            }
+
+            // Compute win/loss stats
+            let wins = 0;
+            let losses = 0;
+            let totalGain = 0;
+            let totalLoss = 0;
+            let totalSlippageBps = 0;
+            let slippageCount = 0;
+            let partialCount = 0;
+            let totalTradeSize = 0;
+
+            for (const event of lookback) {
+                const pnl = this.computeEventPnl(event);
+                const slippage = event.slippageBpsVsIntent ?? this.computeSlippageBps(event);
+
+                if (pnl > 0) {
+                    wins++;
+                    totalGain += pnl;
+                } else {
+                    losses++;
+                    totalLoss += Math.abs(pnl);
+                }
+
+                if (slippage !== null) {
+                    totalSlippageBps += Math.abs(slippage);
+                    slippageCount++;
+                }
+
+                if (event.isPartial === 1) {
+                    partialCount++;
+                }
+
+                if (event.fillSizeBase) {
+                    totalTradeSize += event.fillSizeBase;
+                }
+            }
+
+            const tradesCount = lookback.length;
+            const winRate = tradesCount > 0 ? wins / tradesCount : 0;
+            const avgTradeSize = tradesCount > 0 ? totalTradeSize / tradesCount : 1;
+
+            // Profit factor
+            const profitFactor = totalLoss > 0 ? totalGain / totalLoss : (totalGain > 0 ? Infinity : 1);
+
+            // Expectancy in bps
+            const avgWin = wins > 0 ? totalGain / wins : 0;
+            const avgLoss = losses > 0 ? totalLoss / losses : 0;
+            const expectancy = (winRate * avgWin) - ((1 - winRate) * avgLoss);
+            const expectancyBps = avgTradeSize > 0 ? (expectancy / avgTradeSize) * 10000 : 0;
+
+            // Average slippage
+            const avgSlippageBps = slippageCount > 0 ? totalSlippageBps / slippageCount : 0;
+
+            // Partial fill rate
+            const partialFillRate = tradesCount > 0 ? partialCount / tradesCount : 0;
+
+            // Compute drawdown from equity curve
+            let equity = 0;
+            let peak = 0;
+            let maxDrawdown = 0;
+
+            // Process chronologically (reverse the sorted array)
+            for (let i = lookback.length - 1; i >= 0; i--) {
+                const event = lookback[i];
+                if (!event) continue;
+                const pnl = this.computeEventPnl(event);
+                equity += pnl;
+                if (equity > peak) {
+                    peak = equity;
+                }
+                if (peak > 0) {
+                    const dd = ((peak - equity) / peak) * 100;
+                    if (dd > maxDrawdown) {
+                        maxDrawdown = dd;
+                    }
+                }
+            }
+
+            return {
+                tradesCount,
+                profitFactor: Number.isFinite(profitFactor) ? profitFactor : 100,
+                expectancyBps: Number.isFinite(expectancyBps) ? expectancyBps : 0,
+                drawdownPct: maxDrawdown,
+                avgSlippageBps,
+                partialFillRate,
+                winRate,
+            };
+        } catch (err) {
+            logger.warn({ err }, 'Failed to get rolling risk metrics');
+            return this.emptyRollingRiskMetrics();
+        }
+    }
+
+    /**
+     * Return empty rolling risk metrics for error cases
+     */
+    private emptyRollingRiskMetrics(): {
+        tradesCount: number;
+        profitFactor: number;
+        expectancyBps: number;
+        drawdownPct: number;
+        avgSlippageBps: number;
+        partialFillRate: number;
+        winRate: number;
+    } {
+        return {
+            tradesCount: 0,
+            profitFactor: 1,
+            expectancyBps: 0,
+            drawdownPct: 0,
+            avgSlippageBps: 0,
+            partialFillRate: 0,
+            winRate: 0,
+        };
+    }
+
+    /**
      * Prune old data
      */
     prune(): void {
