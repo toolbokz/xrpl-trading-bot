@@ -173,8 +173,8 @@ export class TradingRuntime {
 
             this.strategies = [
                 new ScalperStrategy(tracker, config.strategy, config.tradingPair, executor, risk, config.flow),
-                new AMMArbitrageStrategy(amm, config.strategy, config.tradingPair, executor, config.flow),
-                new PathArbitrageStrategy(client, config.strategy, config.tradingPair, executor, config.paperTrading, config.flow),
+                new AMMArbitrageStrategy(amm, config.strategy, config.tradingPair, executor, risk, config.flow),
+                new PathArbitrageStrategy(client, config.strategy, config.tradingPair, executor, config.paperTrading, risk, config.flow),
             ];
 
             this.xrpl = xrpl;

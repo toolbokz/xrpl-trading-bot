@@ -2,6 +2,7 @@ import { Amount, Client } from 'xrpl';
 import { Strategy, StrategyContext } from './types';
 import { StrategyConfig, TradingPair, FlowConfig } from '../config';
 import { OfferExecutor } from '../execution/offerExecutor';
+import { RiskEngine } from '../risk/riskEngine';
 import { logger } from '../analytics/logger';
 import { toXrplCurrency } from '../xrpl/currency';
 import { getBreakerStore, BreakerState, BreakerStore } from '../persistence/breakerStore';
@@ -154,6 +155,7 @@ export class PathArbitrageStrategy implements Strategy {
     private breakerInitialized = false;
     private flowConfig: Partial<FlowConfig>;
     private lastLoggedRegime: string | null = null;
+    private readonly risk: RiskEngine;
 
     constructor(
         private readonly client: Client,
@@ -161,8 +163,10 @@ export class PathArbitrageStrategy implements Strategy {
         private readonly pair: TradingPair,
         private readonly executor: OfferExecutor,
         private readonly paperTrading: boolean,
+        risk: RiskEngine,
         flowConfig?: Partial<FlowConfig>
     ) {
+        this.risk = risk;
         this.pathArbConfig = loadPathArbConfig();
         this.circuitBreaker = new CircuitBreaker(
             this.pathArbConfig.circuitBreakerMaxLossBps,
@@ -250,6 +254,25 @@ export class PathArbitrageStrategy implements Strategy {
         const quoteIssuer = this.pair.quoteCurrency.toUpperCase() === 'XRP'
             ? undefined
             : (this.pair.quoteIssuer ?? this.pair.issuer);
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Risk Engine Approval
+        // ─────────────────────────────────────────────────────────────────────
+        const riskIssuer = quoteIssuer ?? baseIssuer;
+        if (riskIssuer) {
+            const riskIntent = {
+                issuer: riskIssuer,
+                size: adjustedPositionSize,
+                potentialLoss: adjustedPositionSize * (this.config.stopLossBps / 10_000)
+            };
+            if (this.risk.approveIntent(riskIntent, this.pair) === false) {
+                logger.info({
+                    positionSize: adjustedPositionSize.toFixed(4),
+                    potentialLoss: riskIntent.potentialLoss.toFixed(4)
+                }, 'Path Arb: ❌ Risk engine rejected trade intent');
+                return;
+            }
+        }
 
         const base = baseIssuer
             ? toXrplCurrency({ currency: this.pair.baseCurrency, issuer: baseIssuer })

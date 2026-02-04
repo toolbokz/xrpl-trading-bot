@@ -2,6 +2,7 @@ import { Strategy, StrategyContext } from './types';
 import { AMMService } from '../market/amm';
 import { StrategyConfig, TradingPair, FlowConfig } from '../config';
 import { OfferExecutor } from '../execution/offerExecutor';
+import { RiskEngine } from '../risk/riskEngine';
 import { logger } from '../analytics/logger';
 import { isRegimeSafeForArb, getRegimeDescription, getRegimeSizeMultiplier } from '../market/flowMetrics';
 
@@ -23,6 +24,7 @@ export class AMMArbitrageStrategy implements Strategy {
         private readonly config: StrategyConfig,
         private readonly pair: TradingPair,
         private readonly executor: OfferExecutor,
+        private readonly risk: RiskEngine,
         flowConfig?: Partial<FlowConfig>
     ) {
         this.flowConfig = flowConfig ?? DEFAULT_FLOW_CONFIG;
@@ -92,6 +94,25 @@ export class AMMArbitrageStrategy implements Strategy {
         if (adjustedPositionSize <= 0) {
             logger.debug({ sizeMultiplier, regime: flow?.regime }, 'AMM Arb: ⚠️ Position size zero after regime adjustment');
             return;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Risk Engine Approval
+        // ─────────────────────────────────────────────────────────────────────
+        const issuer = quoteIssuer ?? baseIssuer;
+        if (issuer) {
+            const riskIntent = {
+                issuer,
+                size: adjustedPositionSize,
+                potentialLoss: adjustedPositionSize * (this.config.stopLossBps / 10_000)
+            };
+            if (this.risk.approveIntent(riskIntent, this.pair) === false) {
+                logger.info({
+                    positionSize: adjustedPositionSize.toFixed(4),
+                    potentialLoss: riskIntent.potentialLoss.toFixed(4)
+                }, 'AMM Arb: ❌ Risk engine rejected trade intent');
+                return;
+            }
         }
 
         const side: 'buy' | 'sell' = diffBps > 0 ? 'buy' : 'sell';

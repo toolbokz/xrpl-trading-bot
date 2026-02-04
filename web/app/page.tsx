@@ -19,6 +19,7 @@ import { TradeTapePanel } from '../components/TradeTapePanel';
 import { LogsPanel } from '../components/LogsPanel';
 import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
 import { AnalyticsPanel } from '../components/AnalyticsPanel';
+import { AdaptivePanel } from '../components/AdaptivePanel';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -475,7 +476,10 @@ export default function Page() {
                 <FlowMetricsPanel pollInterval={2000} />
             }
             analyticsSidebar={
-                <AnalyticsPanel pollInterval={5000} />
+                <>
+                    <AnalyticsPanel pollInterval={5000} />
+                    <AdaptivePanel pollInterval={5000} />
+                </>
             }
             leftTop={
                 <OrderBookPanel
