@@ -47,7 +47,7 @@ export function ChartPanel({
                                 {formatPrice(currentPrice)}
                             </span>
                             <span className="text-[10px] text-slate-500">
-                                {quoteCurrency || 'QUOTE'}/XRP
+                                {quoteCurrency || 'QUOTE'}
                             </span>
                         </div>
                     )}

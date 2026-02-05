@@ -78,6 +78,11 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
             wickUpColor: BINANCE_COLORS.candle.wickUp,
             wickDownColor: BINANCE_COLORS.candle.wickDown,
             borderVisible: false,
+            priceFormat: {
+                type: 'price',
+                precision: 4,
+                minMove: 0.0001,
+            },
         });
 
         chartRef.current = chart;

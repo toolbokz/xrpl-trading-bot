@@ -149,7 +149,12 @@ export async function fetchHistoricalTrades(
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-            logger.warn({ status: response.status, pairKey }, '[HistoricalTrades] API returned non-OK status');
+            // 404 is expected for pairs not in the XRPL Data API (like newer tokens)
+            if (response.status === 404) {
+                logger.debug({ status: response.status, pairKey }, '[HistoricalTrades] Pair not available in API (expected for newer tokens)');
+            } else {
+                logger.warn({ status: response.status, pairKey }, '[HistoricalTrades] API returned non-OK status');
+            }
             return cached?.trades ?? [];
         }
 
