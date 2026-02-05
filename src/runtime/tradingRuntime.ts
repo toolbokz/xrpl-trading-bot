@@ -780,6 +780,13 @@ export class TradingRuntime {
     }
 
     /**
+     * Get the order book tracker state (for API routes in single-process mode).
+     */
+    getOrderBookState(): import('../utils/types').OrderBookState | null {
+        return this.tracker?.getState() ?? null;
+    }
+
+    /**
      * Get the current risk status for dashboard/API.
      */
     getRiskStatus(): {

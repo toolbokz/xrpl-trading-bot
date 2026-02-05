@@ -6,19 +6,20 @@ import { getSharedClient } from '../../../lib/xrplClient';
 import { logger } from '../../../../src/analytics/logger';
 import { walletFromSecretNumbers } from '../../../../src/xrpl/wallet';
 import { decryptFromBase64 } from '../../../../src/security/secretBox';
+import {
+    isSingleProcessMode,
+    getWalletFromRuntime,
+    isRuntimeWarmingUp,
+    initRuntimeBridge,
+    getRuntimeInstance,
+} from '../../../lib/runtimeBridge';
 
 export const config = {
     api: { bodyParser: false },
 };
 
-// Known NZD gateways on mainnet
-const MAINNET_NZD_ISSUERS = [
-    'rvYAfWj5gh67oV6fW32ZzP3Aw4Eubs59B', // Bitstamp
-    'rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq', // GateHub
-];
-
-// Known USD gateways for fallback (USD -> NZD conversion)
-const MAINNET_USD_ISSUERS = [
+// Known USD gateways for XRP/USD rate lookup
+const USD_ISSUERS = [
     'rvYAfWj5gh67oV6fW32ZzP3Aw4Eubs59B', // Bitstamp
     'rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq', // GateHub
     'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De', // RLUSD (Ripple USD)
@@ -26,9 +27,6 @@ const MAINNET_USD_ISSUERS = [
 
 // Testnet RLUSD faucet issuer
 const TESTNET_RLUSD_ISSUER = 'rnEVYfAWYP5HpPaWQiPSJMyDeUiEJ6zhy2';
-
-// Approximate USD to NZD conversion (updated periodically)
-const USD_TO_NZD_RATE = 1.62;
 
 interface TrustLineBalance {
     currency: string;
@@ -118,6 +116,15 @@ async function fetchXrpRate(client: Client, currency: string, issuers: string[])
 }
 
 async function handler(req: LocalRequest, res: NextApiResponse) {
+    // Initialize runtime bridge in single-process mode
+    if (isSingleProcessMode()) {
+        try {
+            await initRuntimeBridge();
+        } catch (err) {
+            logger.warn({ err }, '[Wallet] Runtime bridge init failed');
+        }
+    }
+
     try {
         const cfg = loadConfig();
         const network = cfg.xrpl.network?.toUpperCase() || 'MAINNET';
@@ -126,6 +133,76 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
         const queryBase = typeof req.query.base === 'string' ? req.query.base : null;
         const queryQuote = typeof req.query.quote === 'string' ? req.query.quote : null;
         const queryIssuer = typeof req.query.issuer === 'string' ? req.query.issuer : null;
+
+        // In single-process mode, try to get wallet from runtime first
+        if (isSingleProcessMode()) {
+            const runtimeWallet = getWalletFromRuntime();
+            const runtime = getRuntimeInstance();
+            if (runtimeWallet && runtime) {
+                // Get client from runtime
+                const client = runtime.getClient();
+                if (client?.isConnected()) {
+                    // We have the address, fetch balance using runtime's client
+                    let balance = 0;
+                    try {
+                        const accountInfo = await client.request({
+                            command: 'account_info',
+                            account: runtimeWallet.address,
+                            ledger_index: 'validated',
+                        });
+                        balance = Number(accountInfo.result.account_data.Balance) / 1_000_000;
+                    } catch (err: unknown) {
+                        const errData = (err as any)?.data?.error;
+                        if (errData !== 'actNotFound') {
+                            logger.error({ err }, 'Failed to fetch account info via runtime');
+                        }
+                    }
+
+                    // Fetch trust lines via runtime client
+                    const trustLines = await fetchAccountLines(client, runtimeWallet.address);
+
+                    // Get quote currency info
+                    const quoteCurrency = queryQuote || cfg.tradingPair.quoteCurrency || '';
+                    const quoteIssuer = queryIssuer || cfg.tradingPair.quoteIssuer || cfg.tradingPair.issuer || '';
+                    const baseCurrency = queryBase || cfg.tradingPair.baseCurrency || 'XRP';
+
+                    // Find quote balance
+                    let quoteBalance = 0;
+                    let quoteCurrencyDisplay = quoteCurrency;
+
+                    if (quoteCurrency.toUpperCase() !== 'XRP') {
+                        const quoteLine = trustLines.find(
+                            (line) => currencyMatches(line.currency, quoteCurrency) && line.issuer === quoteIssuer
+                        );
+                        if (quoteLine) {
+                            quoteBalance = quoteLine.balance;
+                            quoteCurrencyDisplay = decodeCurrency(quoteLine.currency);
+                        }
+                    }
+
+                    // Get USD rate
+                    const usdRate = await fetchXrpRate(client, 'USD', USD_ISSUERS);
+
+                    return res.status(200).json({
+                        address: runtimeWallet.address,
+                        balance,
+                        reserve: cfg.risk.reserveFloorXRP || 10,
+                        quoteCurrency: quoteCurrencyDisplay,
+                        quoteBalance,
+                        baseCurrency,
+                        baseBalance: baseCurrency.toUpperCase() === 'XRP' ? balance : 0,
+                        usdRate,
+                        network,
+                        trustLines: trustLines.map(tl => ({
+                            currency: decodeCurrency(tl.currency),
+                            issuer: tl.issuer,
+                            balance: tl.balance,
+                        })),
+                        fromRuntime: true,
+                    });
+                }
+            }
+        }
 
         // Use shared client to avoid rate limiting
         const client = await getSharedClient(cfg.xrpl.endpoint);
@@ -167,7 +244,7 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
             return res.status(200).json({
                 address: null,
                 balance: 0,
-                nzdRate: 0.85,
+                usdRate: null,
                 network,
             });
         }
@@ -267,31 +344,13 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
             }
         }
 
-        // Try to get XRP/NZD rate
-        let nzdRate = 0.85; // Default fallback rate
+        // Try to get XRP/USD rate from XRPL DEX
+        let usdRate: number | null = null;
         const isMainnet = cfg.xrpl.network === 'mainnet';
 
-        // Build list of NZD issuers to try
-        const nzdIssuers: string[] = [];
-        const configIssuer = cfg.tradingPair.quoteIssuer || cfg.tradingPair.issuer;
-        if (configIssuer) {
-            nzdIssuers.push(configIssuer);
-        }
         if (isMainnet) {
-            nzdIssuers.push(...MAINNET_NZD_ISSUERS.filter(i => i !== configIssuer));
-        }
-
-        // Try NZD first
-        const directNzdRate = await fetchXrpRate(client, 'NZD', nzdIssuers);
-        if (directNzdRate !== null) {
-            nzdRate = directNzdRate;
-        } else if (isMainnet) {
-            // Fallback: Try USD and convert to NZD
-            const usdRate = await fetchXrpRate(client, 'USD', MAINNET_USD_ISSUERS);
-            if (usdRate !== null) {
-                nzdRate = usdRate * USD_TO_NZD_RATE;
-                logger.debug({ usdRate, nzdRate }, 'Using USD rate for NZD conversion');
-            }
+            // Fetch XRP/USD rate from mainnet DEX
+            usdRate = await fetchXrpRate(client, 'USD', USD_ISSUERS);
         }
 
         // Don't disconnect - using shared client
@@ -299,7 +358,7 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
         res.status(200).json({
             address,
             balance,
-            nzdRate,
+            usdRate, // null if unavailable
             network,
             // Pair balances
             tradingPair: {
@@ -318,7 +377,7 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
             error: errorMessage,
             address: null,
             balance: 0,
-            nzdRate: 0.85,
+            usdRate: null,
             network: 'UNKNOWN',
             tradingPair: { base: 'XRP', quote: '' },
             baseBalance: 0,

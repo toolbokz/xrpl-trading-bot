@@ -6,6 +6,7 @@ import { nextBackoffWithJitter, BackoffState } from '../utils/backoff';
 import { sleep } from '../utils/sleep';
 import { getWalletAddress } from './wallet';
 import { toXrplCurrency } from './currency';
+import { getXrplClient, getConnectionState, isConnected as isSharedConnected } from './sharedClient';
 
 export type XRPLEvents = {
     ledger: (ledger: LedgerStreamResponse) => void;
@@ -40,16 +41,17 @@ const getBotAddressSafe = (): string | null => {
 };
 
 export class XRPLWebSocket extends EventEmitter {
-    private client: Client;
+    private client: Client | null = null;
     private backoff: BackoffState = { attempt: 0, delayMs: 0 };
     private reconnects = 0;
     private connected = false;
     private currentLedgerIndex = 0;
     private reconnecting = false;
+    private handlersAttached = false;
 
     constructor(private readonly cfg: XRPLConfig) {
         super();
-        this.client = new Client(cfg.endpoint, { connectionTimeout: 10_000 });
+        // Client is now obtained from shared singleton on connect()
     }
 
     async connect(): Promise<void> {
@@ -58,21 +60,36 @@ export class XRPLWebSocket extends EventEmitter {
 
     async disconnect(): Promise<void> {
         if (this.connected) {
-            await this.client.disconnect();
+            // Don't disconnect shared client - just mark as disconnected locally
+            // The shared client is managed globally
             this.connected = false;
+            this.handlersAttached = false;
+            // Remove our listeners from the shared client
+            if (this.client) {
+                this.client.removeAllListeners('ledgerClosed');
+                this.client.removeAllListeners('transaction');
+            }
         }
     }
 
     isConnected(): boolean {
-        return this.connected && this.client.isConnected();
+        return this.connected && (this.client?.isConnected() ?? false);
     }
 
     getClient(): Client {
+        if (!this.client) {
+            throw new Error('XRPL client not connected - call connect() first');
+        }
         return this.client;
     }
 
     getLedgerIndex(): number {
         return this.currentLedgerIndex;
+    }
+
+    /** Get connection state from the shared client */
+    getConnectionState() {
+        return getConnectionState();
     }
 
     async subscribe(_pair?: TradingPair): Promise<void> {
@@ -134,9 +151,10 @@ export class XRPLWebSocket extends EventEmitter {
     }
 
     async getAMMInfo(asset: { currency: string; issuer?: string }, asset2: { currency: string; issuer?: string }): Promise<any> {
+        await this.ensureConnected();
         const assetReq = toBookCurrency(asset.currency, asset.issuer);
         const asset2Req = toBookCurrency(asset2.currency, asset2.issuer);
-        const res = await this.client.request({
+        const res = await this.client!.request({
             command: 'amm_info',
             asset: assetReq,
             asset2: asset2Req,
@@ -146,7 +164,8 @@ export class XRPLWebSocket extends EventEmitter {
 
     private async establish(): Promise<void> {
         try {
-            await this.client.connect();
+            // Use the shared client singleton instead of creating a new one
+            this.client = await getXrplClient();
             this.connected = true;
             this.backoff = { attempt: 0, delayMs: 0 };
             this.reconnects = 0;
@@ -159,12 +178,14 @@ export class XRPLWebSocket extends EventEmitter {
                     command: 'subscribe',
                     streams: ['ledger'],
                 });
-                logger.info('Subscribed to ledger stream - order book data will be polled');
+                const state = getConnectionState();
+                logger.info({ endpoint: state.endpoint }, 'Subscribed to ledger stream - order book data will be polled');
             } catch (err) {
                 logger.warn({ err }, 'Failed to subscribe to ledger stream - will continue anyway');
             }
 
-            logger.info({ endpoint: this.cfg.endpoint }, 'XRPL websocket connected');
+            const state = getConnectionState();
+            logger.info({ endpoint: state.endpoint }, 'XRPL websocket connected via shared client');
         } catch (err) {
             logger.error({ err }, 'Initial XRPL connect failed');
             await this.handleReconnect();
@@ -172,14 +193,12 @@ export class XRPLWebSocket extends EventEmitter {
     }
 
     private attachHandlers(): void {
-        this.client.removeAllListeners();
-        this.client.on('connected', () => {
-            this.connected = true;
-        });
-        this.client.on('disconnected', async () => {
-            this.connected = false;
-            await this.handleReconnect();
-        });
+        if (!this.client || this.handlersAttached) return;
+
+        // Don't remove all listeners - other code may be using the shared client
+        // Just add our specific listeners
+        this.handlersAttached = true;
+
         this.client.on('ledgerClosed', (ledger: LedgerStreamResponse) => {
             this.currentLedgerIndex = ledger.ledger_index;
             this.emitEvent('ledger', ledger);
@@ -187,9 +206,13 @@ export class XRPLWebSocket extends EventEmitter {
         this.client.on('transaction', (tx: TransactionStream) => {
             this.emitEvent('transaction', tx);
         });
-        this.client.on('error', async (err) => {
-            logger.error({ err }, 'XRPL websocket error');
-            await this.handleReconnect();
+
+        // Monitor for disconnection - the shared client handles reconnection automatically
+        // but we need to update our local state
+        this.client.on('disconnected', () => {
+            this.connected = false;
+            this.handlersAttached = false;
+            logger.warn('XRPL shared client disconnected - will reconnect automatically');
         });
     }
 
@@ -200,11 +223,13 @@ export class XRPLWebSocket extends EventEmitter {
     private async handleReconnect(): Promise<void> {
         if (this.reconnecting) return;
         this.reconnecting = true;
+
         if (this.reconnects >= this.cfg.maxReconnects) {
             logger.error('XRPL reconnect limit reached');
             this.reconnecting = false;
             return;
         }
+
         this.reconnects += 1;
         // Use jittered backoff to prevent reconnect storms (cap at 15s)
         this.backoff = nextBackoffWithJitter(
@@ -216,14 +241,19 @@ export class XRPLWebSocket extends EventEmitter {
         this.emit('reconnect', this.reconnects);
         logger.warn({ reconnects: this.reconnects, delay: this.backoff.delayMs }, 'XRPL reconnecting with jittered backoff');
         await sleep(this.backoff.delayMs);
-        this.client = new Client(this.cfg.endpoint, { connectionTimeout: 10_000 });
+
+        // Use shared client - it handles endpoint rotation and cooldowns internally
+        this.handlersAttached = false;
         this.reconnecting = false;
         await this.establish();
     }
 
     private async ensureConnected(): Promise<void> {
-        if (this.connected) return;
-        await this.handleReconnect();
+        // Check if shared client is connected
+        if (this.connected && isSharedConnected()) return;
+
+        // Re-establish connection via shared client
+        await this.establish();
     }
 
     private async safeRequest(request: SubscribeRequest | Parameters<Client['request']>[0]): Promise<any> {
@@ -252,7 +282,7 @@ export class XRPLWebSocket extends EventEmitter {
         try {
             await this.ensureConnected();
             logger.info({ request }, 'XRPL client.request');
-            return await this.client.request(request);
+            return await this.client!.request(request);
         } catch (err) {
             logger.error({ err, request }, 'XRPL request failed');
             await this.handleReconnect();

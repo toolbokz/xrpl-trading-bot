@@ -2,6 +2,7 @@ import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
 import { FlowMetrics, FlowRegime, getRegimeDescription } from '../../../../src/market/flowMetrics';
+import { isSingleProcessMode, getFlowFromRuntime, initRuntimeBridge, getRuntimeInstance } from '../../../lib/runtimeBridge';
 
 export const config = {
     api: { bodyParser: false },
@@ -48,10 +49,34 @@ export interface FlowResponse {
  * Returns current flow metrics computed from trade tape and order book.
  * Used by UI to display market regime, imbalance gauges, and depth charts.
  */
-function handler(req: LocalRequest, res: NextApiResponse<FlowResponse>) {
+async function handler(req: LocalRequest, res: NextApiResponse<FlowResponse>) {
+    // Initialize runtime bridge in single-process mode
+    if (isSingleProcessMode()) {
+        try {
+            await initRuntimeBridge();
+        } catch (err) {
+            // Fall through to try ensureRuntimeHooks
+        }
+    }
+
     try {
-        const runtime = ensureRuntimeHooks();
-        const flowMetrics = runtime.getFlowMetrics();
+        let flowMetrics: FlowMetrics | null = null;
+
+        // In single-process mode, prefer runtime bridge
+        if (isSingleProcessMode()) {
+            flowMetrics = getFlowFromRuntime();
+            // If not available from bridge, try runtime instance
+            if (!flowMetrics) {
+                const runtime = getRuntimeInstance();
+                flowMetrics = runtime?.getFlowMetrics() ?? null;
+            }
+        }
+
+        // Fallback to old hook system (for dual-process mode)
+        if (!flowMetrics) {
+            const runtime = ensureRuntimeHooks();
+            flowMetrics = runtime.getFlowMetrics();
+        }
 
         const response: FlowResponse = {
             requestId: req.requestId,

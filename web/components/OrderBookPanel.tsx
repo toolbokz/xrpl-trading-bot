@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import clsx from 'clsx';
-import { BookOpen, RefreshCw } from 'lucide-react';
+import { BookOpen, RefreshCw, Loader2, AlertCircle } from 'lucide-react';
 import { Panel, PanelAction, PanelBadge } from './Panel';
 
 interface OrderBookEntry {
@@ -17,6 +17,7 @@ interface OrderBookPanelProps {
     midPrice: number | null;
     spreadBps: number;
     loading?: boolean;
+    error?: string | null;
     onRefresh?: () => void;
     maxRows?: number;
 }
@@ -27,6 +28,7 @@ export function OrderBookPanel({
     midPrice,
     spreadBps,
     loading,
+    error,
     onRefresh,
     maxRows = 12,
 }: OrderBookPanelProps) {
@@ -42,6 +44,8 @@ export function OrderBookPanel({
 
     const formatPrice = (p: number) => p >= 1 ? p.toFixed(4) : p.toFixed(6);
     const formatSize = (s: number) => s.toFixed(2);
+
+    const isEmpty = bids.length === 0 && asks.length === 0;
 
     return (
         <Panel
@@ -64,8 +68,39 @@ export function OrderBookPanel({
                     )}
                 </>
             }
-            bodyClassName="p-0 flex flex-col"
+            bodyClassName="p-0 flex flex-col relative"
         >
+            {/* Loading overlay */}
+            {loading && isEmpty && (
+                <div className="absolute inset-0 flex items-center justify-center bg-surface/80 z-10">
+                    <div className="flex items-center gap-2 text-slate-400">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span className="text-xs">Loading order book...</span>
+                    </div>
+                </div>
+            )}
+
+            {/* Error state */}
+            {error && (
+                <div className="absolute inset-0 flex items-center justify-center bg-surface/80 z-10">
+                    <div className="flex items-center gap-2 text-red-400">
+                        <AlertCircle className="w-4 h-4" />
+                        <span className="text-xs">{error}</span>
+                    </div>
+                </div>
+            )}
+
+            {/* Empty state */}
+            {!loading && !error && isEmpty && (
+                <div className="absolute inset-0 flex items-center justify-center bg-surface/80 z-10">
+                    <div className="text-center text-slate-500">
+                        <BookOpen className="w-6 h-6 mx-auto mb-1 opacity-50" />
+                        <p className="text-xs">No order book data</p>
+                        <p className="text-[10px] mt-0.5">Select a trading pair</p>
+                    </div>
+                </div>
+            )}
+
             {/* Column headers */}
             <div className="grid grid-cols-3 gap-1 px-3 py-1.5 text-[10px] text-slate-500 uppercase tracking-wider border-b border-white/5">
                 <div>Price</div>

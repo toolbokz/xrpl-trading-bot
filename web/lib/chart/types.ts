@@ -111,41 +111,43 @@ export interface AdaptiveScalingOptions {
     thickMicroCandles: boolean;
 }
 
-/** Default adaptive scaling options (Binance-like) */
+/** Default adaptive scaling options (TradingView-like professional look) */
 export const DEFAULT_SCALING_OPTIONS: AdaptiveScalingOptions = {
     maxCachedPairs: 100,
     logScaleMagnitudeThreshold: 3, // 3 orders of magnitude
     logScalePrecisionThreshold: 8, // 8 decimal places
-    baseBarSpacing: 6,
-    spacingGrowthPerDecimal: 0.5,
-    minBarSpacing: 4,
-    maxBarSpacing: 24,
-    thickMicroCandles: true,
+    baseBarSpacing: 6,             // Slim professional candles
+    spacingGrowthPerDecimal: 0.15,
+    minBarSpacing: 2,              // Never below 2px for readability
+    maxBarSpacing: 10,             // Never above 10px for cleanliness
+    thickMicroCandles: false,
 };
 
-/** Binance color scheme */
+/** TradingView-inspired color scheme - professional muted tones */
 export const BINANCE_COLORS = {
-    up: '#0ECB81',
-    down: '#F6465D',
-    upTransparent: 'rgba(14, 203, 129, 0.5)',
-    downTransparent: 'rgba(246, 70, 93, 0.5)',
-    background: '#0B0E11',
-    grid: '#1E2329',
-    gridLight: '#2B3139',
-    text: '#D1D4DC',
-    textMuted: '#848E9C',
-    border: '#2B3139',
-    crosshair: '#758696',
-    /** Candle-specific colors */
+    // Primary candle colors (85% opacity feel)
+    up: '#22c55e',              // Emerald green - professional
+    down: '#ef4444',            // Soft red - not harsh
+    upTransparent: 'rgba(34, 197, 94, 0.4)',
+    downTransparent: 'rgba(239, 68, 68, 0.4)',
+    // Chart background
+    background: '#131722',      // TradingView dark
+    grid: '#1e222d',            // Subtle grid
+    gridLight: '#2a2e39',
+    text: '#d1d4dc',
+    textMuted: '#787b86',
+    border: '#2a2e39',
+    crosshair: '#9598a1',
+    /** Candle-specific colors - crisp wicks at 100% opacity */
     candle: {
-        up: '#0ECB81',
-        down: '#F6465D',
-        wickUp: '#0ECB81',
-        wickDown: '#F6465D',
+        up: '#22c55e',          // Emerald - body
+        down: '#ef4444',        // Soft red - body
+        wickUp: '#22c55e',      // Same as body for clean look
+        wickDown: '#ef4444',    // Same as body for clean look
     },
-    /** Volume-specific colors */
+    /** Volume-specific colors - subtle 30% opacity */
     volume: {
-        up: 'rgba(14, 203, 129, 0.5)',
-        down: 'rgba(246, 70, 93, 0.5)',
+        up: 'rgba(34, 197, 94, 0.30)',
+        down: 'rgba(239, 68, 68, 0.30)',
     },
 };

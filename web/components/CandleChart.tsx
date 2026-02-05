@@ -1,19 +1,13 @@
 "use client";
 
 import { useEffect, useRef } from 'react';
-import { createChart, CandlestickData, IChartApi, ISeriesApi } from 'lightweight-charts';
+import { createChart, CandlestickData, IChartApi, ISeriesApi, LineStyle } from 'lightweight-charts';
+import { BINANCE_COLORS } from '../lib/chart/types';
+import { calculateDynamicBarSpacing, BINANCE_SPACING } from '../lib/chart/spacing';
 
 export type CandleChartProps = {
     data: CandlestickData[];
     height?: number | string;
-};
-
-const BINANCE_COLORS = {
-    up: '#0ECB81',
-    down: '#F6465D',
-    background: '#0B0E11',
-    grid: '#1E2329',
-    text: '#D1D4DC',
 };
 
 export function CandleChart({ data, height = 320 }: CandleChartProps) {
@@ -25,54 +19,64 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
     useEffect(() => {
         if (!containerRef.current) return;
 
-        // Get actual pixel height from container
+        // Get actual pixel dimensions
+        const containerWidth = containerRef.current.clientWidth || 600;
         const containerHeight = containerRef.current.clientHeight || (typeof height === 'number' ? height : 320);
+        const dataLength = data.length || 50;
+
+        // Calculate dynamic pixel-aware spacing
+        const dynamicSpacing = calculateDynamicBarSpacing(containerWidth, dataLength);
 
         const chart = createChart(containerRef.current, {
-            width: containerRef.current.clientWidth || 600,
+            width: containerWidth,
             height: containerHeight,
             layout: {
                 background: { color: BINANCE_COLORS.background },
                 textColor: BINANCE_COLORS.text,
+                fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+                fontSize: 11,
             },
             grid: {
-                vertLines: { color: BINANCE_COLORS.grid },
-                horzLines: { color: BINANCE_COLORS.grid },
+                vertLines: { color: BINANCE_COLORS.grid, style: LineStyle.Solid, visible: true },
+                horzLines: { color: BINANCE_COLORS.grid, style: LineStyle.Solid, visible: true },
             },
             timeScale: {
-                borderColor: BINANCE_COLORS.grid,
+                borderColor: BINANCE_COLORS.border,
                 timeVisible: true,
                 secondsVisible: false,
+                barSpacing: dynamicSpacing,
+                minBarSpacing: BINANCE_SPACING.MIN_CLAMP,
+                rightOffset: 8,
             },
             rightPriceScale: {
-                borderColor: BINANCE_COLORS.grid,
+                borderColor: BINANCE_COLORS.border,
                 scaleMargins: {
-                    top: 0.1,
-                    bottom: 0.1,
+                    top: 0.08,
+                    bottom: 0.08,
                 },
             },
             crosshair: {
                 mode: 1,
                 horzLine: {
-                    color: '#758696',
+                    color: BINANCE_COLORS.crosshair,
                     width: 1,
-                    style: 2,
-                    labelBackgroundColor: '#2B3139',
+                    style: LineStyle.Dashed,
+                    labelBackgroundColor: BINANCE_COLORS.gridLight,
                 },
                 vertLine: {
-                    color: '#758696',
+                    color: BINANCE_COLORS.crosshair,
                     width: 1,
-                    style: 2,
-                    labelBackgroundColor: '#2B3139',
+                    style: LineStyle.Dashed,
+                    labelBackgroundColor: BINANCE_COLORS.gridLight,
                 },
             },
         });
 
         const series = chart.addCandlestickSeries({
-            upColor: BINANCE_COLORS.up,
-            downColor: BINANCE_COLORS.down,
-            wickUpColor: BINANCE_COLORS.up,
-            wickDownColor: BINANCE_COLORS.down,
+            upColor: BINANCE_COLORS.candle.up,
+            downColor: BINANCE_COLORS.candle.down,
+            wickUpColor: BINANCE_COLORS.candle.wickUp,
+            wickDownColor: BINANCE_COLORS.candle.wickDown,
             borderVisible: false,
         });
 
@@ -81,10 +85,20 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
 
         const handleResize = () => {
             if (containerRef.current && chartRef.current) {
+                const newWidth = containerRef.current.clientWidth || 600;
                 const newHeight = containerRef.current.clientHeight || (typeof height === 'number' ? height : 320);
+                const currentDataLength = data.length || 50;
+
+                // Recalculate dynamic spacing on resize
+                const newDynamicSpacing = calculateDynamicBarSpacing(newWidth, currentDataLength);
+
                 chartRef.current.applyOptions({
-                    width: containerRef.current.clientWidth || 600,
+                    width: newWidth,
                     height: newHeight,
+                });
+                chartRef.current.timeScale().applyOptions({
+                    barSpacing: newDynamicSpacing,
+                    minBarSpacing: BINANCE_SPACING.MIN_CLAMP,
                 });
             }
         };

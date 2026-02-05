@@ -5,6 +5,8 @@
  * - midPrice, bid, ask, spreadBps
  * - Network availability status
  * - Warnings for low liquidity or missing markets
+ * 
+ * In SINGLE_PROCESS_MODE=true, returns data from TradingRuntime instead of XRPL.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -12,6 +14,12 @@ import { findPair, isValidPairKey, TradingPair } from '../../../../lib/tradingPa
 import { loadConfig } from '../../../../../src/config';
 import { getSharedClient, getCachedPrice, setCachedPrice } from '../../../../lib/xrplClient';
 import { logger } from '../../../../../src/analytics/logger';
+import {
+    isSingleProcessMode,
+    getOrderBookFromRuntime,
+    isRuntimeWarmingUp,
+    initRuntimeBridge,
+} from '../../../../lib/runtimeBridge';
 
 export const config = {
     api: { bodyParser: false },
@@ -32,6 +40,10 @@ interface PairSummary {
     availableOnNetwork: boolean;
     warnings: string[];
     cached?: boolean;
+    /** Single-process mode: runtime is still starting up */
+    warmingUp?: boolean;
+    /** Single-process mode: data sourced from runtime */
+    fromRuntime?: boolean;
 }
 
 interface ErrorResponse {
@@ -198,6 +210,15 @@ export default async function handler(
         });
     }
 
+    // Initialize runtime bridge in single-process mode
+    if (isSingleProcessMode()) {
+        try {
+            await initRuntimeBridge();
+        } catch (err) {
+            logger.warn({ err }, '[PairSummary] Runtime bridge init failed, falling back to direct XRPL');
+        }
+    }
+
     // Extract pair key from dynamic route
     const { key } = req.query;
     const pairKey = Array.isArray(key) ? key[0] : key;
@@ -222,6 +243,73 @@ export default async function handler(
     try {
         const cfg = loadConfig();
         const currentNetwork = cfg.xrpl.network as 'mainnet' | 'testnet';
+
+        // =====================================================================
+        // Single-process mode: use runtime state instead of XRPL calls
+        // =====================================================================
+        if (isSingleProcessMode()) {
+            const orderBook = getOrderBookFromRuntime(pairKey);
+            const warmingUp = isRuntimeWarmingUp();
+
+            // Return warming up response while runtime starts
+            if (warmingUp && !orderBook) {
+                const response: PairSummary = {
+                    pair: pairKey,
+                    midPrice: 0,
+                    bid: 0,
+                    ask: 0,
+                    spreadBps: 0,
+                    lastUpdated: Date.now(),
+                    network: currentNetwork,
+                    availableOnNetwork: false,
+                    warnings: ['Runtime starting - data will be available shortly'],
+                    warmingUp: true,
+                    fromRuntime: true,
+                };
+                return res.status(200).json(response);
+            }
+
+            // Return runtime data if available
+            if (orderBook && orderBook.bids.length > 0) {
+                const bestBid = orderBook.bids[0]?.price ?? 0;
+                const bestAsk = orderBook.asks[0]?.price ?? 0;
+                const midPrice = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestBid || bestAsk;
+
+                const response: PairSummary = {
+                    pair: pairKey,
+                    midPrice,
+                    bid: bestBid,
+                    ask: bestAsk,
+                    spreadBps: orderBook.spreadBps,
+                    lastUpdated: orderBook.lastUpdated,
+                    network: currentNetwork,
+                    availableOnNetwork: midPrice > 0,
+                    warnings: [],
+                    fromRuntime: true,
+                };
+                res.setHeader('Cache-Control', 'private, max-age=1');
+                return res.status(200).json(response);
+            }
+
+            // Fallback: no runtime data yet, return empty with warning
+            const response: PairSummary = {
+                pair: pairKey,
+                midPrice: 0,
+                bid: 0,
+                ask: 0,
+                spreadBps: 0,
+                lastUpdated: Date.now(),
+                network: currentNetwork,
+                availableOnNetwork: false,
+                warnings: ['Waiting for order book data from runtime'],
+                fromRuntime: true,
+            };
+            return res.status(200).json(response);
+        }
+
+        // =====================================================================
+        // Dual-process mode (legacy): direct XRPL calls
+        // =====================================================================
 
         // Check cache first
         const cached = getCachedPrice(pairKey);

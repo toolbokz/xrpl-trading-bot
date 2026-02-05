@@ -1,5 +1,16 @@
 "use client";
 
+/**
+ * AdaptiveCandleChart - Production-quality candlestick chart
+ * 
+ * Features:
+ * - Gap rendering with whitespace (no fake flat candles)
+ * - Incremental updates (no flicker on poll)
+ * - Separate volume pane with synced time scale
+ * - Micro-price formatting with scientific notation
+ * - Stable bar spacing based on interval
+ */
+
 import {
     useEffect,
     useRef,
@@ -15,9 +26,10 @@ import {
     HistogramData,
     Time,
     LineStyle,
+    WhitespaceData,
 } from 'lightweight-charts';
 
-// Import adaptive scaling system
+// Chart utilities
 import {
     OHLCData,
     VolumeData,
@@ -30,33 +42,47 @@ import {
     ScalingState,
     createInitialScalingState,
     computeScalingFromData,
-    processStreamingUpdate,
     handlePairChange,
-    toggleHeikinAshiMode,
     createChartScalingOptions,
     captureChartState,
     restoreChartState,
 } from '../lib/chart/adaptiveScaling';
 import {
     convertToHeikinAshi,
-    updateLastHACandle,
 } from '../lib/chart/heikinAshi';
 import {
     createVolumeFromCandles,
     normalizeVolumeData,
 } from '../lib/chart/volumeScaling';
+import {
+    buildSeriesDataWithGaps,
+    buildVolumeDataWithGaps,
+    shouldResetSeries,
+    getUpdateCandles,
+    formatPrice,
+    formatVolume,
+    ohlcToCandlestick,
+    getBarSpacingForInterval,
+    intervalToSeconds,
+    CandleSeriesData,
+    VolumeSeriesData,
+    isWhitespace,
+} from '../lib/chart/seriesUtils';
 
-/**
- * Enhanced CandleChart Props with adaptive scaling support
- */
+// =============================================================================
+// Types
+// =============================================================================
+
 export interface AdaptiveCandleChartProps {
     /** Candlestick data (OHLC format) */
     data: OHLCData[];
     /** Trading pair identifier (e.g., 'XRP/RLUSD') */
     pair?: string;
+    /** Chart interval (e.g., '1m', '5m', '1h') for stable spacing */
+    interval?: string;
     /** Chart height in pixels */
     height?: number;
-    /** Show volume histogram */
+    /** Show volume in separate pane */
     showVolume?: boolean;
     /** Volume data (optional, auto-generated if not provided) */
     volumeData?: VolumeData[];
@@ -72,45 +98,22 @@ export interface AdaptiveCandleChartProps {
     showLegend?: boolean;
 }
 
-/**
- * Convert OHLCData to lightweight-charts CandlestickData
- */
-function toChartData(data: OHLCData[]): CandlestickData[] {
-    return data.map((candle) => ({
-        time: candle.time as Time,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-    }));
+interface LegendData {
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
 }
 
-/**
- * Convert VolumeData to histogram data
- */
-function toHistogramData(
-    volumeData: VolumeData[],
-    candles: OHLCData[]
-): HistogramData[] {
-    return volumeData.map((vol, i) => {
-        const candle = candles[i];
-        const isBullish = candle ? candle.close >= candle.open : true;
-        return {
-            time: vol.time as Time,
-            value: vol.value,
-            color: isBullish
-                ? BINANCE_COLORS.volume.up
-                : BINANCE_COLORS.volume.down,
-        };
-    });
-}
+// =============================================================================
+// Component
+// =============================================================================
 
-/**
- * AdaptiveCandleChart - Enhanced candlestick chart with Binance-style scaling
- */
 export function AdaptiveCandleChart({
     data,
     pair = '',
+    interval = '1m',
     height = 400,
     showVolume = true,
     volumeData,
@@ -120,37 +123,53 @@ export function AdaptiveCandleChart({
     crosshair = true,
     showLegend = true,
 }: AdaptiveCandleChartProps) {
+    // =========================================================================
     // Refs
-    const containerRef = useRef<HTMLDivElement | null>(null);
-    const chartRef = useRef<IChartApi | null>(null);
+    // =========================================================================
+
+    // Chart containers
+    const priceContainerRef = useRef<HTMLDivElement | null>(null);
+    const volumeContainerRef = useRef<HTMLDivElement | null>(null);
+
+    // Chart instances
+    const priceChartRef = useRef<IChartApi | null>(null);
+    const volumeChartRef = useRef<IChartApi | null>(null);
+
+    // Series refs
     const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
     const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
 
+    // Incremental update tracking
+    const lastRenderedTimeRef = useRef<number | null>(null);
+    const lastDataRef = useRef<OHLCData[] | null>(null);
+    const lastIntervalRef = useRef<string>(interval);
+    const lastPairRef = useRef<string>(pair);
+
+    // Sync flag to prevent feedback loops
+    const isSyncingRef = useRef(false);
+
+    // =========================================================================
     // State
+    // =========================================================================
+
     const [scalingState, setScalingState] = useState<ScalingState>(() =>
         createInitialScalingState(pair, { ...DEFAULT_SCALING_OPTIONS, ...scalingOptions })
     );
-    const [legendData, setLegendData] = useState<{
-        open: number;
-        high: number;
-        low: number;
-        close: number;
-        volume: number;
-    } | null>(null);
+    const [legendData, setLegendData] = useState<LegendData | null>(null);
 
-    // Merged options
+    // =========================================================================
+    // Memoized Values
+    // =========================================================================
+
     const options = useMemo(
         () => ({ ...DEFAULT_SCALING_OPTIONS, ...scalingOptions }),
         [scalingOptions]
     );
 
-    // Process data based on mode
+    // Process data (Heikin-Ashi if enabled)
     const processedData = useMemo(() => {
         if (!data || data.length === 0) return [];
-        if (heikinAshi) {
-            return convertToHeikinAshi(data);
-        }
-        return data;
+        return heikinAshi ? convertToHeikinAshi(data) : data;
     }, [data, heikinAshi]);
 
     // Generate volume data if not provided
@@ -159,63 +178,89 @@ export function AdaptiveCandleChart({
         return createVolumeFromCandles(data);
     }, [data, volumeData]);
 
-    // Normalized volume data
+    // Normalized volume (cap spikes)
     const normalizedVolume = useMemo(() => {
         return normalizeVolumeData(effectiveVolumeData);
     }, [effectiveVolumeData]);
 
-    // Initialize chart
-    useEffect(() => {
-        if (!containerRef.current) return;
+    // Interval in seconds for gap calculation
+    const intervalSec = useMemo(() => intervalToSeconds(interval), [interval]);
 
+    // Heights for price and volume charts
+    const priceHeight = useMemo(() => {
+        return showVolume ? Math.floor(height * 0.75) : height;
+    }, [height, showVolume]);
+
+    const volumeHeight = useMemo(() => {
+        return showVolume ? Math.floor(height * 0.25) : 0;
+    }, [height, showVolume]);
+
+    // =========================================================================
+    // Chart Initialization
+    // =========================================================================
+
+    useEffect(() => {
+        if (!priceContainerRef.current) return;
+
+        const barSpacing = getBarSpacingForInterval(interval);
         const chartOptions = createChartScalingOptions(scalingState);
 
-        const chart = createChart(containerRef.current, {
+        // --- Price Chart ---
+        const priceChart = createChart(priceContainerRef.current, {
             layout: {
                 background: { color: BINANCE_COLORS.background },
                 textColor: BINANCE_COLORS.text,
+                fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+                fontSize: 11,
             },
             grid: {
-                vertLines: { color: BINANCE_COLORS.grid, style: LineStyle.Solid },
-                horzLines: { color: BINANCE_COLORS.grid, style: LineStyle.Solid },
+                vertLines: { color: BINANCE_COLORS.grid, style: LineStyle.Solid, visible: true },
+                horzLines: { color: BINANCE_COLORS.grid, style: LineStyle.Solid, visible: true },
             },
             timeScale: {
-                borderColor: BINANCE_COLORS.grid,
-                barSpacing: chartOptions.timeScale.barSpacing,
-                minBarSpacing: chartOptions.timeScale.minBarSpacing,
-                rightOffset: 12,
-                fixLeftEdge: true,
+                borderColor: BINANCE_COLORS.border,
+                barSpacing,
+                minBarSpacing: 2,
+                rightOffset: 8,
+                fixLeftEdge: false,
                 lockVisibleTimeRangeOnResize: true,
+                timeVisible: true,
+                secondsVisible: false,
+                tickMarkFormatter: (time: number) => {
+                    const date = new Date(time * 1000);
+                    return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+                },
             },
             rightPriceScale: {
-                borderColor: BINANCE_COLORS.grid,
+                borderColor: BINANCE_COLORS.border,
                 mode: chartOptions.priceScale.mode,
                 autoScale: true,
-                scaleMargins: {
-                    top: 0.1,
-                    bottom: showVolume ? 0.25 : 0.1,
-                },
+                alignLabels: true,
+                borderVisible: true,
+                scaleMargins: { top: 0.08, bottom: 0.08 },
             },
             crosshair: {
-                mode: crosshair ? 1 : 0, // Magnet mode
+                mode: crosshair ? 1 : 0,
                 vertLine: {
-                    color: BINANCE_COLORS.text,
+                    color: BINANCE_COLORS.crosshair,
                     width: 1,
                     style: LineStyle.Dashed,
-                    labelBackgroundColor: BINANCE_COLORS.grid,
+                    labelBackgroundColor: BINANCE_COLORS.gridLight,
                 },
                 horzLine: {
-                    color: BINANCE_COLORS.text,
+                    color: BINANCE_COLORS.crosshair,
                     width: 1,
                     style: LineStyle.Dashed,
-                    labelBackgroundColor: BINANCE_COLORS.grid,
+                    labelBackgroundColor: BINANCE_COLORS.gridLight,
                 },
             },
             autoSize: true,
+            handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+            handleScale: { axisPressedMouseMove: { time: true, price: true }, mouseWheel: true, pinch: true },
         });
 
         // Create candlestick series
-        const candleSeries = chart.addCandlestickSeries({
+        const candleSeries = priceChart.addCandlestickSeries({
             upColor: BINANCE_COLORS.candle.up,
             downColor: BINANCE_COLORS.candle.down,
             wickUpColor: BINANCE_COLORS.candle.wickUp,
@@ -228,286 +273,346 @@ export function AdaptiveCandleChart({
             },
         });
 
-        // Create volume histogram if enabled
+        priceChartRef.current = priceChart;
+        candleSeriesRef.current = candleSeries;
+
+        // --- Volume Chart (separate pane) ---
+        let volumeChart: IChartApi | null = null;
         let volumeSeries: ISeriesApi<'Histogram'> | null = null;
-        if (showVolume) {
-            volumeSeries = chart.addHistogramSeries({
-                priceFormat: {
-                    type: 'volume',
+
+        if (showVolume && volumeContainerRef.current) {
+            volumeChart = createChart(volumeContainerRef.current, {
+                layout: {
+                    background: { color: BINANCE_COLORS.background },
+                    textColor: BINANCE_COLORS.text,
+                    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+                    fontSize: 11,
                 },
-                priceScaleId: 'volume',
+                grid: {
+                    vertLines: { color: BINANCE_COLORS.grid, style: LineStyle.Solid, visible: true },
+                    horzLines: { color: BINANCE_COLORS.grid, style: LineStyle.Solid, visible: false },
+                },
+                timeScale: {
+                    borderColor: BINANCE_COLORS.border,
+                    barSpacing,
+                    minBarSpacing: 2,
+                    rightOffset: 8,
+                    fixLeftEdge: false,
+                    lockVisibleTimeRangeOnResize: true,
+                    timeVisible: false,
+                    visible: true,
+                },
+                rightPriceScale: {
+                    borderColor: BINANCE_COLORS.border,
+                    autoScale: true,
+                    scaleMargins: { top: 0.1, bottom: 0 },
+                },
+                crosshair: {
+                    mode: crosshair ? 1 : 0,
+                    vertLine: {
+                        color: BINANCE_COLORS.crosshair,
+                        width: 1,
+                        style: LineStyle.Dashed,
+                        labelVisible: false,
+                    },
+                    horzLine: {
+                        color: BINANCE_COLORS.crosshair,
+                        width: 1,
+                        style: LineStyle.Dashed,
+                        labelBackgroundColor: BINANCE_COLORS.gridLight,
+                    },
+                },
+                autoSize: true,
+                handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+                handleScale: { axisPressedMouseMove: { time: true, price: true }, mouseWheel: true, pinch: true },
             });
 
-            // Set scale margins for volume pane
-            chart.priceScale('volume').applyOptions({
-                scaleMargins: {
-                    top: 0.8,
-                    bottom: 0,
-                },
+            volumeSeries = volumeChart.addHistogramSeries({
+                color: BINANCE_COLORS.volume.up,
+                priceFormat: { type: 'volume' },
+                lastValueVisible: false,
+                priceLineVisible: false,
             });
+
+            volumeChartRef.current = volumeChart;
+            volumeSeriesRef.current = volumeSeries;
+
+            // --- Sync time scales between price and volume charts ---
+            const syncTimeScales = () => {
+                if (isSyncingRef.current) return;
+                isSyncingRef.current = true;
+
+                const priceTimeScale = priceChart.timeScale();
+                const volumeTimeScale = volumeChart!.timeScale();
+
+                const visibleRange = priceTimeScale.getVisibleRange();
+                if (visibleRange) {
+                    volumeTimeScale.setVisibleRange(visibleRange);
+                }
+
+                const scrollPos = priceTimeScale.scrollPosition();
+                volumeTimeScale.scrollToPosition(scrollPos, false);
+
+                isSyncingRef.current = false;
+            };
+
+            const syncFromVolume = () => {
+                if (isSyncingRef.current) return;
+                isSyncingRef.current = true;
+
+                const priceTimeScale = priceChart.timeScale();
+                const volumeTimeScale = volumeChart!.timeScale();
+
+                const visibleRange = volumeTimeScale.getVisibleRange();
+                if (visibleRange) {
+                    priceTimeScale.setVisibleRange(visibleRange);
+                }
+
+                const scrollPos = volumeTimeScale.scrollPosition();
+                priceTimeScale.scrollToPosition(scrollPos, false);
+
+                isSyncingRef.current = false;
+            };
+
+            priceChart.timeScale().subscribeVisibleTimeRangeChange(syncTimeScales);
+            volumeChart.timeScale().subscribeVisibleTimeRangeChange(syncFromVolume);
         }
 
-        chartRef.current = chart;
-        candleSeriesRef.current = candleSeries;
-        volumeSeriesRef.current = volumeSeries;
-
-        // Subscribe to crosshair move for legend
+        // --- Crosshair legend ---
         if (showLegend) {
-            chart.subscribeCrosshairMove((param) => {
+            priceChart.subscribeCrosshairMove((param) => {
                 if (!param || !param.time) {
-                    // Show latest data when not hovering
                     const lastCandle = processedData[processedData.length - 1];
-                    const lastVolume = effectiveVolumeData[effectiveVolumeData.length - 1];
+                    const lastVol = normalizedVolume[normalizedVolume.length - 1];
                     if (lastCandle) {
                         setLegendData({
                             open: lastCandle.open,
                             high: lastCandle.high,
                             low: lastCandle.low,
                             close: lastCandle.close,
-                            volume: lastVolume?.value ?? 0,
+                            volume: lastVol?.value ?? 0,
                         });
                     }
                     return;
                 }
 
                 const candleData = param.seriesData.get(candleSeries) as CandlestickData | undefined;
-                const volumeDataPoint = volumeSeries
+                const volData = volumeSeries
                     ? (param.seriesData.get(volumeSeries) as HistogramData | undefined)
                     : undefined;
 
-                if (candleData) {
+                if (candleData && 'open' in candleData) {
                     setLegendData({
                         open: candleData.open,
                         high: candleData.high,
                         low: candleData.low,
                         close: candleData.close,
-                        volume: volumeDataPoint?.value ?? 0,
+                        volume: volData?.value ?? 0,
                     });
                 }
             });
         }
 
-        // Handle resize
+        // --- Resize handler ---
         const handleResize = () => {
-            if (containerRef.current && chartRef.current) {
-                const { clientWidth } = containerRef.current;
-                chartRef.current.applyOptions({ width: clientWidth });
+            if (priceContainerRef.current && priceChartRef.current) {
+                priceChartRef.current.applyOptions({ width: priceContainerRef.current.clientWidth });
+            }
+            if (volumeContainerRef.current && volumeChartRef.current) {
+                volumeChartRef.current.applyOptions({ width: volumeContainerRef.current.clientWidth });
             }
         };
-        handleResize();
         window.addEventListener('resize', handleResize);
 
         return () => {
             window.removeEventListener('resize', handleResize);
-            chart.remove();
-            chartRef.current = null;
+            priceChart.remove();
+            volumeChart?.remove();
+            priceChartRef.current = null;
+            volumeChartRef.current = null;
             candleSeriesRef.current = null;
             volumeSeriesRef.current = null;
+            lastRenderedTimeRef.current = null;
+            lastDataRef.current = null;
         };
-    }, []); // Only run once on mount
+    }, []);
 
-    // Update data and scaling when data changes
+    // =========================================================================
+    // Data Updates (Incremental)
+    // =========================================================================
+
     useEffect(() => {
-        if (!candleSeriesRef.current || !chartRef.current) return;
+        if (!candleSeriesRef.current || !priceChartRef.current) return;
         if (!processedData || processedData.length === 0) return;
 
-        // Capture current state before update
-        const stateSnapshot = captureChartState(chartRef.current);
+        const chart = priceChartRef.current;
+        const candleSeries = candleSeriesRef.current;
+        const volumeChart = volumeChartRef.current;
+        const volumeSeries = volumeSeriesRef.current;
 
-        // Compute new scaling
-        const scalingResult = computeScalingFromData(processedData, scalingState, options);
+        const intervalChanged = interval !== lastIntervalRef.current;
+        const pairChanged = pair !== lastPairRef.current;
+        const needsReset = intervalChanged || pairChanged || shouldResetSeries(lastDataRef.current, processedData);
 
-        // Update series data
-        candleSeriesRef.current.setData(toChartData(processedData));
+        if (needsReset) {
+            // --- Full setData ---
+            const seriesData = buildSeriesDataWithGaps(processedData, intervalSec);
+            candleSeries.setData(seriesData as CandlestickData[]);
 
-        // Update volume if enabled
-        if (showVolume && volumeSeriesRef.current) {
-            volumeSeriesRef.current.setData(
-                toHistogramData(normalizedVolume, processedData)
-            );
-        }
-
-        // Apply scaling changes if needed
-        if (scalingResult.changed) {
-            const chartOptions = createChartScalingOptions(scalingResult.state);
-
-            // Update price format
-            candleSeriesRef.current.applyOptions({
-                priceFormat: {
-                    type: 'price',
-                    precision: chartOptions.priceFormat.precision,
-                    minMove: chartOptions.priceFormat.minMove,
-                },
-            });
-
-            // Update time scale
-            chartRef.current.timeScale().applyOptions({
-                barSpacing: chartOptions.timeScale.barSpacing,
-                minBarSpacing: chartOptions.timeScale.minBarSpacing,
-            });
-
-            // Update price scale mode
-            chartRef.current.applyOptions({
-                rightPriceScale: {
-                    mode: chartOptions.priceScale.mode,
-                },
-            });
-
-            // Update state
-            setScalingState(scalingResult.state);
-
-            // Notify callback
-            if (onScalingChange) {
-                onScalingChange(scalingResult.state);
+            if (showVolume && volumeSeries) {
+                const volData = buildVolumeDataWithGaps(processedData, normalizedVolume, intervalSec);
+                volumeSeries.setData(volData as HistogramData[]);
             }
-        }
 
-        // Restore state if we had a snapshot, otherwise fit content
-        if (stateSnapshot && stateSnapshot.visibleRange) {
-            restoreChartState(chartRef.current, stateSnapshot);
+            const lastCandle = processedData[processedData.length - 1];
+            lastRenderedTimeRef.current = lastCandle
+                ? (typeof lastCandle.time === 'number' ? lastCandle.time : Number(lastCandle.time))
+                : null;
+            lastDataRef.current = [...processedData];
+            lastIntervalRef.current = interval;
+            lastPairRef.current = pair;
+
+            chart.timeScale().fitContent();
+            volumeChart?.timeScale().fitContent();
+
+            const scalingResult = computeScalingFromData(processedData, scalingState, options);
+            if (scalingResult.changed) {
+                const chartOpts = createChartScalingOptions(scalingResult.state);
+                candleSeries.applyOptions({
+                    priceFormat: {
+                        type: 'price',
+                        precision: chartOpts.priceFormat.precision,
+                        minMove: chartOpts.priceFormat.minMove,
+                    },
+                });
+                chart.applyOptions({ rightPriceScale: { mode: chartOpts.priceScale.mode } });
+                setScalingState(scalingResult.state);
+                onScalingChange?.(scalingResult.state);
+            }
+
+            if (intervalChanged) {
+                const newBarSpacing = getBarSpacingForInterval(interval);
+                chart.timeScale().applyOptions({ barSpacing: newBarSpacing });
+                volumeChart?.timeScale().applyOptions({ barSpacing: newBarSpacing });
+            }
         } else {
-            chartRef.current.timeScale().fitContent();
+            // --- Incremental update ---
+            const updateCandles = getUpdateCandles(processedData, lastRenderedTimeRef.current);
+
+            for (const candle of updateCandles) {
+                const candleTime = typeof candle.time === 'number' ? candle.time : Number(candle.time);
+
+                if (lastRenderedTimeRef.current !== null) {
+                    let expectedTime = lastRenderedTimeRef.current + intervalSec;
+                    while (expectedTime < candleTime) {
+                        candleSeries.update({ time: expectedTime as Time } as WhitespaceData);
+                        if (volumeSeries) {
+                            volumeSeries.update({ time: expectedTime as Time } as WhitespaceData);
+                        }
+                        expectedTime += intervalSec;
+                    }
+                }
+
+                candleSeries.update(ohlcToCandlestick(candle));
+
+                if (volumeSeries) {
+                    const volItem = normalizedVolume.find((v) => {
+                        const vTime = typeof v.time === 'number' ? v.time : Number(v.time);
+                        return vTime === candleTime;
+                    });
+                    const isBullish = candle.close >= candle.open;
+                    volumeSeries.update({
+                        time: candleTime as Time,
+                        value: volItem?.value ?? 0,
+                        color: isBullish ? BINANCE_COLORS.volume.up : BINANCE_COLORS.volume.down,
+                    });
+                }
+
+                lastRenderedTimeRef.current = candleTime;
+            }
+
+            lastDataRef.current = [...processedData];
         }
 
-        // Update legend with latest data
         if (showLegend) {
             const lastCandle = processedData[processedData.length - 1];
-            const lastVolume = effectiveVolumeData[effectiveVolumeData.length - 1];
+            const lastVol = normalizedVolume[normalizedVolume.length - 1];
             if (lastCandle) {
                 setLegendData({
                     open: lastCandle.open,
                     high: lastCandle.high,
                     low: lastCandle.low,
                     close: lastCandle.close,
-                    volume: lastVolume?.value ?? 0,
+                    volume: lastVol?.value ?? 0,
                 });
             }
         }
-    }, [processedData, normalizedVolume, showVolume, options]);
+    }, [processedData, normalizedVolume, interval, pair, showVolume, intervalSec, options]);
 
-    // Handle pair change
+    // =========================================================================
+    // Pair Change Handler
+    // =========================================================================
+
     useEffect(() => {
         if (!pair) return;
         const newState = handlePairChange(pair, scalingState, options);
         setScalingState(newState);
     }, [pair, options]);
 
-    // Format price for legend display
-    const formatPrice = useCallback(
-        (value: number) => {
-            return value.toFixed(scalingState.precision.precision);
-        },
+    // =========================================================================
+    // Formatters
+    // =========================================================================
+
+    const formatLegendPrice = useCallback(
+        (value: number) => formatPrice(value, scalingState.precision.precision),
         [scalingState.precision.precision]
     );
 
-    // Format volume for legend display
-    const formatVolume = useCallback((value: number) => {
-        if (value >= 1_000_000) {
-            return `${(value / 1_000_000).toFixed(2)}M`;
-        }
-        if (value >= 1_000) {
-            return `${(value / 1_000).toFixed(2)}K`;
-        }
-        return value.toFixed(2);
-    }, []);
+    // =========================================================================
+    // Render
+    // =========================================================================
+
+    const legendColor = legendData && legendData.close >= legendData.open
+        ? BINANCE_COLORS.candle.up
+        : BINANCE_COLORS.candle.down;
 
     return (
         <div className="relative" style={{ width: '100%', height }}>
-            {/* Legend */}
             {showLegend && legendData && (
                 <div
                     className="absolute top-2 left-2 z-10 flex gap-4 text-xs font-mono"
                     style={{ color: BINANCE_COLORS.text }}
                 >
-                    <span>
-                        O:{' '}
-                        <span
-                            style={{
-                                color:
-                                    legendData.close >= legendData.open
-                                        ? BINANCE_COLORS.candle.up
-                                        : BINANCE_COLORS.candle.down,
-                            }}
-                        >
-                            {formatPrice(legendData.open)}
-                        </span>
-                    </span>
-                    <span>
-                        H:{' '}
-                        <span
-                            style={{
-                                color:
-                                    legendData.close >= legendData.open
-                                        ? BINANCE_COLORS.candle.up
-                                        : BINANCE_COLORS.candle.down,
-                            }}
-                        >
-                            {formatPrice(legendData.high)}
-                        </span>
-                    </span>
-                    <span>
-                        L:{' '}
-                        <span
-                            style={{
-                                color:
-                                    legendData.close >= legendData.open
-                                        ? BINANCE_COLORS.candle.up
-                                        : BINANCE_COLORS.candle.down,
-                            }}
-                        >
-                            {formatPrice(legendData.low)}
-                        </span>
-                    </span>
-                    <span>
-                        C:{' '}
-                        <span
-                            style={{
-                                color:
-                                    legendData.close >= legendData.open
-                                        ? BINANCE_COLORS.candle.up
-                                        : BINANCE_COLORS.candle.down,
-                            }}
-                        >
-                            {formatPrice(legendData.close)}
-                        </span>
-                    </span>
+                    <span>O: <span style={{ color: legendColor }}>{formatLegendPrice(legendData.open)}</span></span>
+                    <span>H: <span style={{ color: legendColor }}>{formatLegendPrice(legendData.high)}</span></span>
+                    <span>L: <span style={{ color: legendColor }}>{formatLegendPrice(legendData.low)}</span></span>
+                    <span>C: <span style={{ color: legendColor }}>{formatLegendPrice(legendData.close)}</span></span>
                     {showVolume && (
-                        <span>
-                            Vol: <span style={{ color: BINANCE_COLORS.text }}>{formatVolume(legendData.volume)}</span>
-                        </span>
+                        <span>Vol: <span style={{ color: BINANCE_COLORS.text }}>{formatVolume(legendData.volume)}</span></span>
                     )}
                     {heikinAshi && (
-                        <span
-                            className="px-1 rounded text-[10px]"
-                            style={{
-                                backgroundColor: BINANCE_COLORS.grid,
-                                color: BINANCE_COLORS.candle.up,
-                            }}
-                        >
+                        <span className="px-1 rounded text-[10px]" style={{ backgroundColor: BINANCE_COLORS.grid, color: BINANCE_COLORS.candle.up }}>
                             HA
                         </span>
                     )}
                     {scalingState.scaleMode === 'logarithmic' && (
-                        <span
-                            className="px-1 rounded text-[10px]"
-                            style={{
-                                backgroundColor: BINANCE_COLORS.grid,
-                                color: '#F0B90B',
-                            }}
-                        >
+                        <span className="px-1 rounded text-[10px]" style={{ backgroundColor: BINANCE_COLORS.grid, color: '#F0B90B' }}>
                             LOG
                         </span>
                     )}
                 </div>
             )}
 
-            {/* Chart container */}
-            <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+            <div ref={priceContainerRef} style={{ width: '100%', height: priceHeight }} />
+
+            {showVolume && (
+                <div
+                    ref={volumeContainerRef}
+                    style={{ width: '100%', height: volumeHeight, borderTop: `1px solid ${BINANCE_COLORS.border}` }}
+                />
+            )}
         </div>
     );
 }
 
-/**
- * Re-export original CandleChart for backward compatibility
- */
 export { CandleChart } from './CandleChart';

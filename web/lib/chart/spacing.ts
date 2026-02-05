@@ -1,33 +1,37 @@
 /**
- * Binance-Style Spacing Calculator
- * Implements candle spacing logic matching Binance UX
+ * TradingView-Style Spacing Calculator
+ * Implements professional candle spacing with dynamic pixel-aware widths
  */
 
 import { SpacingConfig, SpacingTier, AdaptiveScalingOptions, DEFAULT_SCALING_OPTIONS } from './types';
 
 /**
- * Binance spacing constants
- * Derived from observing Binance chart behavior
+ * TradingView-style spacing constants
+ * Professional chart appearance with crisp, readable candles
  */
 export const BINANCE_SPACING = {
-    /** Base spacing for 0-2 decimal assets (BTC, ETH) */
+    /** Base spacing for 0-2 decimal assets - slim professional look */
     BASE_SPACING: 6,
     /** Spacing for 3-4 decimal assets */
-    MEDIUM_SPACING: 7,
-    /** Spacing for 5-6 decimal assets (mid-cap alts) */
-    EXTENDED_SPACING: 8,
-    /** Spacing for 7-8 decimal assets (low-cap, meme) */
-    HIGH_PRECISION_SPACING: 10,
-    /** Spacing for 9+ decimal assets (micro-priced) */
-    MICRO_SPACING: 12,
-    /** Absolute minimum spacing */
-    MIN_CLAMP: 4,
-    /** Absolute maximum spacing */
-    MAX_CLAMP: 24,
+    MEDIUM_SPACING: 6,
+    /** Spacing for 5-6 decimal assets */
+    EXTENDED_SPACING: 7,
+    /** Spacing for 7-8 decimal assets */
+    HIGH_PRECISION_SPACING: 7,
+    /** Spacing for 9+ decimal assets */
+    MICRO_SPACING: 8,
+    /** Absolute minimum spacing - never go below 2px for readability */
+    MIN_CLAMP: 2,
+    /** Absolute maximum spacing - never exceed 10px for cleanliness */
+    MAX_CLAMP: 10,
     /** Micro-price threshold (price < this uses thicker candles) */
     MICRO_PRICE_THRESHOLD: 0.0001,
     /** Growth factor per decimal beyond base */
-    GROWTH_PER_DECIMAL: 0.5,
+    GROWTH_PER_DECIMAL: 0.15,
+    /** Minimum gap between candles (25% of width) */
+    GAP_RATIO: 0.25,
+    /** Candle body to total width ratio (75%) */
+    BODY_RATIO: 0.75,
 };
 
 /**
@@ -128,8 +132,39 @@ export function createSpacingConfig(
  * Volume bars should be proportionally scaled with candles
  */
 export function calculateVolumeBarWidth(candleSpacing: number): number {
-    // Volume bars are typically 80% of candle width
-    return Math.max(1, candleSpacing * 0.8);
+    // Volume bars are 70% of candle width for clean separation
+    return Math.max(1, Math.floor(candleSpacing * 0.7));
+}
+
+/**
+ * Calculate dynamic candle width based on chart dimensions and data count
+ * This is the core of TradingView-style pixel-aware rendering
+ */
+export function calculateDynamicBarSpacing(
+    chartWidth: number,
+    dataLength: number,
+    options: AdaptiveScalingOptions = DEFAULT_SCALING_OPTIONS
+): number {
+    if (chartWidth <= 0 || dataLength <= 0) {
+        return options.baseBarSpacing;
+    }
+
+    // Calculate ideal candle width: 75% of available space per candle
+    const availablePerCandle = chartWidth / dataLength;
+    const candleWidth = Math.floor(availablePerCandle * BINANCE_SPACING.BODY_RATIO);
+
+    // Clamp to professional bounds: never below 2px, never above 10px
+    return Math.max(
+        BINANCE_SPACING.MIN_CLAMP,
+        Math.min(BINANCE_SPACING.MAX_CLAMP, candleWidth)
+    );
+}
+
+/**
+ * Calculate gap between candles
+ */
+export function calculateCandleGap(candleWidth: number): number {
+    return Math.max(1, Math.floor(candleWidth * BINANCE_SPACING.GAP_RATIO));
 }
 
 /**
@@ -143,7 +178,7 @@ export function adjustSpacingForZoom(
 ): number {
     // zoomLevel: 1 = default, >1 = zoomed in, <1 = zoomed out
     const adjusted = baseSpacing * zoomLevel;
-    return Math.max(options.minBarSpacing, Math.min(options.maxBarSpacing, adjusted));
+    return Math.max(BINANCE_SPACING.MIN_CLAMP, Math.min(BINANCE_SPACING.MAX_CLAMP, adjusted));
 }
 
 /**
@@ -157,6 +192,35 @@ export function calculateVisibleBars(
         return 100; // Default fallback
     }
     return Math.floor(containerWidth / barSpacing);
+}
+
+/**
+ * Calculate spacing adjustments for high candle counts (zoom safety)
+ * When candle count > 150, compress width and optionally disable wicks
+ */
+export function calculateZoomSafeSpacing(
+    chartWidth: number,
+    dataLength: number,
+    baseSpacing: number
+): { barSpacing: number; disableWicks: boolean } {
+    const dynamicSpacing = calculateDynamicBarSpacing(chartWidth, dataLength);
+
+    // For very high candle counts, use compressed spacing
+    if (dataLength > 150) {
+        const compressedSpacing = Math.max(
+            BINANCE_SPACING.MIN_CLAMP,
+            Math.min(dynamicSpacing, 4)
+        );
+        return {
+            barSpacing: compressedSpacing,
+            disableWicks: compressedSpacing < 2, // Disable wicks if too thin
+        };
+    }
+
+    return {
+        barSpacing: Math.max(baseSpacing, dynamicSpacing),
+        disableWicks: false,
+    };
 }
 
 /**

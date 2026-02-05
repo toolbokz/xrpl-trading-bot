@@ -4,6 +4,8 @@
  * Returns the order book for a trading pair:
  * - Top N bids and asks with normalized prices/sizes
  * - Network availability status
+ * 
+ * In SINGLE_PROCESS_MODE=true, returns data from TradingRuntime instead of XRPL.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -11,6 +13,13 @@ import { findPair, isValidPairKey, TradingPair } from '../../../../lib/tradingPa
 import { loadConfig } from '../../../../../src/config';
 import { getSharedClient } from '../../../../lib/xrplClient';
 import { logger } from '../../../../../src/analytics/logger';
+import { setOrderBookLastUpdate } from '../../market/health';
+import {
+    isSingleProcessMode,
+    getOrderBookFromRuntime,
+    isRuntimeWarmingUp,
+    initRuntimeBridge,
+} from '../../../../lib/runtimeBridge';
 
 export const config = {
     api: { bodyParser: false },
@@ -33,6 +42,10 @@ interface OrderBookResponse {
     lastUpdated: number;
     network: 'mainnet' | 'testnet';
     availableOnNetwork: boolean;
+    /** Single-process mode: runtime is still starting up */
+    warmingUp?: boolean;
+    /** Single-process mode: data sourced from runtime */
+    fromRuntime?: boolean;
 }
 
 interface ErrorResponse {
@@ -195,6 +208,15 @@ export default async function handler(
         });
     }
 
+    // Initialize runtime bridge in single-process mode
+    if (isSingleProcessMode()) {
+        try {
+            await initRuntimeBridge();
+        } catch (err) {
+            logger.warn({ err }, '[OrderBook] Runtime bridge init failed, falling back to direct XRPL');
+        }
+    }
+
     // Extract pair key from dynamic route
     const { key, depth: depthParam } = req.query;
     const pairKey = Array.isArray(key) ? key[0] : key;
@@ -221,6 +243,71 @@ export default async function handler(
         const cfg = loadConfig();
         const currentNetwork = cfg.xrpl.network as 'mainnet' | 'testnet';
 
+        // =====================================================================
+        // Single-process mode: use runtime state instead of XRPL calls
+        // =====================================================================
+        if (isSingleProcessMode()) {
+            const orderBook = getOrderBookFromRuntime(pairKey);
+            const warmingUp = isRuntimeWarmingUp();
+
+            // Return warming up response while runtime starts
+            if (warmingUp && !orderBook) {
+                const response: OrderBookResponse = {
+                    pair: pairKey,
+                    bids: [],
+                    asks: [],
+                    lastUpdated: Date.now(),
+                    network: currentNetwork,
+                    availableOnNetwork: false,
+                    warmingUp: true,
+                    fromRuntime: true,
+                };
+                return res.status(200).json(response);
+            }
+
+            // Return runtime data if available
+            if (orderBook) {
+                const bids: OrderBookLevel[] = orderBook.bids.slice(0, depth).map((b, idx, arr) => {
+                    const total = arr.slice(0, idx + 1).reduce((sum, x) => sum + x.quantity, 0);
+                    return { price: b.price, size: b.quantity, total };
+                });
+                const asks: OrderBookLevel[] = orderBook.asks.slice(0, depth).map((a, idx, arr) => {
+                    const total = arr.slice(0, idx + 1).reduce((sum, x) => sum + x.quantity, 0);
+                    return { price: a.price, size: a.quantity, total };
+                });
+
+                const response: OrderBookResponse = {
+                    pair: pairKey,
+                    bids,
+                    asks,
+                    lastUpdated: orderBook.lastUpdated,
+                    network: currentNetwork,
+                    availableOnNetwork: bids.length > 0 || asks.length > 0,
+                    fromRuntime: true,
+                };
+
+                setOrderBookLastUpdate(response.lastUpdated);
+                res.setHeader('Cache-Control', 'private, max-age=1');
+                return res.status(200).json(response);
+            }
+
+            // Fallback: no runtime data yet
+            const response: OrderBookResponse = {
+                pair: pairKey,
+                bids: [],
+                asks: [],
+                lastUpdated: Date.now(),
+                network: currentNetwork,
+                availableOnNetwork: false,
+                fromRuntime: true,
+            };
+            return res.status(200).json(response);
+        }
+
+        // =====================================================================
+        // Dual-process mode (legacy): direct XRPL calls
+        // =====================================================================
+
         const { bids, asks } = await fetchOrderBook(pair, cfg.xrpl.endpoint, depth);
 
         const availableOnNetwork = bids.length > 0 || asks.length > 0;
@@ -233,6 +320,9 @@ export default async function handler(
             network: currentNetwork,
             availableOnNetwork,
         };
+
+        // Report order book health status
+        setOrderBookLastUpdate(response.lastUpdated);
 
         // Short cache for order book data
         res.setHeader('Cache-Control', 'private, max-age=1');

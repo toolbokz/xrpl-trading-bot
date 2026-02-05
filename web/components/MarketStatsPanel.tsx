@@ -19,8 +19,8 @@ interface MarketStatsPanelProps {
     quoteBalance: number;
     /** Quote currency symbol */
     quoteCurrency: string;
-    /** XRP to NZD rate for conversion */
-    nzdRate: number;
+    /** XRP to USD rate (null if unavailable) */
+    usdRate: number | null;
 }
 
 export function MarketStatsPanel({
@@ -31,8 +31,16 @@ export function MarketStatsPanel({
     xrpBalance,
     quoteBalance,
     quoteCurrency,
-    nzdRate,
+    usdRate,
 }: MarketStatsPanelProps) {
+    // Calculate USD value if rate is available
+    // RLUSD is a USD stablecoin, so 1 RLUSD = 1 USD
+    const xrpUsdValue = usdRate !== null ? xrpBalance * usdRate : null;
+    const quoteUsdValue = quoteCurrency === 'RLUSD' ? quoteBalance : null;
+    const totalUsdValue = xrpUsdValue !== null
+        ? xrpUsdValue + (quoteUsdValue ?? 0)
+        : null;
+
     return (
         <Panel
             title="Market Stats"
@@ -97,9 +105,13 @@ export function MarketStatsPanel({
                                 </div>
                             )}
                         </div>
-                        {nzdRate > 0 && (
+                        {totalUsdValue !== null ? (
                             <div className="text-[10px] text-slate-500 mt-1">
-                                ≈ ${((xrpBalance * nzdRate) + (quoteCurrency === 'RLUSD' ? quoteBalance * 1.62 : 0)).toLocaleString(undefined, { maximumFractionDigits: 2 })} NZD
+                                ≈ ${totalUsdValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} USD
+                            </div>
+                        ) : (
+                            <div className="text-[10px] text-slate-600 mt-1">
+                                USD value unavailable
                             </div>
                         )}
                     </div>

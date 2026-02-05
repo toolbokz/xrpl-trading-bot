@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CandlestickData, UTCTimestamp } from 'lightweight-charts';
 import { TRADING_PAIRS, TradingPair, findPair } from '../lib/tradingPairs';
 
 // Layout components
@@ -20,9 +19,17 @@ import { AnalyticsPanel } from '../components/AnalyticsPanel';
 import { AdaptivePanel } from '../components/AdaptivePanel';
 import { GovernancePanel } from '../components/GovernancePanel';
 import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
+import { MarketDataHealthPanel } from '../components/MarketDataHealthPanel';
 
 // Mobile layout
 import { MobileDashboard, MobileSection } from '../components/layout/MobileDashboard';
+
+// Data hooks (real data fetching)
+import { useOrderBook } from '../lib/hooks/useOrderBook';
+import { useCandles } from '../lib/hooks/useCandles';
+
+// Mock data warning
+import { MockDataBanner } from '../components/MockDataBanner';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -36,7 +43,7 @@ interface BotState {
     paper: boolean;
     wallet: string;
     xrpBalance: number;
-    nzdRate: number;
+    usdRate: number | null;
     baseCurrency: string;
     quoteCurrency: string;
     baseBalance: number;
@@ -74,7 +81,7 @@ const createInitialBotState = (): BotState => ({
     paper: true,
     wallet: 'rABC...1234',
     xrpBalance: 0,
-    nzdRate: 0.85,
+    usdRate: null,
     baseCurrency: 'XRP',
     quoteCurrency: '',
     baseBalance: 0,
@@ -108,112 +115,56 @@ export default function Page() {
     const [positionSize, setPositionSize] = useState<number>(2);
     const [positionSizeMessage, setPositionSizeMessage] = useState<string>('');
     const [selectedPairKey, setSelectedPairKey] = useState<string>('');
-    const [currentPrice, setCurrentPrice] = useState<number>(0);
     const [connected, setConnected] = useState<boolean>(false);
-
-    // Order book state
-    const [orderBookBids, setOrderBookBids] = useState<OrderBookEntry[]>([]);
-    const [orderBookAsks, setOrderBookAsks] = useState<OrderBookEntry[]>([]);
-    const [midPrice, setMidPrice] = useState<number | null>(null);
-
-    // Chart state
-    const [candleData, setCandleData] = useState<CandlestickData[]>([]);
 
     const currentPair = useMemo(() => findPair(selectedPairKey), [selectedPairKey]);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Data Fetching
+    // Real Data Hooks (NO MOCK DATA)
     // ─────────────────────────────────────────────────────────────────────────
 
-    const fetchPrice = useCallback(async (pairKey: string): Promise<{ midPrice: number; spreadBps: number } | null> => {
-        if (!pairKey) return null;
-        try {
-            const res = await fetch(`/api/bot/price?pair=${encodeURIComponent(pairKey)}`);
-            if (!res.ok) return null;
-            const data = await res.json();
-            return { midPrice: data.midPrice || 0, spreadBps: data.spreadBps || 0 };
-        } catch {
-            return null;
-        }
-    }, []);
+    // Order book from real XRPL data via /api/pairs/[key]/orderbook
+    const {
+        data: orderBookData,
+        loading: orderBookLoading,
+        error: orderBookError,
+    } = useOrderBook(selectedPairKey, {
+        pollInterval: 3000,
+        depth: 15,
+        enabled: !!selectedPairKey,
+    });
 
-    const buildInitialCandles = useCallback((basePrice: number): CandlestickData[] => {
-        const start = Math.floor(Date.now() / 1000) - 60 * 30;
-        let lastClose = basePrice || 1.0;
-        const volatility = basePrice * 0.002;
-        const candles: CandlestickData[] = [];
-        for (let i = 0; i < 60; i += 1) {
-            const open = lastClose;
-            const drift = (Math.random() - 0.5) * volatility;
-            const close = Math.max(0.01, open + drift);
-            const high = Math.max(open, close) + Math.random() * (volatility * 0.5);
-            const low = Math.min(open, close) - Math.random() * (volatility * 0.5);
-            candles.push({ time: (start + i * 30) as UTCTimestamp, open, high, low, close });
-            lastClose = close;
-        }
-        return candles;
-    }, []);
+    // Candles from real trade data via /api/pairs/[key]/candles
+    const {
+        candles: candleData,
+        loading: candlesLoading,
+        error: candlesError,
+    } = useCandles(selectedPairKey, {
+        interval: '1m',
+        limit: 120,
+        pollInterval: 10000,
+        enabled: !!selectedPairKey,
+    });
 
-    // Fetch price and update chart when pair changes
+    // Derived values from order book
+    const currentPrice = orderBookData.midPrice ?? 0;
+    const midPrice = orderBookData.midPrice;
+    const orderBookBids = orderBookData.bids;
+    const orderBookAsks = orderBookData.asks;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Data Fetching (non-mock)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Update spread and connected status when order book data arrives
     useEffect(() => {
-        if (!selectedPairKey) return;
-        let cancelled = false;
-
-        const initChart = async () => {
-            const priceData = await fetchPrice(selectedPairKey);
-            if (cancelled || !priceData) return;
-            setCurrentPrice(priceData.midPrice);
-            setMidPrice(priceData.midPrice);
-            setCandleData(buildInitialCandles(priceData.midPrice));
-            setBot((prev) => ({ ...prev, spreadBps: priceData.spreadBps }));
+        if (orderBookData.spreadBps !== null) {
+            setBot((prev) => ({ ...prev, spreadBps: orderBookData.spreadBps ?? prev.spreadBps }));
+        }
+        if (!orderBookLoading && !orderBookError && selectedPairKey) {
             setConnected(true);
-        };
-
-        initChart();
-
-        const priceInterval = setInterval(async () => {
-            const priceData = await fetchPrice(selectedPairKey);
-            if (cancelled || !priceData) return;
-            setCurrentPrice(priceData.midPrice);
-            setMidPrice(priceData.midPrice);
-            setBot((prev) => ({ ...prev, spreadBps: priceData.spreadBps }));
-
-            setCandleData((prev) => {
-                const last = prev[prev.length - 1];
-                if (!last) return prev;
-                const lastTime = typeof last.time === 'number' ? last.time : Number(last.time);
-                const now = Math.floor(Date.now() / 1000);
-
-                if (now - lastTime < 30) {
-                    const updated = [...prev];
-                    const current = updated[updated.length - 1];
-                    if (!current) return prev;
-                    const newCandle: CandlestickData<UTCTimestamp> = {
-                        time: (typeof current.time === 'number' ? current.time : Number(current.time)) as UTCTimestamp,
-                        open: current.open,
-                        high: Math.max(current.high, priceData.midPrice),
-                        low: Math.min(current.low, priceData.midPrice),
-                        close: priceData.midPrice,
-                    };
-                    updated[updated.length - 1] = newCandle;
-                    return updated;
-                }
-
-                const nextTime = (lastTime + 30) as UTCTimestamp;
-                const volatility = priceData.midPrice * 0.001;
-                const open = last.close ?? priceData.midPrice;
-                const close = priceData.midPrice;
-                const high = Math.max(open, close) + Math.random() * volatility;
-                const low = Math.min(open, close) - Math.random() * volatility;
-                return [...prev.slice(-120), { time: nextTime, open, high, low, close }];
-            });
-        }, 10000);
-
-        return () => {
-            cancelled = true;
-            clearInterval(priceInterval);
-        };
-    }, [selectedPairKey, fetchPrice, buildInitialCandles]);
+        }
+    }, [orderBookData.spreadBps, orderBookLoading, orderBookError, selectedPairKey]);
 
     const updateStatus = useCallback((status: BotStatus, message?: string) => {
         setBot((prev) => ({ ...prev, status }));
@@ -274,7 +225,7 @@ export default function Page() {
                     ...prev,
                     wallet: data.address ? `${data.address.slice(0, 6)}...${data.address.slice(-4)}` : prev.wallet,
                     xrpBalance: data.balance ?? 0,
-                    nzdRate: data.nzdRate ?? 0.85,
+                    usdRate: data.usdRate ?? null,
                     network: (data.network === 'MAINNET' || data.network === 'TESTNET') ? data.network : prev.network,
                     baseCurrency: data.tradingPair?.base || pair?.base.currency || 'XRP',
                     quoteCurrency: data.tradingPair?.quote || pair?.quote.currency || data.quoteCurrency || '',
@@ -303,36 +254,6 @@ export default function Page() {
             console.error('Failed to fetch trades:', err);
         }
     }, []);
-
-    // Generate mock order book based on mid price
-    useEffect(() => {
-        if (!midPrice || midPrice <= 0) {
-            setOrderBookBids([]);
-            setOrderBookAsks([]);
-            return;
-        }
-
-        const spread = midPrice * 0.001; // 0.1% spread
-        const bids: OrderBookEntry[] = [];
-        const asks: OrderBookEntry[] = [];
-        let bidTotal = 0;
-        let askTotal = 0;
-
-        for (let i = 0; i < 15; i++) {
-            const bidPrice = midPrice - spread * (i + 1);
-            const bidSize = Math.random() * 1000 + 100;
-            bidTotal += bidSize;
-            bids.push({ price: bidPrice, size: bidSize, total: bidTotal });
-
-            const askPrice = midPrice + spread * (i + 1);
-            const askSize = Math.random() * 1000 + 100;
-            askTotal += askSize;
-            asks.push({ price: askPrice, size: askSize, total: askTotal });
-        }
-
-        setOrderBookBids(bids);
-        setOrderBookAsks(asks);
-    }, [midPrice]);
 
     // Initial fetch
     useEffect(() => {
@@ -493,7 +414,9 @@ export default function Page() {
                             pairKey={currentPair?.key || 'Select Pair'}
                             currentPrice={currentPrice}
                             quoteCurrency={bot.quoteCurrency}
-                            spreadBps={bot.spreadBps}
+                            spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                            loading={candlesLoading}
+                            error={candlesError}
                         />
                         <MarketStatsPanel
                             totalPnl={bot.pnlTotal}
@@ -503,8 +426,9 @@ export default function Page() {
                             xrpBalance={bot.xrpBalance}
                             quoteBalance={bot.quoteBalance}
                             quoteCurrency={bot.quoteCurrency}
-                            nzdRate={bot.nzdRate}
+                            usdRate={bot.usdRate}
                         />
+                        <MarketDataHealthPanel />
                     </MobileSection>
                 }
                 marketContent={
@@ -513,7 +437,9 @@ export default function Page() {
                             bids={orderBookBids}
                             asks={orderBookAsks}
                             midPrice={midPrice}
-                            spreadBps={bot.spreadBps}
+                            spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                            loading={orderBookLoading}
+                            error={orderBookError}
                         />
                         <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={50} />
                     </MobileSection>
@@ -568,7 +494,7 @@ export default function Page() {
                 xl:grid-cols-[200px_280px_1fr_300px_260px]
                 2xl:grid-cols-[220px_300px_1fr_320px_280px]"
             >
-                {/* Left sidebar: Market Stats + Flow Metrics (spans 2 rows) */}
+                {/* Left sidebar: Market Stats + Data Health + Flow Metrics (spans 2 rows) */}
                 <div className="row-span-2 min-h-0 overflow-hidden flex flex-col gap-2">
                     <div className="shrink-0">
                         <MarketStatsPanel
@@ -579,8 +505,11 @@ export default function Page() {
                             xrpBalance={bot.xrpBalance}
                             quoteBalance={bot.quoteBalance}
                             quoteCurrency={bot.quoteCurrency}
-                            nzdRate={bot.nzdRate}
+                            usdRate={bot.usdRate}
                         />
+                    </div>
+                    <div className="shrink-0">
+                        <MarketDataHealthPanel />
                     </div>
                     <div className="flex-1 min-h-0 overflow-hidden">
                         <FlowMetricsPanel pollInterval={2000} />
@@ -597,7 +526,9 @@ export default function Page() {
                             bids={orderBookBids}
                             asks={orderBookAsks}
                             midPrice={midPrice}
-                            spreadBps={bot.spreadBps}
+                            spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                            loading={orderBookLoading}
+                            error={orderBookError}
                         />
                     </div>
                 </div>
@@ -609,7 +540,9 @@ export default function Page() {
                         pairKey={currentPair?.key || 'Select Pair'}
                         currentPrice={currentPrice}
                         quoteCurrency={bot.quoteCurrency}
-                        spreadBps={bot.spreadBps}
+                        spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                        loading={candlesLoading}
+                        error={candlesError}
                     />
                 </div>
 

@@ -2,6 +2,7 @@
 
 import { ReactNode } from 'react';
 import clsx from 'clsx';
+import { MockDataBanner } from '../MockDataBanner';
 
 interface AppShellProps {
     /** Header content (typically TerminalHeader) */
@@ -16,6 +17,7 @@ interface AppShellProps {
  * AppShell - Full viewport container for the trading dashboard.
  * 
  * Creates a fixed viewport layout with:
+ * - Mock data warning banner (if enabled, dev only)
  * - Sticky header (64px)
  * - Main content area fills remaining viewport height
  * - No body scrolling on desktop
@@ -34,6 +36,9 @@ export function AppShell({ header, children, className }: AppShellProps) {
                 className
             )}
         >
+            {/* Mock data warning banner - only shows in dev with flag */}
+            <MockDataBanner />
+
             {/* Fixed header area - 64px tall */}
             <header className="h-16 shrink-0 px-3 py-2">
                 {header}

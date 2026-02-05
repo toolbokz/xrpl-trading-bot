@@ -1,153 +1,118 @@
+/**
+ * Web API XRPL Client
+ * 
+ * Re-exports the shared client singleton from src/xrpl/sharedClient.ts
+ * This ensures the Next.js API routes use the same client management
+ * with endpoint failover and 429 cooldown.
+ * 
+ * Also provides price caching to reduce XRPL requests.
+ */
+
 import { Client } from 'xrpl';
-import { logger } from '../../src/analytics/logger';
+import {
+    getXrplClient,
+    disconnectXrplClient,
+    getConnectionState,
+    isConnected,
+    getCurrentEndpoint,
+    ConnectionState,
+} from '../../src/xrpl/sharedClient';
+
+// Re-export shared client functions
+export {
+    getXrplClient,
+    disconnectXrplClient,
+    getConnectionState,
+    isConnected,
+    getCurrentEndpoint,
+};
+export type { ConnectionState };
+
+// =============================================================================
+// Legacy API - Backwards Compatibility
+// =============================================================================
 
 /**
- * Shared XRPL client singleton to avoid rate limiting (429 errors)
- * Maintains a single persistent connection that's reused across API calls
+ * Get shared XRPL client.
+ * @param _endpoint Ignored - endpoint is managed by sharedClient singleton
+ * @deprecated Use getXrplClient() directly
  */
-
-// Fallback XRPL endpoints (mainnet)
-const XRPL_ENDPOINTS = [
-    'wss://xrplcluster.com',
-    'wss://s1.ripple.com',
-    'wss://s2.ripple.com',
-];
-
-let sharedClient: Client | null = null;
-let connectPromise: Promise<void> | null = null;
-let lastConnectAttempt = 0;
-let currentEndpointIndex = 0;
-let reconnectAttempt = 0;
-const MIN_RECONNECT_INTERVAL = 2000; // 2 seconds between reconnect attempts (reduced from 10s)
-const MAX_RECONNECT_DELAY = 10_000; // Cap reconnect delay at 10 seconds (reduced from 15s)
-const INITIAL_RECONNECT_DELAY = 500; // Start with 500ms delay (reduced from 1s)
-
-/**
- * Calculate exponential backoff with jitter for reconnect attempts.
- * Prevents reconnect storms when multiple clients try to reconnect.
- */
-function getReconnectDelay(): number {
-    const baseDelay = Math.min(INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttempt), MAX_RECONNECT_DELAY);
-    const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1); // ±20% jitter
-    return Math.max(100, Math.round(baseDelay + jitter));
+export async function getSharedClient(_endpoint?: string): Promise<Client> {
+    return getXrplClient();
 }
 
 /**
- * Sleep utility for reconnect delays.
+ * Disconnect shared client.
+ * @deprecated Use disconnectXrplClient() directly
  */
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+export async function disconnectSharedClient(): Promise<void> {
+    return disconnectXrplClient();
+}
 
-// Price cache to reduce API calls
-interface PriceCache {
-    [pair: string]: {
-        data: {
-            midPrice: number;
-            bidPrice: number;
-            askPrice: number;
-            spreadBps: number;
-        };
-        timestamp: number;
+// =============================================================================
+// Price Cache
+// =============================================================================
+
+interface PriceCacheEntry {
+    data: {
+        midPrice: number;
+        bidPrice: number;
+        askPrice: number;
+        spreadBps: number;
     };
+    timestamp: number;
 }
 
-const priceCache: PriceCache = {};
+const priceCache: Map<string, PriceCacheEntry> = new Map();
 const PRICE_CACHE_TTL = 3000; // 3 seconds cache
 
-export function getCachedPrice(pair: string) {
-    const cached = priceCache[pair];
+/**
+ * Get cached price data if still valid.
+ */
+export function getCachedPrice(pair: string): PriceCacheEntry['data'] | null {
+    const cached = priceCache.get(pair);
     if (cached && Date.now() - cached.timestamp < PRICE_CACHE_TTL) {
         return cached.data;
     }
     return null;
 }
 
-export function setCachedPrice(pair: string, data: PriceCache[string]['data']) {
-    priceCache[pair] = { data, timestamp: Date.now() };
+/**
+ * Store price data in cache.
+ */
+export function setCachedPrice(pair: string, data: PriceCacheEntry['data']): void {
+    priceCache.set(pair, { data, timestamp: Date.now() });
 }
 
-export async function getSharedClient(endpoint: string): Promise<Client> {
-    // If we have a connected client, return it
-    if (sharedClient?.isConnected()) {
-        // Reset reconnect counter on successful connection
-        reconnectAttempt = 0;
-        return sharedClient;
-    }
-
-    // Rate limit reconnection attempts with jittered backoff
-    const now = Date.now();
-    const reconnectDelay = getReconnectDelay();
-    const minDelay = Math.max(MIN_RECONNECT_INTERVAL, reconnectDelay);
-    const elapsed = now - lastConnectAttempt;
-    if (elapsed < minDelay) {
-        const waitMs = minDelay - elapsed;
-        logger.debug({ waitMs }, '[XRPL] Throttling reconnect to avoid rate limit');
-        await sleep(waitMs);
-    }
-
-    // If already connecting, wait for that
-    if (connectPromise) {
-        await connectPromise;
-        if (sharedClient?.isConnected()) {
-            return sharedClient;
-        }
-    }
-
-    lastConnectAttempt = Date.now();
-    reconnectAttempt++;
-
-    // Try endpoints in order, starting with the provided one or cycling through fallbacks
-    const endpointsToTry = endpoint.includes('xrplcluster')
-        ? XRPL_ENDPOINTS.slice(currentEndpointIndex).concat(XRPL_ENDPOINTS.slice(0, currentEndpointIndex))
-        : [endpoint, ...XRPL_ENDPOINTS];
-
-    // Connect with promise deduplication
-    connectPromise = (async () => {
-        for (let i = 0; i < endpointsToTry.length; i++) {
-            const ep = endpointsToTry[i];
-            if (!ep) continue;
-            try {
-                logger.debug({ endpoint: ep, attempt: reconnectAttempt }, '[XRPL] Trying endpoint with backoff');
-
-                // Apply jittered backoff delay before attempting connection
-                if (i > 0) {
-                    const delay = getReconnectDelay();
-                    logger.debug({ delay }, '[XRPL] Backoff delay before next attempt');
-                    await sleep(delay);
-                }
-
-                sharedClient = new Client(ep, { connectionTimeout: 15000 });
-                await sharedClient.connect();
-                logger.info({ endpoint: ep }, '[XRPL] Shared client connected');
-                // Reset reconnect attempt on success
-                reconnectAttempt = 0;
-                // Update index for next time
-                currentEndpointIndex = XRPL_ENDPOINTS.indexOf(ep);
-                if (currentEndpointIndex === -1) currentEndpointIndex = 0;
-                return;
-            } catch (err: unknown) {
-                const errorMessage = err instanceof Error ? err.message : String(err);
-                logger.warn({ endpoint: ep, error: errorMessage, attempt: reconnectAttempt }, '[XRPL] Failed to connect');
-                sharedClient = null;
-                // Try next endpoint
-            }
-        }
-        // All endpoints failed
-        throw new Error('All XRPL endpoints failed');
-    })();
-
-    try {
-        await connectPromise;
-        return sharedClient!;
-    } finally {
-        connectPromise = null;
-    }
+/**
+ * Clear price cache.
+ */
+export function clearPriceCache(): void {
+    priceCache.clear();
 }
 
-export async function disconnectSharedClient() {
-    if (sharedClient?.isConnected()) {
-        await sharedClient.disconnect();
-    }
-    sharedClient = null;
-    connectPromise = null;
-    reconnectAttempt = 0;
+// =============================================================================
+// Health Check Helpers
+// =============================================================================
+
+/**
+ * Get connection health for API health endpoints.
+ */
+export function getClientHealth(): {
+    connected: boolean;
+    endpoint: string | null;
+    lastError: string | null;
+    reconnects: number;
+    cooldowns: Record<string, number>;
+    endpointPool: string[];
+} {
+    const state = getConnectionState();
+    return {
+        connected: state.connected,
+        endpoint: state.endpoint,
+        lastError: state.lastError,
+        reconnects: state.reconnects,
+        cooldowns: state.cooldowns,
+        endpointPool: state.endpointPool,
+    };
 }
