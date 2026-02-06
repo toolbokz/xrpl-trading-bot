@@ -70,6 +70,7 @@ const buildGateInput = (
     dataInvalidReasons: string[] = [],
 ): ExecutionGateInput => ({
     runtimeState: 'READY',
+    lastBalanceSnapshotMs: NOW - 5_000,
     health,
     isConnected: true,
     isReconnecting: false,

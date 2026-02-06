@@ -46,6 +46,7 @@ const healthyResult = (): MarketHealthResult => ({
 });
 
 const baseGateInput = (): ExecutionGateInput => ({
+    lastBalanceSnapshotMs: NOW - 5_000,
     runtimeState: 'READY',
     health: healthyResult(),
     isConnected: true,

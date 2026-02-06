@@ -153,7 +153,14 @@ export function TradeTapePanel({ pairKey, maxRows = 100 }: TradeTapePanelProps) 
     }, [trades.length, autoScroll]);
 
     const formatTime = (ts: number) => new Date(ts).toLocaleTimeString('en-US', { hour12: false });
-    const formatPrice = (p: number) => (p >= 1 ? p.toFixed(4) : p >= 0.001 ? p.toFixed(6) : p.toFixed(8));
+    const formatPrice = (p?: number | null) => {
+        if (p === null || p === undefined) return '—';
+        if (!Number.isFinite(p)) return '—';
+
+        const abs = Math.abs(p);
+        return abs >= 1 ? p.toFixed(4) : abs >= 0.001 ? p.toFixed(6) : p.toFixed(8);
+    };
+
 
     const buyRatio = useMemo(() => {
         const total = stats.buyVolumeBase + stats.sellVolumeBase;
