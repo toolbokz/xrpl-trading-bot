@@ -228,12 +228,6 @@ export function enforceLocalOnly(_context: string = 'Bot'): void {
         );
     }
 
-    // Block container execution (Docker, Kubernetes) unless local-only is forced
-    if (config.isContainer && !config.forceLocalOnly) {
-        throw new RemoteExecutionBlockedError(
-            'Container execution detected. Set BOT_LOCAL_ONLY=true to run in containers'
-        );
-    }
 
     // All checks passed for development/local mode
 }
@@ -296,13 +290,6 @@ export function getLocalOnlyStatus(): {
         };
     }
 
-    if (config.isContainer && !config.forceLocalOnly) {
-        return {
-            isLocal: false,
-            reason: 'Running in container without BOT_LOCAL_ONLY=true',
-            config,
-        };
-    }
 
     return {
         isLocal: true,

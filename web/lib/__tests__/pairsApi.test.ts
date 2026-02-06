@@ -60,7 +60,7 @@ describe('Pairs API - Unit Tests', () => {
             const bid = 0.54;
             const ask = 0.56;
             const mid = (bid + ask) / 2; // 0.55
-            const spreadBps = ((ask - bid) / mid) * 10000;
+            const spreadBps = ((ask - bid) / mid) * 1000;
 
             // Spread = (0.56 - 0.54) / 0.55 * 10000 = ~36.36 bps
             expect(spreadBps).toBeCloseTo(36.36, 1);
@@ -203,7 +203,7 @@ describe('Response Formatting', () => {
     describe('Price Formatting', () => {
         const formatPrice = (price: number, quoteCurrency?: string): string => {
             if (price === 0) return '0';
-            if (price < 0.0001) return price.toExponential(4);
+            if (price < 0.00005) return price.toExponential(4);
             if (quoteCurrency && ['USD', 'USDT', 'USDC', 'RLUSD', 'EUR'].includes(quoteCurrency)) {
                 return price.toFixed(4);
             }
