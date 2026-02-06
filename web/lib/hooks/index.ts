@@ -9,3 +9,15 @@ export type { OrderBookLevel, OrderBookData, UseOrderBookState, UseOrderBookOpti
 
 export { useCandles } from './useCandles';
 export type { Candle, UseCandlesState, UseCandlesOptions } from './useCandles';
+
+export { useMarketHealth } from './useMarketHealth';
+export type { MarketHealthData, UseMarketHealthState, UseMarketHealthOptions } from './useMarketHealth';
+
+export { useTradeTape } from './useTradeTape';
+export type { TradeTapeData, UseTradeTapeState, UseTradeTapeOptions } from './useTradeTape';
+
+export { useBalances } from './useBalances';
+export type { BalanceData, UseBalancesState, UseBalancesOptions } from './useBalances';
+
+export { useFlowMetrics } from './useFlowMetrics';
+export type { FlowMetricsState, UseFlowMetricsOptions } from './useFlowMetrics';

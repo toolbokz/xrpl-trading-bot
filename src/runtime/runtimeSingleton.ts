@@ -10,6 +10,7 @@
  */
 
 import { TradingRuntime } from './tradingRuntime';
+import { RuntimeCacheRegistry, RuntimeCacheSnapshot } from './runtimeCacheRegistry';
 import { RuntimeState } from './runtimeFsm';
 import { RuntimeTelemetry } from './runtimeObservability';
 import { loadConfig, TradingPair } from '../config';
@@ -364,6 +365,29 @@ export function isRuntimeReady(): boolean {
 export function isRuntimeWarmingUp(): boolean {
     return globalThis.__xrplTradingBotIsStarting ?? false;
 }
+
+/**
+ * Get the centralized pair-keyed cache snapshot.
+ * API routes should prefer this over getRuntimeState() for pair-keyed data.
+ */
+export function getCacheSnapshot(): RuntimeCacheSnapshot | null {
+    const rt = globalThis.__xrplTradingBotRuntime;
+    if (!rt) return null;
+    return rt.getCacheRegistry().getSnapshot();
+}
+
+/**
+ * Get the RuntimeCacheRegistry instance directly (for balance updates, etc.).
+ */
+export function getCacheRegistry(): RuntimeCacheRegistry | null {
+    const rt = globalThis.__xrplTradingBotRuntime;
+    if (!rt) return null;
+    return rt.getCacheRegistry();
+}
+
+// Re-export cache types for API layer convenience
+export type { RuntimeCacheSnapshot };
+export type { CacheEntry, FeedType } from './runtimeCacheRegistry';
 
 // =============================================================================
 // Testing Utilities

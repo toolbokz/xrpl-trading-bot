@@ -1,35 +1,26 @@
 /**
- * GET /api/trades/tape
+ * GET /api/metrics/runtime
  *
- * Returns the live trade tape from the runtime cache.
+ * Returns the full runtime cache snapshot for observability / monitoring.
  * Follows the PairPayload standard envelope.
  *
- * Replaces the old proxy to backend HTTP server.
+ * This is the canonical "give me everything" endpoint for institutional
+ * monitoring integrations. It returns all cache feeds in one response.
  */
 
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { getCacheSnapshot, isSingleProcessMode } from '../../../lib/runtimeBridge';
 import { buildPairPayload, PairPayload } from '../../../lib/types/pairPayload';
-import type { Trade } from '../../../../src/market/tradeTape';
-
-export interface TapeData {
-    trades: Trade[];
-    tradeCount: number;
-    lastTradeAtMs: number | null;
-}
+import type { RuntimeCacheSnapshot } from '../../../../src/runtime/runtimeCacheRegistry';
 
 function handler(
     req: LocalRequest,
-    res: NextApiResponse<PairPayload<TapeData>>,
+    res: NextApiResponse<PairPayload<RuntimeCacheSnapshot>>,
 ) {
     const cache = isSingleProcessMode() ? getCacheSnapshot() : null;
     const pairKey = cache?.pairKey ?? '';
-    const asOfMs = cache?.tape?.asOfMs ?? Date.now();
-
-    const data: TapeData | null = cache?.tape
-        ? cache.tape.data
-        : null;
+    const asOfMs = cache?.asOfMs ?? Date.now();
 
     return res.status(200).json(buildPairPayload(
         {
@@ -39,7 +30,7 @@ function handler(
             runtimeState: cache?.runtimeState ?? null,
             requestId: req.requestId,
         },
-        data,
+        cache,
     ));
 }
 

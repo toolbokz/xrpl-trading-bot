@@ -31,6 +31,8 @@ export interface UseOrderBookState {
     loading: boolean;
     error: string | null;
     isEmpty: boolean;
+    /** True when the last response was rejected (stale or pair mismatch). */
+    rejected: boolean;
 }
 
 export interface UseOrderBookOptions {
@@ -40,6 +42,8 @@ export interface UseOrderBookOptions {
     depth?: number;
     /** Enable/disable fetching (default: true) */
     enabled?: boolean;
+    /** Maximum acceptable data age in ms (default: 30 000). */
+    maxStalenessMs?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,6 +63,8 @@ const EMPTY_ORDER_BOOK: OrderBookData = {
 // Hook Implementation
 // ─────────────────────────────────────────────────────────────────────────────
 
+const DEFAULT_MAX_STALENESS_MS = 30_000;
+
 export function useOrderBook(
     pairKey: string | null | undefined,
     options: UseOrderBookOptions = {}
@@ -67,15 +73,20 @@ export function useOrderBook(
         pollInterval = 3000,
         depth = 15,
         enabled = true,
+        maxStalenessMs = DEFAULT_MAX_STALENESS_MS,
     } = options;
 
     const [data, setData] = useState<OrderBookData>(EMPTY_ORDER_BOOK);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
+    const [rejected, setRejected] = useState<boolean>(false);
 
     // Track mounted state for async cleanup
     const isMountedRef = useRef(true);
     const abortControllerRef = useRef<AbortController | null>(null);
+    // Stable ref so the callback always sees the latest pairKey
+    const pairKeyRef = useRef(pairKey);
+    pairKeyRef.current = pairKey;
 
     const fetchOrderBook = useCallback(async (isInitial = false) => {
         if (!pairKey || !enabled) return;
@@ -108,6 +119,21 @@ export function useOrderBook(
 
             if (!isMountedRef.current) return;
 
+            // Pair-truth validation: response must match the requested pairKey
+            const currentPairKey = pairKeyRef.current;
+            if (currentPairKey && result.pair && result.pair !== currentPairKey) {
+                setRejected(true);
+                return;
+            }
+
+            // Staleness validation
+            const responseTs = result.lastUpdated || Date.now();
+            const age = Date.now() - responseTs;
+            if (age > maxStalenessMs) {
+                setRejected(true);
+                return;
+            }
+
             // Calculate mid price and spread from bids/asks
             const bestBid = result.bids?.[0]?.price ?? null;
             const bestAsk = result.asks?.[0]?.price ?? null;
@@ -128,6 +154,7 @@ export function useOrderBook(
                 network: result.network || null,
             });
             setError(null);
+            setRejected(false);
         } catch (err) {
             if (!isMountedRef.current) return;
 
@@ -142,7 +169,7 @@ export function useOrderBook(
                 setLoading(false);
             }
         }
-    }, [pairKey, depth, enabled]);
+    }, [pairKey, depth, enabled, maxStalenessMs]);
 
     // Initial fetch and polling
     useEffect(() => {
@@ -176,6 +203,7 @@ export function useOrderBook(
     useEffect(() => {
         setData(EMPTY_ORDER_BOOK);
         setError(null);
+        setRejected(false);
     }, [pairKey]);
 
     const isEmpty = data.bids.length === 0 && data.asks.length === 0;
@@ -185,5 +213,6 @@ export function useOrderBook(
         loading,
         error,
         isEmpty,
+        rejected,
     };
 }

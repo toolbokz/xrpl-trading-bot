@@ -1,34 +1,32 @@
 /**
- * GET /api/trades/tape
+ * GET /api/runtime/balances
  *
- * Returns the live trade tape from the runtime cache.
+ * Returns pair-keyed balance snapshot from the runtime cache.
  * Follows the PairPayload standard envelope.
- *
- * Replaces the old proxy to backend HTTP server.
  */
 
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
-import { getCacheSnapshot, isSingleProcessMode } from '../../../lib/runtimeBridge';
+import { getCacheSnapshot, getRuntimeInstance, isSingleProcessMode } from '../../../lib/runtimeBridge';
 import { buildPairPayload, PairPayload } from '../../../lib/types/pairPayload';
-import type { Trade } from '../../../../src/market/tradeTape';
 
-export interface TapeData {
-    trades: Trade[];
-    tradeCount: number;
-    lastTradeAtMs: number | null;
+export interface BalanceData {
+    xrpBalance: number;
+    quoteBalance: number;
+    quoteCurrency: string;
+    ledgerIndex: number;
 }
 
 function handler(
     req: LocalRequest,
-    res: NextApiResponse<PairPayload<TapeData>>,
+    res: NextApiResponse<PairPayload<BalanceData>>,
 ) {
     const cache = isSingleProcessMode() ? getCacheSnapshot() : null;
     const pairKey = cache?.pairKey ?? '';
-    const asOfMs = cache?.tape?.asOfMs ?? Date.now();
+    const asOfMs = cache?.balance?.asOfMs ?? Date.now();
 
-    const data: TapeData | null = cache?.tape
-        ? cache.tape.data
+    const data: BalanceData | null = cache?.balance
+        ? cache.balance.data
         : null;
 
     return res.status(200).json(buildPairPayload(

@@ -24,6 +24,9 @@ import {
     getRuntime,
     RuntimePublicState,
     stopRuntime,
+    getCacheSnapshot,
+    getCacheRegistry,
+    RuntimeCacheSnapshot,
 } from '../../src/runtime/runtimeSingleton';
 import {
     markApiRouteContext,
@@ -34,8 +37,8 @@ import { botController } from './botController';
 import { TradingRuntime } from '../../src/runtime/tradingRuntime';
 
 // Re-export types for convenience
-export type { RuntimePublicState };
-export { isSingleProcessMode, isRuntimeReady, isRuntimeWarmingUp };
+export type { RuntimePublicState, RuntimeCacheSnapshot };
+export { isSingleProcessMode, isRuntimeReady, isRuntimeWarmingUp, getCacheSnapshot, getCacheRegistry };
 
 // =============================================================================
 // Initialization

@@ -1,34 +1,26 @@
 /**
- * GET /api/trades/tape
+ * GET /api/analytics/execution-quality
  *
- * Returns the live trade tape from the runtime cache.
+ * Returns execution quality metrics from the runtime cache.
  * Follows the PairPayload standard envelope.
- *
- * Replaces the old proxy to backend HTTP server.
  */
 
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { getCacheSnapshot, isSingleProcessMode } from '../../../lib/runtimeBridge';
 import { buildPairPayload, PairPayload } from '../../../lib/types/pairPayload';
-import type { Trade } from '../../../../src/market/tradeTape';
-
-export interface TapeData {
-    trades: Trade[];
-    tradeCount: number;
-    lastTradeAtMs: number | null;
-}
+import type { ExecutionQualitySnapshot } from '../../../../src/runtime/runtimeCacheRegistry';
 
 function handler(
     req: LocalRequest,
-    res: NextApiResponse<PairPayload<TapeData>>,
+    res: NextApiResponse<PairPayload<ExecutionQualitySnapshot>>,
 ) {
     const cache = isSingleProcessMode() ? getCacheSnapshot() : null;
     const pairKey = cache?.pairKey ?? '';
-    const asOfMs = cache?.tape?.asOfMs ?? Date.now();
+    const asOfMs = cache?.executionQuality?.asOfMs ?? Date.now();
 
-    const data: TapeData | null = cache?.tape
-        ? cache.tape.data
+    const data: ExecutionQualitySnapshot | null = cache?.executionQuality
+        ? cache.executionQuality.data
         : null;
 
     return res.status(200).json(buildPairPayload(

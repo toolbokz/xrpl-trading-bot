@@ -2,7 +2,7 @@ import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
 import { FlowMetrics, FlowRegime, getRegimeDescription } from '../../../../src/market/flowMetrics';
-import { isSingleProcessMode, getFlowFromRuntime, initRuntimeBridge, getRuntimeInstance } from '../../../lib/runtimeBridge';
+import { isSingleProcessMode, getFlowFromRuntime, initRuntimeBridge, getRuntimeInstance, getCacheSnapshot } from '../../../lib/runtimeBridge';
 
 export const config = {
     api: { bodyParser: false },
@@ -16,6 +16,12 @@ export interface FlowResponse {
     timestamp: string;
     hasMetrics: boolean;
     metrics: FlowMetrics | null;
+    /** Pair-payload standard fields */
+    pairKey: string;
+    asOfMs: number;
+    stalenessMs: number;
+    executionAllowed: boolean;
+    runtimeState: string | null;
     regime: {
         current: FlowRegime | null;
         description: string;
@@ -78,11 +84,19 @@ async function handler(req: LocalRequest, res: NextApiResponse<FlowResponse>) {
             flowMetrics = runtime.getFlowMetrics();
         }
 
+        const cache = isSingleProcessMode() ? getCacheSnapshot() : null;
+        const nowMs = Date.now();
+
         const response: FlowResponse = {
             requestId: req.requestId,
             timestamp: new Date().toISOString(),
             hasMetrics: flowMetrics !== null,
             metrics: flowMetrics,
+            pairKey: cache?.pairKey ?? '',
+            asOfMs: cache?.flow?.asOfMs ?? nowMs,
+            stalenessMs: Math.max(0, nowMs - (cache?.flow?.asOfMs ?? nowMs)),
+            executionAllowed: cache?.executionAllowed ?? false,
+            runtimeState: cache?.runtimeState ?? null,
             regime: {
                 current: flowMetrics?.regime ?? null,
                 description: flowMetrics ? getRegimeDescription(flowMetrics.regime) : 'No data available',
@@ -113,11 +127,17 @@ async function handler(req: LocalRequest, res: NextApiResponse<FlowResponse>) {
         res.status(200).json(response);
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Unknown error';
+        const nowMs = Date.now();
         res.status(500).json({
             requestId: req.requestId,
             timestamp: new Date().toISOString(),
             hasMetrics: false,
             metrics: null,
+            pairKey: '',
+            asOfMs: nowMs,
+            stalenessMs: 0,
+            executionAllowed: false,
+            runtimeState: null,
             regime: {
                 current: null,
                 description: `Error: ${message}`,

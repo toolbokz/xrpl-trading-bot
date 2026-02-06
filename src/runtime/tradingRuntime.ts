@@ -73,6 +73,7 @@ import {
 import {
     SnapshotValidator,
 } from '../market/snapshotValidator';
+import { RuntimeCacheRegistry } from './runtimeCacheRegistry';
 import {
     RuntimeFSM,
     RuntimeState,
@@ -179,6 +180,8 @@ export class TradingRuntime {
     private gateConfig: ExecutionGateConfig = DEFAULT_GATE_CONFIG;
     /** Structural snapshot validator — detects sequence gaps, timestamp regressions, NaN. */
     private snapshotValidator = new SnapshotValidator();
+    /** Centralized pair-keyed cache — the single source of truth for API routes. */
+    private readonly cacheRegistry = new RuntimeCacheRegistry();
     /** Whether the last snapshot passed structural validation. */
     private lastDataValid = true;
     /** Reasons the last snapshot failed validation (empty when valid). */
@@ -244,6 +247,7 @@ export class TradingRuntime {
         this.snapshotValidator.reset();
         this.lastDataValid = true;
         this.lastDataInvalidReasons = [];
+        this.cacheRegistry.reset();
     }
 
     async start(): Promise<void> {
@@ -657,12 +661,17 @@ export class TradingRuntime {
                 }, isBadData
                     ? 'EXECUTION_BLOCKED_BAD_DATA: gate denied tick — snapshot structural validation failed'
                     : 'EXECUTION_BLOCKED: gate denied tick execution');
+                // Update cache even on BLOCK so API reflects latest state
+                this.updateCacheSnapshot(pairKey, gateResult, null);
                 return;
             }
 
             // Compute flow metrics from trade tape and order book
             const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
             this.currentFlowMetrics = flowMetrics;
+
+            // Update cache registry with full tick data
+            this.updateCacheSnapshot(pairKey, gateResult, flowMetrics);
 
             // Record market snapshot for analytics (non-blocking, best-effort)
             try {
@@ -888,6 +897,47 @@ export class TradingRuntime {
      */
     getFlowMetrics(): FlowMetrics | null {
         return this.currentFlowMetrics;
+    }
+
+    /**
+     * Get the centralized cache registry (the single source of truth for API routes).
+     */
+    getCacheRegistry(): RuntimeCacheRegistry {
+        return this.cacheRegistry;
+    }
+
+    /**
+     * Get the current pair key (e.g. "XRP/RLUSD").
+     */
+    getCurrentPairKey(): string {
+        return `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
+    }
+
+    /**
+     * Push latest tick data into the cache registry.
+     */
+    private updateCacheSnapshot(
+        pairKey: string,
+        gate: ExecutionGateResult,
+        flow: FlowMetrics | null,
+    ): void {
+        const tapeData = this.tradeTape ? (() => {
+            const trades = this.tradeTape!.getAll();
+            const last = trades[trades.length - 1];
+            return { trades, tradeCount: trades.length, lastTradeAtMs: last?.ts ?? null };
+        })() : null;
+
+        this.cacheRegistry.update({
+            pairKey,
+            sequence: this.marketSnapshotSequence,
+            runtimeState: this.fsm.getState(),
+            health: this.lastMarketDataHealth,
+            gate,
+            flow,
+            tape: tapeData,
+            orderbook: this.currentOrderBookSnapshot,
+            lastTrade: this.currentNormalizedTrade,
+        });
     }
 
     getMarketHealth(): {
@@ -1428,6 +1478,7 @@ export class TradingRuntime {
         this.snapshotValidator.reset();
         this.lastDataValid = true;
         this.lastDataInvalidReasons = [];
+        this.cacheRegistry.reset();
 
         // Reset FSM to BOOTING for potential restart
         this.fsm.reset();
