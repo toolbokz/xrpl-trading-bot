@@ -21,6 +21,13 @@ import { TradeTape, setGlobalTradeTape } from '../market/tradeTape';
 import { TradeTapeService } from '../market/tradeTapeService';
 import { BackendHttpServer, startBackendHttpServer, stopBackendHttpServer } from '../server/httpServer';
 import { FlowMetrics, computeFlowMetrics, FlowRegime } from '../market/flowMetrics';
+import {
+    NormalizedTrade,
+    OrderBookSnapshot,
+    computeMarketHealth,
+    normalizeOrderBookSnapshot,
+    normalizeTrade,
+} from '../market/models';
 import { feedbackEngine } from '../analytics/feedbackEngine';
 import {
     isAdaptiveEnabled,
@@ -111,6 +118,10 @@ export class TradingRuntime {
     private lastGovernanceDecision: CapitalProtectionDecision | null = null;
     private regimePolicyEngine: RegimePolicyEngine | null = null;
     private readonly baseConfig: AppConfig;
+    private marketSnapshotSequence = 0;
+    private currentOrderBookSnapshot: OrderBookSnapshot | null = null;
+    private currentNormalizedTrade: NormalizedTrade | null = null;
+    private currentMarketHealthScore = 0;
 
     constructor(config?: AppConfig) {
         // Security gate: enforce local-only execution on construction
@@ -294,13 +305,33 @@ export class TradingRuntime {
 
             // Build strategy context with trade tape data
             const orderBookState = this.tracker.getState();
+            const pairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
+            const nowMs = Date.now();
+            this.marketSnapshotSequence += 1;
+
+            this.currentOrderBookSnapshot = normalizeOrderBookSnapshot(
+                pairKey,
+                orderBookState,
+                nowMs,
+                this.marketSnapshotSequence,
+            );
+
+            const latestTrade = this.tradeTape?.getAll().at(-1) ?? null;
+            this.currentNormalizedTrade = latestTrade
+                ? normalizeTrade(latestTrade, nowMs, latestTrade.ts, 'tape', false)
+                : null;
+
+            this.currentMarketHealthScore = computeMarketHealth({
+                trade: this.currentNormalizedTrade,
+                book: this.currentOrderBookSnapshot,
+                amm: null,
+            });
 
             // Compute flow metrics from trade tape and order book
             const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
             this.currentFlowMetrics = flowMetrics;
 
             // Record market snapshot for analytics (non-blocking, best-effort)
-            const pairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
             try {
                 feedbackEngine.recordSnapshot({
                     pairKey,
@@ -521,6 +552,18 @@ export class TradingRuntime {
      */
     getFlowMetrics(): FlowMetrics | null {
         return this.currentFlowMetrics;
+    }
+
+    getMarketHealth(): {
+        score: number;
+        orderBook: OrderBookSnapshot | null;
+        lastTrade: NormalizedTrade | null;
+    } {
+        return {
+            score: this.currentMarketHealthScore,
+            orderBook: this.currentOrderBookSnapshot,
+            lastTrade: this.currentNormalizedTrade,
+        };
     }
 
     /**
