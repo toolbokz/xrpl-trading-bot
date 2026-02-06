@@ -122,13 +122,6 @@ export class TradingRuntime {
     private currentOrderBookSnapshot: OrderBookSnapshot | null = null;
     private currentNormalizedTrade: NormalizedTrade | null = null;
     private currentMarketHealthScore = 0;
-    private activePairKey: string;
-    private currentTxListener: ((tx: TransactionStream) => void) | null = null;
-    private lastOrderBookUpdateMs = 0;
-    private lastTradeUpdateMs = 0;
-    private lastResubscribeAttemptMs = 0;
-    private readonly marketStaleThresholdMs = 20_000;
-    private readonly resubscribeCooldownMs = 10_000;
 
     constructor(config?: AppConfig) {
         // Security gate: enforce local-only execution on construction
@@ -140,7 +133,6 @@ export class TradingRuntime {
         }
 
         this.baseConfig = config ?? loadConfig();
-        this.activePairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
     }
 
     async start(): Promise<void> {
@@ -194,7 +186,15 @@ export class TradingRuntime {
 
             this.tradeTape = tradeTape;
             this.tradeTapeService = tradeTapeService;
-            this.attachTradeTapeListener();
+
+            let txCount = 0;
+            xrpl.on('transaction', (tx: TransactionStream) => {
+                txCount += 1;
+                if (txCount % 5000 === 0) {
+                    logger.info({ txCount, lastTxType: tx.transaction?.TransactionType }, 'TradeTape: Transaction stream active');
+                }
+                this.tradeTapeService?.processTransaction(tx);
+            });
 
             this.strategies = [
                 new ScalperStrategy(tracker, config.strategy, config.tradingPair, executor, risk, config.flow),
@@ -208,8 +208,6 @@ export class TradingRuntime {
             this.executor = executor;
             this.walletAddress = wallet?.classicAddress ?? null;
             this.started = true;
-            this.lastOrderBookUpdateMs = Date.now();
-            this.lastTradeUpdateMs = Date.now();
 
             // Initialize capital protection engine
             const cpConfig = loadCapitalProtectionConfig();
@@ -326,12 +324,6 @@ export class TradingRuntime {
                 book: this.currentOrderBookSnapshot,
                 amm: null,
             });
-            this.lastOrderBookUpdateMs = nowMs;
-            if (this.currentNormalizedTrade) {
-                this.lastTradeUpdateMs = this.currentNormalizedTrade.eventTimeMs;
-            }
-
-            await this.ensureMarketDataHealthy(nowMs);
 
             // Compute flow metrics from trade tape and order book
             const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
@@ -789,40 +781,37 @@ export class TradingRuntime {
             ...(description ? { description } : {}),
         };
         this.baseConfig.tradingPairs = [this.baseConfig.tradingPair];
-        this.activePairKey = `${baseCurrency}/${quoteCurrency}`;
         logger.info({ tradingPair: this.baseConfig.tradingPair }, 'Updated trading pair');
     }
 
     getActivePair(): string {
-        return this.activePairKey;
+        return `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
     }
 
     setActivePair(pairKey: string): { success: boolean; activePair: string; error?: string } {
-        if (pairKey === this.activePairKey) {
-            return { success: true, activePair: this.activePairKey };
+        const currentPairKey = this.getActivePair();
+        if (pairKey === currentPairKey) {
+            return { success: true, activePair: currentPairKey };
         }
 
         if (!pairKey || !isValidPairKey(pairKey)) {
-            return { success: false, activePair: this.activePairKey, error: `Invalid pair key: ${pairKey}` };
+            return { success: false, activePair: currentPairKey, error: `Invalid pair key: ${pairKey}` };
         }
 
         const target = TRADING_PAIRS.find((p) => p.key === pairKey);
         if (!target) {
-            return { success: false, activePair: this.activePairKey, error: `Pair not found: ${pairKey}` };
+            return { success: false, activePair: currentPairKey, error: `Pair not found: ${pairKey}` };
         }
 
         const previousPair = { ...this.baseConfig.tradingPair };
-        const previousPairKey = this.activePairKey;
+        const previousPairKey = currentPairKey;
 
-        const applyPair = (candidate: TradingPair, candidateKey: string): void => {
+        const applyPair = (candidate: TradingPair): void => {
             this.baseConfig.tradingPair = { ...candidate };
             this.baseConfig.tradingPairs = [{ ...candidate }];
-            this.activePairKey = candidateKey;
             this.tradeTape?.setPair(candidate);
             this.tradeTapeService?.setPair(candidate);
             this.tracker?.setPair(candidate);
-            this.lastOrderBookUpdateMs = Date.now();
-            this.lastTradeUpdateMs = Date.now();
         };
 
         try {
@@ -838,28 +827,20 @@ export class TradingRuntime {
             validateTradingPair(nextPair);
             assertAllowedPair(nextPair);
 
-            applyPair(nextPair, pairKey);
-
-            this.attachTradeTapeListener();
+            applyPair(nextPair);
 
             logger.info({ from: previousPairKey, to: pairKey }, 'Switched active trading pair');
-            return { success: true, activePair: this.activePairKey };
+            return { success: true, activePair: this.getActivePair() };
         } catch (err) {
             try {
-                applyPair(previousPair, previousPairKey);
+                applyPair(previousPair);
             } catch (rollbackErr) {
                 logger.error({ rollbackErr, pair: previousPairKey }, 'Rollback applyPair failed');
             }
 
-            try {
-                this.attachTradeTapeListener();
-            } catch {
-                // best-effort rewire
-            }
-
             const error = err instanceof Error ? err.message : 'unknown error';
             logger.error({ err, from: previousPairKey, attempted: pairKey }, 'Failed to switch pair, rolled back');
-            return { success: false, activePair: this.activePairKey, error };
+            return { success: false, activePair: this.getActivePair(), error };
         }
     }
 
@@ -962,52 +943,10 @@ export class TradingRuntime {
         this.shutdownInProgress = false;
         this.tradeTape = null;
         this.tradeTapeService = null;
-        this.currentTxListener = null;
         this.httpServer = null;
         this.capitalProtection = null;
         this.capitalProtectionConfig = null;
         this.lastGovernanceDecision = null;
     }
 
-    private attachTradeTapeListener(): void {
-        if (!this.xrpl || !this.tradeTapeService) return;
-
-        if (this.currentTxListener) {
-            this.xrpl.off('transaction', this.currentTxListener);
-            this.currentTxListener = null;
-        }
-
-        let txCount = 0;
-        const listener = (tx: TransactionStream): void => {
-            txCount += 1;
-            if (txCount % 5000 === 0) {
-                logger.info({ txCount, lastTxType: tx.transaction?.TransactionType }, 'TradeTape: Transaction stream active');
-            }
-            this.tradeTapeService?.processTransaction(tx);
-            this.lastTradeUpdateMs = Date.now();
-        };
-
-        this.xrpl.on('transaction', listener);
-        this.currentTxListener = listener;
-    }
-
-    private async ensureMarketDataHealthy(nowMs: number): Promise<void> {
-        if (!this.xrpl || !this.started) return;
-
-        const bookAge = nowMs - this.lastOrderBookUpdateMs;
-        const tradeAge = nowMs - this.lastTradeUpdateMs;
-        const stale = bookAge > this.marketStaleThresholdMs && tradeAge > this.marketStaleThresholdMs;
-        const cooledDown = nowMs - this.lastResubscribeAttemptMs > this.resubscribeCooldownMs;
-
-        if (!stale || !cooledDown) return;
-
-        this.lastResubscribeAttemptMs = nowMs;
-        try {
-            await this.xrpl.subscribe(this.baseConfig.tradingPair);
-            this.attachTradeTapeListener();
-            logger.warn({ pair: this.activePairKey, bookAge, tradeAge }, 'Market data stale - re-subscribed streams');
-        } catch (err) {
-            logger.error({ err, pair: this.activePairKey }, 'Market data self-heal resubscribe failed');
-        }
-    }
 }
