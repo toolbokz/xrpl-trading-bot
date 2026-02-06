@@ -10,7 +10,7 @@
  */
 
 import { MarketHealthResult } from '../market/marketDataHealth';
-import { PairSwitchState } from '../runtime/tradingRuntime';
+import { PairSwitchPhase } from '../runtime/pairSwitchFsm';
 import { RuntimeState } from '../runtime/runtimeFsm';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,8 +48,8 @@ export interface ExecutionGateInput {
     isConnected: boolean;
     /** Whether the XRPL WebSocket is in a reconnecting state. */
     isReconnecting: boolean;
-    /** Current pair-switch FSM state from TradingRuntime. */
-    pairSwitchState: PairSwitchState;
+    /** Current pair-switch FSM phase from PairSwitchOrchestrator. */
+    pairSwitchState: PairSwitchPhase;
     /** Whether a runtime shutdown is in progress. */
     isShuttingDown: boolean;
     /** Whether the stall recovery system is currently in recovery mode. */
@@ -115,9 +115,9 @@ export function evaluateExecutionGate(
         return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
     }
 
-    // 4. Pair switching
-    if (input.pairSwitchState === 'SWITCHING' || input.pairSwitchState === 'SYNCING') {
-        reasons.push(`pair-switch-state:${input.pairSwitchState}`);
+    // 4. Pair switching — block on any non-READY phase
+    if (input.pairSwitchState !== 'READY') {
+        reasons.push(`pair-switch-phase:${input.pairSwitchState}`);
         return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
     }
 

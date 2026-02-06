@@ -73,7 +73,7 @@ const buildGateInput = (
     health,
     isConnected: true,
     isReconnecting: false,
-    pairSwitchState: 'IDLE',
+    pairSwitchState: 'READY',
     isShuttingDown: false,
     isInRecovery: false,
     isRiskShutdown: false,

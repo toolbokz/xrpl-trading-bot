@@ -75,6 +75,14 @@ import {
 } from '../market/snapshotValidator';
 import { RuntimeCacheRegistry } from './runtimeCacheRegistry';
 import {
+    PairSwitchOrchestrator,
+    PairSwitchActions,
+    PairContext,
+} from './pairSwitchOrchestrator';
+import {
+    PairSwitchPhase,
+} from './pairSwitchFsm';
+import {
     RuntimeFSM,
     RuntimeState,
     RuntimeFSMSnapshot,
@@ -131,7 +139,10 @@ export const assertAllowedPair = (pair: TradingPair): void => {
     }
 };
 
-/** Pair-switch FSM states */
+/**
+ * @deprecated Use PairSwitchPhase from pairSwitchFsm.ts for the 12-state FSM.
+ * Kept for backward compatibility with tests and external consumers.
+ */
 export type PairSwitchState = 'IDLE' | 'SWITCHING' | 'SYNCING' | 'READY' | 'FAILED';
 
 /** Structured pair-switch lifecycle event for observability */
@@ -141,6 +152,8 @@ export interface PairSwitchEvent {
     previousPairKey?: string | undefined;
     timestamp: number;
     switchState: PairSwitchState;
+    /** The 12-state FSM phase (if orchestrator is active). */
+    switchPhase?: PairSwitchPhase | undefined;
     detail?: string | undefined;
 }
 
@@ -154,7 +167,10 @@ export class TradingRuntime {
     private tickInFlight = false;
     private started = false;
     private shutdownInProgress = false;
+    /** @deprecated Legacy field — use pairSwitchOrchestrator.getPhase(). */
     private pairSwitchState: PairSwitchState = 'IDLE';
+    /** 12-state pair-switch orchestrator with context isolation. */
+    private readonly pairSwitchOrchestrator = new PairSwitchOrchestrator();
     private cpuWatchdog: CpuWatchdog | null = null;
     private tradeTape: TradeTape | null = null;
     private tradeTapeService: TradeTapeService | null = null;
@@ -222,16 +238,39 @@ export class TradingRuntime {
             previousPairKey,
             timestamp: Date.now(),
             switchState: this.pairSwitchState,
+            switchPhase: this.pairSwitchOrchestrator.getPhase(),
             detail,
         };
         logger.info(evt, `PAIR_SWITCH: ${event}`);
     }
 
     /**
-     * Get the current pair-switch FSM state.
+     * Get the current pair-switch FSM state (legacy 5-state).
+     * @deprecated Use getPairSwitchPhase() for the 12-state FSM.
      */
     getPairSwitchState(): PairSwitchState {
         return this.pairSwitchState;
+    }
+
+    /**
+     * Get the current 12-state pair-switch FSM phase.
+     */
+    getPairSwitchPhase(): PairSwitchPhase {
+        return this.pairSwitchOrchestrator.getPhase();
+    }
+
+    /**
+     * Get the pair-switch orchestrator (for API/observability).
+     */
+    getPairSwitchOrchestrator(): PairSwitchOrchestrator {
+        return this.pairSwitchOrchestrator;
+    }
+
+    /**
+     * Get the current pair context from the orchestrator.
+     */
+    getPairContext(): PairContext | null {
+        return this.pairSwitchOrchestrator.getContext();
     }
 
     /**
@@ -248,6 +287,15 @@ export class TradingRuntime {
         this.lastDataValid = true;
         this.lastDataInvalidReasons = [];
         this.cacheRegistry.reset();
+        // Reset feed timestamps to prevent stale-data false positives for the new pair
+        this.lastBookUpdateMs = 0;
+        this.lastTapeUpdateMs = 0;
+        this.lastLedgerAdvanceMs = 0;
+        this.lastBalanceSnapshotMs = 0;
+        this.lastBalanceLedgerIndex = 0;
+        // Reset health state from previous pair
+        this.lastMarketDataHealth = null;
+        this.lastExecutionGateResult = null;
     }
 
     async start(): Promise<void> {
@@ -445,7 +493,12 @@ export class TradingRuntime {
         }
         // Block ticks during pair switching to prevent mixed-pair execution
         if (this.pairSwitchState === 'SWITCHING' || this.pairSwitchState === 'SYNCING') {
-            logger.debug({ pairSwitchState: this.pairSwitchState }, 'Skipping tick - pair switch in progress');
+            logger.debug({ pairSwitchState: this.pairSwitchState }, 'Skipping tick - pair switch in progress (legacy)');
+            return;
+        }
+        // 12-state FSM guard: block unless orchestrator is READY
+        if (!this.pairSwitchOrchestrator.isReady()) {
+            logger.debug({ phase: this.pairSwitchOrchestrator.getPhase() }, 'Skipping tick - pair switch FSM not READY');
             return;
         }
         if (!this.xrpl || !this.tracker || !this.risk) {
@@ -617,7 +670,7 @@ export class TradingRuntime {
                 health: marketDataHealth,
                 isConnected: this.xrpl.isConnected(),
                 isReconnecting: this.xrpl.isReconnecting(),
-                pairSwitchState: this.pairSwitchState,
+                pairSwitchState: this.pairSwitchOrchestrator.getPhase(),
                 isShuttingDown: this.shutdownInProgress,
                 isInRecovery: this.feedStallRecovery?.isRecovering() ?? false,
                 isRiskShutdown: this.risk.isShutdown(),
@@ -1037,6 +1090,7 @@ export class TradingRuntime {
         return buildRuntimeTelemetry({
             fsmSnapshot: this.fsm.getSnapshot(),
             pairSwitchState: this.pairSwitchState,
+            pairSwitchPhase: this.pairSwitchOrchestrator.getPhase(),
             isConnected: this.xrpl?.isConnected() ?? false,
             isReconnecting: this.xrpl?.isReconnecting() ?? false,
             feedStallState: this.feedStallRecovery?.getState() ?? null,
@@ -1256,9 +1310,19 @@ export class TradingRuntime {
             return { success: true, activePair: currentPairKey };
         }
 
-        // Reject if already switching (FSM guard)
+        // Reject if already switching (legacy FSM guard)
         if (this.pairSwitchState === 'SWITCHING' || this.pairSwitchState === 'SYNCING') {
-            return { success: false, activePair: currentPairKey, error: 'Pair switch already in progress' };
+            return { success: false, activePair: currentPairKey, error: 'Pair switch already in progress (legacy)' };
+        }
+        // If orchestrator is still running async warmup from previous switch,
+        // force-reset it. The sync path already succeeded for the previous pair,
+        // so it's safe to interrupt the async phases and start a new switch.
+        if (!this.pairSwitchOrchestrator.isReady()) {
+            logger.info({
+                phase: this.pairSwitchOrchestrator.getPhase(),
+                newPair: pairKey,
+            }, 'Interrupting in-flight orchestrator for new pair switch');
+            this.pairSwitchOrchestrator.reset();
         }
 
         if (!pairKey || !isValidPairKey(pairKey)) {
@@ -1270,82 +1334,197 @@ export class TradingRuntime {
             return { success: false, activePair: currentPairKey, error: `Pair not found: ${pairKey}` };
         }
 
-        // ─── FSM: IDLE → SWITCHING ───────────────────────────────────────
+        // ─── Build the target TradingPair ────────────────────────────────
+        const nextPair: TradingPair = {
+            baseCurrency: target.base.currency,
+            quoteCurrency: target.quote.currency,
+            baseIssuer: target.base.issuer,
+            quoteIssuer: target.quote.issuer,
+            issuer: target.quote.issuer ?? target.base.issuer,
+            description: target.description,
+        };
+
+        try {
+            validateTradingPair(nextPair);
+            assertAllowedPair(nextPair);
+        } catch (err) {
+            const error = err instanceof Error ? err.message : 'unknown error';
+            return { success: false, activePair: currentPairKey, error };
+        }
+
+        // ─── Legacy FSM: IDLE → SWITCHING ────────────────────────────────
         this.pairSwitchState = 'SWITCHING';
         this.emitSwitchEvent('PAIR_SWITCH_START', pairKey, currentPairKey);
 
         const previousPair = { ...this.baseConfig.tradingPair };
         const previousPairKey = currentPairKey;
 
-        const applyPair = (candidate: TradingPair): void => {
-            // 1. Config (single source of truth)
-            this.baseConfig.tradingPair = { ...candidate };
-            this.baseConfig.tradingPairs = [{ ...candidate }];
+        // Build action callbacks for the orchestrator
+        const actions: PairSwitchActions = {
+            detachOldFeeds: (_oldPair: TradingPair) => {
+                // XRPL streams are pair-agnostic (ledger + transactions).
+                // Order book is polled per-tick with the current pair.
+                // No actual unsubscribe needed — this is a conceptual detach.
+                logger.debug({ pair: previousPairKey }, 'Feed detach: XRPL streams are pair-agnostic, no unsubscribe needed');
+            },
+            destroyPairContext: () => {
+                // Clear trade tape buffer for old pair
+                this.tradeTape?.setPair(previousPair); // triggers clear if pair changes
+                // Reset order book tracker state
+                this.tracker?.setPair(previousPair); // will be overwritten by applyNewPair
+            },
+            resetMetricsWindows: () => {
+                this.invalidateMarketCaches();
+                // Reset the first-tick flag so the runtime FSM can re-enter WARMING if needed
+                // (not needed since FSM stays READY/DEGRADED — health gate handles warmup)
+            },
+            applyNewPair: (newPair: TradingPair) => {
+                // 1. Config (single source of truth)
+                this.baseConfig.tradingPair = { ...newPair };
+                this.baseConfig.tradingPairs = [{ ...newPair }];
 
-            // 2. Market data layer — clears buffers for the new pair
-            this.tradeTape?.setPair(candidate);
-            this.tradeTapeService?.setPair(candidate);
-            this.tracker?.setPair(candidate);
+                // 2. Market data layer
+                this.tradeTape?.setPair(newPair);
+                this.tradeTapeService?.setPair(newPair);
+                this.tracker?.setPair(newPair);
 
-            // 3. Execution layer — executor must target new pair
-            this.executor?.setPair(candidate);
+                // 3. Execution layer
+                this.executor?.setPair(newPair);
 
-            // 4. Strategy layer — all strategies must target new pair
-            for (const strategy of this.strategies) {
-                if (typeof strategy.setPair === 'function') {
-                    strategy.setPair(candidate);
+                // 4. Strategy layer
+                for (const strategy of this.strategies) {
+                    if (typeof strategy.setPair === 'function') {
+                        strategy.setPair(newPair);
+                    }
                 }
-            }
+            },
+            subscribeFeeds: async (_newPair: TradingPair) => {
+                // XRPL streams don't need resubscription (pair-agnostic).
+                // Just ensure the connection is alive.
+                if (this.xrpl && !this.xrpl.isConnected()) {
+                    await this.xrpl.connect();
+                    await this.xrpl.subscribe(this.baseConfig.tradingPair);
+                }
+            },
+            refreshOrderBook: async () => {
+                if (!this.tracker) return false;
+                await this.tracker.refresh();
+                const state = this.tracker.getState();
+                return state.bids.length > 0 || state.asks.length > 0;
+            },
+            hasTapeEvent: () => {
+                const trades = this.tradeTape?.getAll() ?? [];
+                return trades.length > 0;
+            },
+            refreshBalances: async () => {
+                if (!this.walletAddress || !this.risk) return false;
+                try {
+                    const reservesOk = await this.risk.checkReserves(this.walletAddress);
+                    this.lastBalanceSnapshotMs = Date.now();
+                    this.lastBalanceLedgerIndex = this.xrpl?.getLedgerIndex() ?? 0;
+                    return reservesOk;
+                } catch {
+                    return false;
+                }
+            },
+            validateDataTruth: () => {
+                // Quick validation: check order book is non-empty and connection is alive
+                const bookState = this.tracker?.getState();
+                const connected = this.xrpl?.isConnected() ?? false;
+                const hasBook = (bookState?.bids.length ?? 0) > 0 || (bookState?.asks.length ?? 0) > 0;
+                const reasons: string[] = [];
+                if (!connected) reasons.push('xrpl-not-connected');
+                if (!hasBook) reasons.push('empty-order-book');
+                return { valid: reasons.length === 0, reasons };
+            },
         };
 
         try {
-            const nextPair: TradingPair = {
-                baseCurrency: target.base.currency,
-                quoteCurrency: target.quote.currency,
-                baseIssuer: target.base.issuer,
-                quoteIssuer: target.quote.issuer,
-                issuer: target.quote.issuer ?? target.base.issuer,
-                description: target.description,
-            };
+            // Execute the 12-phase pair switch synchronously (non-async phases)
+            // and asynchronously (subscribe, refresh, validate).
+            // We run this synchronously to match existing behavior (setActivePair is sync).
+            // The orchestrator drives the FSM through all phases.
+            //
+            // IMPORTANT: Since setActivePair() is synchronous in the current API contract,
+            // we apply the pair synchronously first (for backward compat), then fire the
+            // orchestrator asynchronously to drive through the remaining phases (book,
+            // tape, balances, validation). Phases 1-5 are effectively done by the sync
+            // path, so the orchestrator's action callbacks for those phases are no-ops.
 
-            validateTradingPair(nextPair);
-            assertAllowedPair(nextPair);
-
-            applyPair(nextPair);
+            // Apply the new pair synchronously (equivalent to orchestrator phases 1-5)
+            actions.applyNewPair(nextPair);
             this.emitSwitchEvent('PAIR_SWITCH_APPLY_COMPLETE', pairKey, previousPairKey);
 
-            // ─── FSM: SWITCHING → SYNCING ────────────────────────────────
+            // ─── Legacy FSM: SWITCHING → SYNCING ─────────────────────────
             this.pairSwitchState = 'SYNCING';
-
-            // Invalidate all stale market caches from the previous pair
             this.invalidateMarketCaches();
             this.emitSwitchEvent('PAIR_SWITCH_CACHES_INVALIDATED', pairKey, previousPairKey);
 
-            // ─── FSM: SYNCING → READY ────────────────────────────────────
-            this.pairSwitchState = 'READY';
-            // Will transition to IDLE on next successful tick
+            // ─── Legacy FSM: SYNCING → IDLE ──────────────────────────────
             this.pairSwitchState = 'IDLE';
-            this.emitSwitchEvent('PAIR_SWITCH_COMPLETE', pairKey, previousPairKey);
+
+            // ─── 12-State Orchestrator: async phases ─────────────────────
+            // Drive the orchestrator through all 12 phases asynchronously.
+            // Execution is blocked by the orchestrator FSM guard in tick().
+            //
+            // Override sync-path callbacks with no-ops since the sync path
+            // already applied them above. Only async phases (subscribe,
+            // refreshOrderBook, hasTapeEvent, refreshBalances, validateDataTruth)
+            // run real work inside the orchestrator.
+            const orchestratorActions: PairSwitchActions = {
+                ...actions,
+                // Sync path already called these — make them no-ops in orchestrator
+                detachOldFeeds: () => {},
+                destroyPairContext: () => {},
+                resetMetricsWindows: () => {},
+                applyNewPair: () => {},
+            };
+
+            this.pairSwitchOrchestrator.executePairSwitch(previousPair, nextPair, orchestratorActions)
+                .then((result) => {
+                    if (result.success) {
+                        this.emitSwitchEvent('PAIR_SWITCH_COMPLETE', pairKey, previousPairKey,
+                            `orchestrator completed in ${result.durationMs}ms`);
+                    } else {
+                        // Orchestrator failed but sync path already succeeded —
+                        // recover the orchestrator FSM to READY
+                        this.pairSwitchOrchestrator.recoverFromFailure();
+                        logger.warn({
+                            error: result.error,
+                            phases: result.phases,
+                        }, 'Pair switch orchestrator reported failure but sync path succeeded — recovered');
+                    }
+                })
+                .catch((err) => {
+                    // Should not happen (executePairSwitch catches internally)
+                    logger.error({ err }, 'Unexpected orchestrator error');
+                    this.pairSwitchOrchestrator.recoverFromFailure();
+                });
 
             return { success: true, activePair: this.getActivePair() };
         } catch (err) {
-            // ─── FSM: → FAILED, then rollback → IDLE ─────────────────────
+            // ─── Failure → rollback ──────────────────────────────────────
             this.pairSwitchState = 'FAILED';
             this.emitSwitchEvent('PAIR_SWITCH_FAILED', pairKey, previousPairKey,
                 err instanceof Error ? err.message : 'unknown error');
 
             try {
-                applyPair(previousPair);
+                // Rollback: re-apply the previous pair
+                actions.applyNewPair(previousPair);
             } catch (rollbackErr) {
                 logger.error({ rollbackErr, pair: previousPairKey }, 'Rollback applyPair failed');
             }
 
-            // Always invalidate caches after a failed switch attempt,
-            // regardless of whether rollback succeeded. Stale cross-pair
-            // data is worse than empty caches.
+            // Always invalidate caches after a failed switch attempt
             this.invalidateMarketCaches();
 
             this.pairSwitchState = 'IDLE';
+
+            // Recover orchestrator FSM
+            if (this.pairSwitchOrchestrator.isSwitching() || this.pairSwitchOrchestrator.fsm.isFailed()) {
+                this.pairSwitchOrchestrator.fsm.fail('sync-rollback');
+                this.pairSwitchOrchestrator.recoverFromFailure();
+            }
 
             const error = err instanceof Error ? err.message : 'unknown error';
             logger.error({ err, from: previousPairKey, attempted: pairKey }, 'Failed to switch pair, rolled back');
@@ -1454,6 +1633,7 @@ export class TradingRuntime {
         this.started = false;
         this.shutdownInProgress = false;
         this.pairSwitchState = 'IDLE';
+        this.pairSwitchOrchestrator.reset();
         this.tradeTape = null;
         this.tradeTapeService = null;
         this.httpServer = null;

@@ -16,6 +16,7 @@ import { ExecutionGateResult } from '../execution/executionGate';
 import { MarketHealthResult } from '../market/marketDataHealth';
 import { FeedStallState, StallRecoveryStage } from '../market/feedStallRecovery';
 import { PairSwitchState } from './tradingRuntime';
+import { PairSwitchPhase } from './pairSwitchFsm';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -67,6 +68,8 @@ export interface RuntimeTelemetry {
     fsm: RuntimeFSMSnapshot;
     /** Pair-switch FSM state. */
     pairSwitchState: PairSwitchState;
+    /** 12-state pair-switch FSM phase. */
+    pairSwitchPhase: PairSwitchPhase;
     /** Feed health dimensions. */
     feed: FeedHealthTelemetry;
     /** Ledger progress telemetry. */
@@ -88,6 +91,7 @@ export interface RuntimeTelemetry {
 export interface RuntimeTelemetryInput {
     fsmSnapshot: RuntimeFSMSnapshot;
     pairSwitchState: PairSwitchState;
+    pairSwitchPhase?: PairSwitchPhase;
     isConnected: boolean;
     isReconnecting: boolean;
     feedStallState: FeedStallState | null;
@@ -117,6 +121,7 @@ export function buildRuntimeTelemetry(
         runtimeState: input.fsmSnapshot.state,
         fsm: input.fsmSnapshot,
         pairSwitchState: input.pairSwitchState,
+        pairSwitchPhase: input.pairSwitchPhase ?? 'READY',
         feed: {
             connected: input.isConnected,
             reconnecting: input.isReconnecting,

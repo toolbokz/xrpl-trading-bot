@@ -29,7 +29,7 @@ const baseInput = (): ExecutionGateInput => ({
     health: healthyResult(),
     isConnected: true,
     isReconnecting: false,
-    pairSwitchState: 'IDLE',
+    pairSwitchState: 'READY',
     isShuttingDown: false,
     isInRecovery: false,
     isRiskShutdown: false,
@@ -74,26 +74,46 @@ describe('evaluateExecutionGate', () => {
         expect(result.reasons).toContain('feed-reconnecting');
     });
 
-    it('BLOCK during pair switch (SWITCHING)', () => {
+    it('BLOCK during pair switch (FREEZE_EXECUTION)', () => {
         const input = baseInput();
-        input.pairSwitchState = 'SWITCHING';
+        input.pairSwitchState = 'FREEZE_EXECUTION';
         const result = evaluateExecutionGate(input);
         expect(result.verdict).toBe('BLOCK');
-        expect(result.reasons[0]).toMatch(/pair-switch-state/);
+        expect(result.reasons[0]).toMatch(/pair-switch-phase/);
     });
 
-    it('BLOCK during pair switch (SYNCING)', () => {
+    it('BLOCK during pair switch (WAIT_FIRST_BOOK)', () => {
         const input = baseInput();
-        input.pairSwitchState = 'SYNCING';
+        input.pairSwitchState = 'WAIT_FIRST_BOOK';
         const result = evaluateExecutionGate(input);
         expect(result.verdict).toBe('BLOCK');
     });
 
-    it('ALLOW when pair switch is IDLE or READY', () => {
-        for (const state of ['IDLE', 'READY', 'FAILED'] as const) {
+    it('ALLOW only when pair switch phase is READY', () => {
+        const readyInput = baseInput();
+        readyInput.pairSwitchState = 'READY';
+        expect(evaluateExecutionGate(readyInput).verdict).toBe('ALLOW');
+    });
+
+    it('BLOCK when pair switch phase is FAILED', () => {
+        const input = baseInput();
+        input.pairSwitchState = 'FAILED';
+        expect(evaluateExecutionGate(input).verdict).toBe('BLOCK');
+    });
+
+    it('BLOCK for every non-READY pair switch phase', () => {
+        const nonReadyPhases = [
+            'FREEZE_EXECUTION', 'UNSUBSCRIBE_OLD_FEEDS', 'DESTROY_PAIR_CONTEXT',
+            'RESET_PAIR_METRICS_WINDOWS', 'CREATE_NEW_PAIR_CONTEXT', 'SUBSCRIBE_NEW_FEEDS',
+            'WAIT_FIRST_BOOK', 'WAIT_FIRST_TAPE', 'REFRESH_BALANCES',
+            'VALIDATE_DATA_TRUTH', 'FAILED',
+        ] as const;
+        for (const phase of nonReadyPhases) {
             const input = baseInput();
-            input.pairSwitchState = state;
-            expect(evaluateExecutionGate(input).verdict).toBe('ALLOW');
+            input.pairSwitchState = phase;
+            const result = evaluateExecutionGate(input);
+            expect(result.verdict).toBe('BLOCK');
+            expect(result.reasons[0]).toContain(`pair-switch-phase:${phase}`);
         }
     });
 
@@ -147,7 +167,7 @@ describe('evaluateExecutionGate', () => {
         const input = baseInput();
         input.isShuttingDown = true;
         input.isConnected = false;
-        input.pairSwitchState = 'SWITCHING';
+        input.pairSwitchState = 'FREEZE_EXECUTION';
         input.isInRecovery = true;
         const result = evaluateExecutionGate(input);
         expect(result.verdict).toBe('BLOCK');

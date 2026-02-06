@@ -50,7 +50,7 @@ const baseGateInput = (): ExecutionGateInput => ({
     health: healthyResult(),
     isConnected: true,
     isReconnecting: false,
-    pairSwitchState: 'IDLE',
+    pairSwitchState: 'READY',
     isShuttingDown: false,
     isInRecovery: false,
     isRiskShutdown: false,
