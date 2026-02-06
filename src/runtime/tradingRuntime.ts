@@ -98,6 +98,19 @@ export const assertAllowedPair = (pair: TradingPair): void => {
     }
 };
 
+/** Pair-switch FSM states */
+export type PairSwitchState = 'IDLE' | 'SWITCHING' | 'SYNCING' | 'READY' | 'FAILED';
+
+/** Structured pair-switch lifecycle event for observability */
+export interface PairSwitchEvent {
+    event: string;
+    pairKey: string;
+    previousPairKey?: string | undefined;
+    timestamp: number;
+    switchState: PairSwitchState;
+    detail?: string | undefined;
+}
+
 export class TradingRuntime {
     private xrpl: XRPLWebSocket | null = null;
     private tracker: OrderBookTracker | null = null;
@@ -108,6 +121,7 @@ export class TradingRuntime {
     private tickInFlight = false;
     private started = false;
     private shutdownInProgress = false;
+    private pairSwitchState: PairSwitchState = 'IDLE';
     private cpuWatchdog: CpuWatchdog | null = null;
     private tradeTape: TradeTape | null = null;
     private tradeTapeService: TradeTapeService | null = null;
@@ -133,6 +147,40 @@ export class TradingRuntime {
         }
 
         this.baseConfig = config ?? loadConfig();
+    }
+
+    /**
+     * Emit a structured pair-switch lifecycle event for observability.
+     */
+    private emitSwitchEvent(event: string, pairKey: string, previousPairKey?: string, detail?: string): void {
+        const evt: PairSwitchEvent = {
+            event,
+            pairKey,
+            previousPairKey,
+            timestamp: Date.now(),
+            switchState: this.pairSwitchState,
+            detail,
+        };
+        logger.info(evt, `PAIR_SWITCH: ${event}`);
+    }
+
+    /**
+     * Get the current pair-switch FSM state.
+     */
+    getPairSwitchState(): PairSwitchState {
+        return this.pairSwitchState;
+    }
+
+    /**
+     * Invalidate all cached market data snapshots.
+     * Must be called on every pair switch to prevent stale cross-pair data.
+     */
+    private invalidateMarketCaches(): void {
+        this.currentFlowMetrics = null;
+        this.currentOrderBookSnapshot = null;
+        this.currentNormalizedTrade = null;
+        this.currentMarketHealthScore = 0;
+        this.marketSnapshotSequence = 0;
     }
 
     async start(): Promise<void> {
@@ -260,6 +308,11 @@ export class TradingRuntime {
     async tick(): Promise<void> {
         // Silently skip if runtime not ready or shutting down
         if (!this.started || this.shutdownInProgress) {
+            return;
+        }
+        // Block ticks during pair switching to prevent mixed-pair execution
+        if (this.pairSwitchState === 'SWITCHING' || this.pairSwitchState === 'SYNCING') {
+            logger.debug({ pairSwitchState: this.pairSwitchState }, 'Skipping tick - pair switch in progress');
             return;
         }
         if (!this.xrpl || !this.tracker || !this.risk) {
@@ -790,8 +843,15 @@ export class TradingRuntime {
 
     setActivePair(pairKey: string): { success: boolean; activePair: string; error?: string } {
         const currentPairKey = this.getActivePair();
+
+        // Idempotent: no-op if already on this pair
         if (pairKey === currentPairKey) {
             return { success: true, activePair: currentPairKey };
+        }
+
+        // Reject if already switching (FSM guard)
+        if (this.pairSwitchState === 'SWITCHING' || this.pairSwitchState === 'SYNCING') {
+            return { success: false, activePair: currentPairKey, error: 'Pair switch already in progress' };
         }
 
         if (!pairKey || !isValidPairKey(pairKey)) {
@@ -803,15 +863,32 @@ export class TradingRuntime {
             return { success: false, activePair: currentPairKey, error: `Pair not found: ${pairKey}` };
         }
 
+        // ─── FSM: IDLE → SWITCHING ───────────────────────────────────────
+        this.pairSwitchState = 'SWITCHING';
+        this.emitSwitchEvent('PAIR_SWITCH_START', pairKey, currentPairKey);
+
         const previousPair = { ...this.baseConfig.tradingPair };
         const previousPairKey = currentPairKey;
 
         const applyPair = (candidate: TradingPair): void => {
+            // 1. Config (single source of truth)
             this.baseConfig.tradingPair = { ...candidate };
             this.baseConfig.tradingPairs = [{ ...candidate }];
+
+            // 2. Market data layer — clears buffers for the new pair
             this.tradeTape?.setPair(candidate);
             this.tradeTapeService?.setPair(candidate);
             this.tracker?.setPair(candidate);
+
+            // 3. Execution layer — executor must target new pair
+            this.executor?.setPair(candidate);
+
+            // 4. Strategy layer — all strategies must target new pair
+            for (const strategy of this.strategies) {
+                if (typeof strategy.setPair === 'function') {
+                    strategy.setPair(candidate);
+                }
+            }
         };
 
         try {
@@ -828,15 +905,40 @@ export class TradingRuntime {
             assertAllowedPair(nextPair);
 
             applyPair(nextPair);
+            this.emitSwitchEvent('PAIR_SWITCH_APPLY_COMPLETE', pairKey, previousPairKey);
 
-            logger.info({ from: previousPairKey, to: pairKey }, 'Switched active trading pair');
+            // ─── FSM: SWITCHING → SYNCING ────────────────────────────────
+            this.pairSwitchState = 'SYNCING';
+
+            // Invalidate all stale market caches from the previous pair
+            this.invalidateMarketCaches();
+            this.emitSwitchEvent('PAIR_SWITCH_CACHES_INVALIDATED', pairKey, previousPairKey);
+
+            // ─── FSM: SYNCING → READY ────────────────────────────────────
+            this.pairSwitchState = 'READY';
+            // Will transition to IDLE on next successful tick
+            this.pairSwitchState = 'IDLE';
+            this.emitSwitchEvent('PAIR_SWITCH_COMPLETE', pairKey, previousPairKey);
+
             return { success: true, activePair: this.getActivePair() };
         } catch (err) {
+            // ─── FSM: → FAILED, then rollback → IDLE ─────────────────────
+            this.pairSwitchState = 'FAILED';
+            this.emitSwitchEvent('PAIR_SWITCH_FAILED', pairKey, previousPairKey,
+                err instanceof Error ? err.message : 'unknown error');
+
             try {
                 applyPair(previousPair);
             } catch (rollbackErr) {
                 logger.error({ rollbackErr, pair: previousPairKey }, 'Rollback applyPair failed');
             }
+
+            // Always invalidate caches after a failed switch attempt,
+            // regardless of whether rollback succeeded. Stale cross-pair
+            // data is worse than empty caches.
+            this.invalidateMarketCaches();
+
+            this.pairSwitchState = 'IDLE';
 
             const error = err instanceof Error ? err.message : 'unknown error';
             logger.error({ err, from: previousPairKey, attempted: pairKey }, 'Failed to switch pair, rolled back');
@@ -932,6 +1034,9 @@ export class TradingRuntime {
         // Clear global trade tape reference
         setGlobalTradeTape(null);
 
+        // Invalidate all market caches
+        this.invalidateMarketCaches();
+
         this.xrpl = null;
         this.tracker = null;
         this.risk = null;
@@ -941,6 +1046,7 @@ export class TradingRuntime {
         this.tickInFlight = false;
         this.started = false;
         this.shutdownInProgress = false;
+        this.pairSwitchState = 'IDLE';
         this.tradeTape = null;
         this.tradeTapeService = null;
         this.httpServer = null;

@@ -65,9 +65,16 @@ export class OfferExecutor {
         private readonly wallet: Wallet | null,
         private readonly risk: RiskEngine,
         private readonly paper: boolean,
-        private readonly pair: TradingPair,
+        private pair: TradingPair,
         private readonly strategyConfig?: StrategyConfig
     ) { }
+
+    /**
+     * Update the trading pair (called by TradingRuntime on pair switch).
+     */
+    setPair(pair: TradingPair): void {
+        this.pair = pair;
+    }
 
     /**
      * Set the current strategy name for feedback tracking.

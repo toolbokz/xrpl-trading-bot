@@ -22,12 +22,16 @@ export class AMMArbitrageStrategy implements Strategy {
     constructor(
         private readonly amm: AMMService,
         private readonly config: StrategyConfig,
-        private readonly pair: TradingPair,
+        private pair: TradingPair,
         private readonly executor: OfferExecutor,
         private readonly risk: RiskEngine,
         flowConfig?: Partial<FlowConfig>
     ) {
         this.flowConfig = flowConfig ?? DEFAULT_FLOW_CONFIG;
+    }
+
+    setPair(pair: TradingPair): void {
+        this.pair = pair;
     }
 
     async tick(ctx: StrategyContext): Promise<void> {

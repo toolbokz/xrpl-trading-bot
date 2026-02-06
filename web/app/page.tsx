@@ -347,6 +347,8 @@ export default function Page() {
                         ...prev,
                         liquidity: pair.liquidity === 'high' ? 'High' : pair.liquidity === 'medium' ? 'Medium' : 'Low',
                     }));
+                    // Immediately refresh balances for the new pair
+                    fetchWalletInfo(pair);
                 }
             } else {
                 setSelectedPairKey(previousPairKey);

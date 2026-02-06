@@ -286,7 +286,7 @@ export default async function handler(
                     fromRuntime: true,
                 };
 
-                setOrderBookLastUpdate(response.lastUpdated);
+                setOrderBookLastUpdate(response.lastUpdated, pairKey);
                 res.setHeader('Cache-Control', 'private, max-age=1');
                 return res.status(200).json(response);
             }
@@ -322,7 +322,7 @@ export default async function handler(
         };
 
         // Report order book health status
-        setOrderBookLastUpdate(response.lastUpdated);
+        setOrderBookLastUpdate(response.lastUpdated, pairKey);
 
         // Short cache for order book data
         res.setHeader('Cache-Control', 'private, max-age=1');

@@ -101,22 +101,37 @@ const STALE_THRESHOLD_CANDLES = 60_000; // 60 seconds
 // In-memory cache for last known update times
 // (These would ideally come from a shared state manager)
 let lastOrderBookUpdate: number | null = null;
+let lastOrderBookPairKey: string | null = null;
 let lastCandlesUpdate: number | null = null;
 let lastCandlesSource: 'live' | 'historical' | 'empty' | 'unknown' = 'unknown';
+let lastCandlesPairKey: string | null = null;
 
 /**
  * Update order book timestamp (called from useOrderBook hook via API)
  */
-export function setOrderBookLastUpdate(ts: number): void {
+export function setOrderBookLastUpdate(ts: number, pairKey?: string): void {
     lastOrderBookUpdate = ts;
+    if (pairKey) lastOrderBookPairKey = pairKey;
 }
 
 /**
  * Update candles info (called from candles API)
  */
-export function setCandlesInfo(ts: number, source: 'live' | 'historical' | 'empty'): void {
+export function setCandlesInfo(ts: number, source: 'live' | 'historical' | 'empty', pairKey?: string): void {
     lastCandlesUpdate = ts;
     lastCandlesSource = source;
+    if (pairKey) lastCandlesPairKey = pairKey;
+}
+
+/**
+ * Reset health tracking state (called on pair switch to prevent stale cross-pair data).
+ */
+export function resetHealthTracking(): void {
+    lastOrderBookUpdate = null;
+    lastOrderBookPairKey = null;
+    lastCandlesUpdate = null;
+    lastCandlesSource = 'unknown';
+    lastCandlesPairKey = null;
 }
 
 // =============================================================================

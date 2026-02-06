@@ -160,7 +160,7 @@ export class PathArbitrageStrategy implements Strategy {
     constructor(
         private readonly client: Client,
         private readonly config: StrategyConfig,
-        private readonly pair: TradingPair,
+        private pair: TradingPair,
         private readonly executor: OfferExecutor,
         private readonly paperTrading: boolean,
         risk: RiskEngine,
@@ -183,6 +183,10 @@ export class PathArbitrageStrategy implements Strategy {
         } else {
             logger.warn({}, 'Path arbitrage strategy LIVE execution enabled');
         }
+    }
+
+    setPair(pair: TradingPair): void {
+        this.pair = pair;
     }
 
     async tick(ctx: StrategyContext): Promise<void> {

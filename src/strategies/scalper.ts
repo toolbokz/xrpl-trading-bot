@@ -36,12 +36,16 @@ export class ScalperStrategy implements Strategy {
     constructor(
         private readonly tracker: OrderBookTracker,
         private readonly config: StrategyConfig,
-        private readonly pair: TradingPair,
+        private pair: TradingPair,
         private readonly executor: OfferExecutor,
         private readonly risk: RiskEngine,
         flowConfig?: Partial<FlowConfig>
     ) {
         this.flowConfig = flowConfig ?? DEFAULT_FLOW_CONFIG;
+    }
+
+    setPair(pair: TradingPair): void {
+        this.pair = pair;
     }
 
     setPositionSize(size: number): void {

@@ -4,6 +4,7 @@ import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
 import { findPair, isValidPairKey } from '../../../../src/config/tradingPairs';
 import { validateBody, tradingPairSchema } from '../../../lib/validation/schemas';
 import { logger } from '../../../../src/analytics/logger';
+import { resetHealthTracking } from '../../api/market/health';
 
 export const config = {
     api: { bodyParser: false },
@@ -51,6 +52,10 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
                 requestId: req.requestId,
             });
         }
+
+        // Reset health tracking timestamps so stale data from the previous pair
+        // doesn't bleed into the new pair's health assessment.
+        resetHealthTracking();
 
         // Audit log sensitive action
         await logSensitiveAction(req.requestId, 'bot:trading_pair', { pairKey });

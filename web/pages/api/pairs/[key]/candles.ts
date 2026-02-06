@@ -377,7 +377,7 @@ export default async function handler(
         };
 
         // Report candles health status
-        setCandlesInfo(response.lastUpdated, source);
+        setCandlesInfo(response.lastUpdated, source, pairKey);
 
         // Short cache
         res.setHeader('Cache-Control', 'private, max-age=5');

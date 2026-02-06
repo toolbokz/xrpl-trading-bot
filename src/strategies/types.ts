@@ -45,8 +45,12 @@ export interface StrategyContext {
     regimePolicy?: StrategyRegimePolicyContext | undefined;
 }
 
+import { TradingPair } from '../config';
+
 export interface Strategy {
     name: string;
     tick(ctx: StrategyContext): Promise<void>;
     shutdown?(): Promise<void>;
+    /** Update the trading pair (called by TradingRuntime on pair switch). */
+    setPair?(pair: TradingPair): void;
 }
