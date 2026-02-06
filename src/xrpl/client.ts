@@ -76,6 +76,11 @@ export class XRPLWebSocket extends EventEmitter {
         return this.connected && (this.client?.isConnected() ?? false);
     }
 
+    /** Whether the client is currently attempting to reconnect. */
+    isReconnecting(): boolean {
+        return this.reconnecting;
+    }
+
     getClient(): Client {
         if (!this.client) {
             throw new Error('XRPL client not connected - call connect() first');

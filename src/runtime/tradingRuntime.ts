@@ -50,6 +50,26 @@ import {
     loadRegimePolicyConfig,
     getRegimePolicyEngine,
 } from '../analytics/regimePolicy';
+import {
+    computeMarketDataHealth,
+    MarketHealthResult,
+    MarketHealthConfig,
+    DEFAULT_HEALTH_CONFIG,
+    buildBookSignalFromState,
+    TapeSignalInput,
+    LedgerSignalInput,
+    BalanceSignalInput,
+} from '../market/marketDataHealth';
+import {
+    evaluateExecutionGate,
+    ExecutionGateResult,
+    ExecutionGateConfig,
+    DEFAULT_GATE_CONFIG,
+} from '../execution/executionGate';
+import {
+    FeedStallRecovery,
+    FeedStallState,
+} from '../market/feedStallRecovery';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -136,6 +156,15 @@ export class TradingRuntime {
     private currentOrderBookSnapshot: OrderBookSnapshot | null = null;
     private currentNormalizedTrade: NormalizedTrade | null = null;
     private currentMarketHealthScore = 0;
+    private lastLedgerCloseMs = 0;
+    private previousLedgerIndex = 0;
+    private lastBalanceSnapshotMs = 0;
+    private lastBalanceLedgerIndex = 0;
+    private feedStallRecovery: FeedStallRecovery | null = null;
+    private lastMarketDataHealth: MarketHealthResult | null = null;
+    private lastExecutionGateResult: ExecutionGateResult | null = null;
+    private healthConfig: MarketHealthConfig = DEFAULT_HEALTH_CONFIG;
+    private gateConfig: ExecutionGateConfig = DEFAULT_GATE_CONFIG;
 
     constructor(config?: AppConfig) {
         // Security gate: enforce local-only execution on construction
@@ -235,6 +264,15 @@ export class TradingRuntime {
             this.tradeTape = tradeTape;
             this.tradeTapeService = tradeTapeService;
 
+            // Track ledger close time for health scoring
+            xrpl.on('ledger', () => {
+                this.lastLedgerCloseMs = Date.now();
+                this.previousLedgerIndex = this.xrpl?.getLedgerIndex() ?? 0;
+                // Inform stall recovery that the book feed is alive
+                // (ledger events prove the WS is active even if no trades)
+                this.feedStallRecovery?.recordBookEvent();
+            });
+
             let txCount = 0;
             xrpl.on('transaction', (tx: TransactionStream) => {
                 txCount += 1;
@@ -242,6 +280,8 @@ export class TradingRuntime {
                     logger.info({ txCount, lastTxType: tx.transaction?.TransactionType }, 'TradeTape: Transaction stream active');
                 }
                 this.tradeTapeService?.processTransaction(tx);
+                // Inform stall recovery that the tape feed is alive
+                this.feedStallRecovery?.recordTapeEvent();
             });
 
             this.strategies = [
@@ -279,6 +319,28 @@ export class TradingRuntime {
                 }
                 logger.info({ enabled: true }, 'Regime policy engine initialized');
             }
+
+            // Initialize feed stall recovery
+            this.feedStallRecovery = new FeedStallRecovery({
+                softReconnect: async () => {
+                    logger.info('Feed stall recovery: soft reconnect — re-subscribing streams');
+                    await this.xrpl?.subscribe(this.baseConfig.tradingPair);
+                },
+                hardResubscribe: async () => {
+                    logger.info('Feed stall recovery: hard resubscribe — reconnecting WebSocket');
+                    await this.xrpl?.disconnect();
+                    await this.xrpl?.connect();
+                    await this.xrpl?.subscribe(this.baseConfig.tradingPair);
+                },
+                fullClientRebuild: async () => {
+                    logger.warn('Feed stall recovery: full client rebuild');
+                    await this.xrpl?.disconnect();
+                    const { disconnectXrplClient } = await import('../xrpl/sharedClient');
+                    await disconnectXrplClient();
+                    await this.xrpl?.connect();
+                    await this.xrpl?.subscribe(this.baseConfig.tradingPair);
+                },
+            });
 
             // Start CPU watchdog to prevent runaway CPU usage
             this.cpuWatchdog = startCpuWatchdog(() => {
@@ -346,6 +408,9 @@ export class TradingRuntime {
             if (this.walletAddress) {
                 const reservesOk = await this.risk.checkReserves(this.walletAddress);
                 if (!reservesOk) return;
+                // Track balance snapshot freshness for health scoring
+                this.lastBalanceSnapshotMs = Date.now();
+                this.lastBalanceLedgerIndex = this.xrpl?.getLedgerIndex() ?? 0;
             }
             await this.tracker.refresh();
 
@@ -377,6 +442,65 @@ export class TradingRuntime {
                 book: this.currentOrderBookSnapshot,
                 amm: null,
             });
+
+            // ─────────────────────────────────────────────────────────────────
+            // Feed Stall Recovery — evaluate and trigger staged reconnect
+            // ─────────────────────────────────────────────────────────────────
+            if (this.feedStallRecovery) {
+                await this.feedStallRecovery.evaluate();
+            }
+
+            // ─────────────────────────────────────────────────────────────────
+            // Market Data Health Quorum — multi-signal truth enforcement
+            // ─────────────────────────────────────────────────────────────────
+            const tapeSignal: TapeSignalInput = {
+                lastEventMs: latestTrade?.ts ?? 0,
+                eventCount: this.tradeTape?.getRecent(60_000).length ?? 0,
+                isMonotonic: true, // TradeTape.insertSorted guarantees monotonicity
+                lastPrice: latestTrade?.price ?? 0,
+            };
+            const ledgerSignal: LedgerSignalInput = {
+                ledgerIndex: this.xrpl.getLedgerIndex(),
+                previousLedgerIndex: this.previousLedgerIndex,
+                lastCloseMs: this.lastLedgerCloseMs,
+            };
+            const balanceSignal: BalanceSignalInput = {
+                lastSnapshotMs: this.lastBalanceSnapshotMs,
+                snapshotLedgerIndex: this.lastBalanceLedgerIndex,
+                currentLedgerIndex: this.xrpl.getLedgerIndex(),
+            };
+            const bookSignal = buildBookSignalFromState(orderBookState);
+            const marketDataHealth = computeMarketDataHealth(
+                { tape: tapeSignal, book: bookSignal, ledger: ledgerSignal, balance: balanceSignal },
+                this.healthConfig,
+                this.gateConfig.minHealthScore,
+                nowMs,
+            );
+            this.lastMarketDataHealth = marketDataHealth;
+
+            // ─────────────────────────────────────────────────────────────────
+            // Execution Gate — block strategies if data truth quorum fails
+            // ─────────────────────────────────────────────────────────────────
+            const gateResult = evaluateExecutionGate({
+                health: marketDataHealth,
+                isConnected: this.xrpl.isConnected(),
+                isReconnecting: this.xrpl.isReconnecting(),
+                pairSwitchState: this.pairSwitchState,
+                isShuttingDown: this.shutdownInProgress,
+                isInRecovery: this.feedStallRecovery?.isRecovering() ?? false,
+                ledgerIndex: this.xrpl.getLedgerIndex(),
+                lastLedgerCloseMs: this.lastLedgerCloseMs,
+            }, this.gateConfig);
+            this.lastExecutionGateResult = gateResult;
+
+            if (gateResult.verdict === 'BLOCK') {
+                logger.debug({
+                    verdict: gateResult.verdict,
+                    healthScore: gateResult.healthScore,
+                    reasons: gateResult.reasons,
+                }, 'Execution gate BLOCKED tick');
+                return;
+            }
 
             // Compute flow metrics from trade tape and order book
             const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
@@ -649,6 +773,27 @@ export class TradingRuntime {
      */
     getFlowConfig(): FlowConfig {
         return this.baseConfig.flow;
+    }
+
+    /**
+     * Get the latest market data health quorum result.
+     */
+    getMarketDataHealth(): MarketHealthResult | null {
+        return this.lastMarketDataHealth;
+    }
+
+    /**
+     * Get the latest execution gate result.
+     */
+    getExecutionGateResult(): ExecutionGateResult | null {
+        return this.lastExecutionGateResult;
+    }
+
+    /**
+     * Get the current feed stall recovery state.
+     */
+    getFeedStallState(): FeedStallState | null {
+        return this.feedStallRecovery?.getState() ?? null;
     }
 
     /**
@@ -1053,6 +1198,16 @@ export class TradingRuntime {
         this.capitalProtection = null;
         this.capitalProtectionConfig = null;
         this.lastGovernanceDecision = null;
+
+        // Reset feed stall recovery and health state
+        this.feedStallRecovery?.reset();
+        this.feedStallRecovery = null;
+        this.lastMarketDataHealth = null;
+        this.lastExecutionGateResult = null;
+        this.lastLedgerCloseMs = 0;
+        this.previousLedgerIndex = 0;
+        this.lastBalanceSnapshotMs = 0;
+        this.lastBalanceLedgerIndex = 0;
     }
 
 }
