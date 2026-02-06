@@ -181,22 +181,20 @@ export class TradingRuntime {
             const tradeTape = new TradeTape(config.tradingPair);
             const tradeTapeService = new TradeTapeService(tradeTape, config.tradingPair, wallet?.classicAddress ?? null);
 
-            // Wire up transaction listener for trade capture
-            let txCount = 0;
-            xrpl.on('transaction', (tx: TransactionStream) => {
-                txCount++;
-                // Log every 5000 transactions to show stream is working (reduced to avoid noise)
-                if (txCount % 5000 === 0) {
-                    logger.info({ txCount, lastTxType: tx.transaction?.TransactionType }, 'TradeTape: Transaction stream active');
-                }
-                tradeTapeService.processTransaction(tx);
-            });
-
             // Set global reference for API routes
             setGlobalTradeTape(tradeTape);
 
             this.tradeTape = tradeTape;
             this.tradeTapeService = tradeTapeService;
+
+            let txCount = 0;
+            xrpl.on('transaction', (tx: TransactionStream) => {
+                txCount += 1;
+                if (txCount % 5000 === 0) {
+                    logger.info({ txCount, lastTxType: tx.transaction?.TransactionType }, 'TradeTape: Transaction stream active');
+                }
+                this.tradeTapeService?.processTransaction(tx);
+            });
 
             this.strategies = [
                 new ScalperStrategy(tracker, config.strategy, config.tradingPair, executor, risk, config.flow),
@@ -762,7 +760,12 @@ export class TradingRuntime {
 
     setTradingPair(pair: TradingPair): void {
         if (this.started) {
-            throw new Error('Cannot change trading pair while bot is running. Pause/kill first.');
+            const nextPairKey = `${pair.baseCurrency}/${pair.quoteCurrency}`;
+            const switched = this.setActivePair(nextPairKey);
+            if (!switched.success) {
+                throw new Error(switched.error || 'Failed to switch trading pair');
+            }
+            return;
         }
         validateTradingPair(pair);
         const { baseCurrency, quoteCurrency, baseIssuer, quoteIssuer, issuer, description } = pair;
@@ -779,6 +782,66 @@ export class TradingRuntime {
         };
         this.baseConfig.tradingPairs = [this.baseConfig.tradingPair];
         logger.info({ tradingPair: this.baseConfig.tradingPair }, 'Updated trading pair');
+    }
+
+    getActivePair(): string {
+        return `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
+    }
+
+    setActivePair(pairKey: string): { success: boolean; activePair: string; error?: string } {
+        const currentPairKey = this.getActivePair();
+        if (pairKey === currentPairKey) {
+            return { success: true, activePair: currentPairKey };
+        }
+
+        if (!pairKey || !isValidPairKey(pairKey)) {
+            return { success: false, activePair: currentPairKey, error: `Invalid pair key: ${pairKey}` };
+        }
+
+        const target = TRADING_PAIRS.find((p) => p.key === pairKey);
+        if (!target) {
+            return { success: false, activePair: currentPairKey, error: `Pair not found: ${pairKey}` };
+        }
+
+        const previousPair = { ...this.baseConfig.tradingPair };
+        const previousPairKey = currentPairKey;
+
+        const applyPair = (candidate: TradingPair): void => {
+            this.baseConfig.tradingPair = { ...candidate };
+            this.baseConfig.tradingPairs = [{ ...candidate }];
+            this.tradeTape?.setPair(candidate);
+            this.tradeTapeService?.setPair(candidate);
+            this.tracker?.setPair(candidate);
+        };
+
+        try {
+            const nextPair: TradingPair = {
+                baseCurrency: target.base.currency,
+                quoteCurrency: target.quote.currency,
+                baseIssuer: target.base.issuer,
+                quoteIssuer: target.quote.issuer,
+                issuer: target.quote.issuer ?? target.base.issuer,
+                description: target.description,
+            };
+
+            validateTradingPair(nextPair);
+            assertAllowedPair(nextPair);
+
+            applyPair(nextPair);
+
+            logger.info({ from: previousPairKey, to: pairKey }, 'Switched active trading pair');
+            return { success: true, activePair: this.getActivePair() };
+        } catch (err) {
+            try {
+                applyPair(previousPair);
+            } catch (rollbackErr) {
+                logger.error({ rollbackErr, pair: previousPairKey }, 'Rollback applyPair failed');
+            }
+
+            const error = err instanceof Error ? err.message : 'unknown error';
+            logger.error({ err, from: previousPairKey, attempted: pairKey }, 'Failed to switch pair, rolled back');
+            return { success: false, activePair: this.getActivePair(), error };
+        }
     }
 
     /**
@@ -885,4 +948,5 @@ export class TradingRuntime {
         this.capitalProtectionConfig = null;
         this.lastGovernanceDecision = null;
     }
+
 }
