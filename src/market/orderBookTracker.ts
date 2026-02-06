@@ -12,13 +12,20 @@ type EventKey = keyof OrderBookEvents;
 
 export class OrderBookTracker extends EventEmitter {
     private state: OrderBookState = { bids: [], asks: [], spread: 0, lastUpdated: 0 };
+    private pair: TradingPair;
 
-    constructor(private readonly client: XRPLWebSocket, private readonly pair: TradingPair) {
+    constructor(private readonly client: XRPLWebSocket, pair: TradingPair) {
         super();
+        this.pair = pair;
     }
 
     getState(): OrderBookState {
         return this.state;
+    }
+
+    setPair(pair: TradingPair): void {
+        this.pair = pair;
+        this.state = { bids: [], asks: [], spread: 0, lastUpdated: Date.now() };
     }
 
     async refresh(): Promise<void> {

@@ -13,17 +13,17 @@ export const BINANCE_SPACING = {
     /** Base spacing for 0-2 decimal assets - slim professional look */
     BASE_SPACING: 6,
     /** Spacing for 3-4 decimal assets */
-    MEDIUM_SPACING: 6,
+    MEDIUM_SPACING: 7,
     /** Spacing for 5-6 decimal assets */
-    EXTENDED_SPACING: 7,
+    EXTENDED_SPACING: 8,
     /** Spacing for 7-8 decimal assets */
-    HIGH_PRECISION_SPACING: 7,
+    HIGH_PRECISION_SPACING: 10,
     /** Spacing for 9+ decimal assets */
-    MICRO_SPACING: 8,
+    MICRO_SPACING: 12,
     /** Absolute minimum spacing - never go below 2px for readability */
     MIN_CLAMP: 2,
     /** Absolute maximum spacing - never exceed 10px for cleanliness */
-    MAX_CLAMP: 10,
+    MAX_CLAMP: 14,
     /** Micro-price threshold (price < this uses thicker candles) */
     MICRO_PRICE_THRESHOLD: 0.0001,
     /** Growth factor per decimal beyond base */
@@ -41,24 +41,9 @@ export function calculateBinanceSpacing(
     precision: number,
     options: AdaptiveScalingOptions = DEFAULT_SCALING_OPTIONS
 ): number {
-    const {
-        baseBarSpacing,
-        spacingGrowthPerDecimal,
-        minBarSpacing,
-        maxBarSpacing,
-    } = options;
-
-    // Base case: 0-2 decimals
-    if (precision <= 2) {
-        return baseBarSpacing;
-    }
-
-    // Progressive spacing growth for higher precision
-    const extraDecimals = precision - 2;
-    const rawSpacing = baseBarSpacing + (extraDecimals * spacingGrowthPerDecimal);
-
-    // Clamp to bounds
-    return Math.max(minBarSpacing, Math.min(maxBarSpacing, rawSpacing));
+    const tier = getSpacingTier(precision);
+    const tierSpacing = getSpacingForTier(tier);
+    return Math.max(options.minBarSpacing, Math.min(options.maxBarSpacing, tierSpacing));
 }
 
 /**
@@ -73,9 +58,9 @@ export function calculateSpacingWithMicroAdjustment(
     let spacing = calculateBinanceSpacing(precision, options);
 
     // Apply micro-price adjustment for very small prices
-    if (options.thickMicroCandles && currentPrice < BINANCE_SPACING.MICRO_PRICE_THRESHOLD) {
+    if (options.thickMicroCandles && currentPrice <= BINANCE_SPACING.MICRO_PRICE_THRESHOLD) {
         // Increase spacing by 20% for micro-priced assets
-        spacing = Math.min(spacing * 1.2, options.maxBarSpacing);
+        spacing = Math.min(spacing + 1, options.maxBarSpacing);
     }
 
     return spacing;

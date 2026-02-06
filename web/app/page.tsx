@@ -332,7 +332,7 @@ export default function Page() {
     };
 
     const applyTradingPair = async (pairKey: string) => {
-        setSelectedPairKey(pairKey);
+        const previousPairKey = selectedPairKey;
         try {
             const res = await fetch('/api/bot/trading-pair', {
                 method: 'POST',
@@ -340,6 +340,7 @@ export default function Page() {
                 body: JSON.stringify({ pairKey }),
             });
             if (res.ok) {
+                setSelectedPairKey(pairKey);
                 const pair = findPair(pairKey);
                 if (pair) {
                     setBot((prev) => ({
@@ -347,8 +348,11 @@ export default function Page() {
                         liquidity: pair.liquidity === 'high' ? 'High' : pair.liquidity === 'medium' ? 'Medium' : 'Low',
                     }));
                 }
+            } else {
+                setSelectedPairKey(previousPairKey);
             }
         } catch (err) {
+            setSelectedPairKey(previousPairKey);
             console.error('Failed to set trading pair:', err);
         }
     };

@@ -21,6 +21,13 @@ import { TradeTape, setGlobalTradeTape } from '../market/tradeTape';
 import { TradeTapeService } from '../market/tradeTapeService';
 import { BackendHttpServer, startBackendHttpServer, stopBackendHttpServer } from '../server/httpServer';
 import { FlowMetrics, computeFlowMetrics, FlowRegime } from '../market/flowMetrics';
+import {
+    NormalizedTrade,
+    OrderBookSnapshot,
+    computeMarketHealth,
+    normalizeOrderBookSnapshot,
+    normalizeTrade,
+} from '../market/models';
 import { feedbackEngine } from '../analytics/feedbackEngine';
 import {
     isAdaptiveEnabled,
@@ -111,6 +118,17 @@ export class TradingRuntime {
     private lastGovernanceDecision: CapitalProtectionDecision | null = null;
     private regimePolicyEngine: RegimePolicyEngine | null = null;
     private readonly baseConfig: AppConfig;
+    private marketSnapshotSequence = 0;
+    private currentOrderBookSnapshot: OrderBookSnapshot | null = null;
+    private currentNormalizedTrade: NormalizedTrade | null = null;
+    private currentMarketHealthScore = 0;
+    private activePairKey: string;
+    private currentTxListener: ((tx: TransactionStream) => void) | null = null;
+    private lastOrderBookUpdateMs = 0;
+    private lastTradeUpdateMs = 0;
+    private lastResubscribeAttemptMs = 0;
+    private readonly marketStaleThresholdMs = 20_000;
+    private readonly resubscribeCooldownMs = 10_000;
 
     constructor(config?: AppConfig) {
         // Security gate: enforce local-only execution on construction
@@ -122,6 +140,7 @@ export class TradingRuntime {
         }
 
         this.baseConfig = config ?? loadConfig();
+        this.activePairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
     }
 
     async start(): Promise<void> {
@@ -170,22 +189,12 @@ export class TradingRuntime {
             const tradeTape = new TradeTape(config.tradingPair);
             const tradeTapeService = new TradeTapeService(tradeTape, config.tradingPair, wallet?.classicAddress ?? null);
 
-            // Wire up transaction listener for trade capture
-            let txCount = 0;
-            xrpl.on('transaction', (tx: TransactionStream) => {
-                txCount++;
-                // Log every 5000 transactions to show stream is working (reduced to avoid noise)
-                if (txCount % 5000 === 0) {
-                    logger.info({ txCount, lastTxType: tx.transaction?.TransactionType }, 'TradeTape: Transaction stream active');
-                }
-                tradeTapeService.processTransaction(tx);
-            });
-
             // Set global reference for API routes
             setGlobalTradeTape(tradeTape);
 
             this.tradeTape = tradeTape;
             this.tradeTapeService = tradeTapeService;
+            this.attachTradeTapeListener();
 
             this.strategies = [
                 new ScalperStrategy(tracker, config.strategy, config.tradingPair, executor, risk, config.flow),
@@ -199,6 +208,8 @@ export class TradingRuntime {
             this.executor = executor;
             this.walletAddress = wallet?.classicAddress ?? null;
             this.started = true;
+            this.lastOrderBookUpdateMs = Date.now();
+            this.lastTradeUpdateMs = Date.now();
 
             // Initialize capital protection engine
             const cpConfig = loadCapitalProtectionConfig();
@@ -294,13 +305,39 @@ export class TradingRuntime {
 
             // Build strategy context with trade tape data
             const orderBookState = this.tracker.getState();
+            const pairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
+            const nowMs = Date.now();
+            this.marketSnapshotSequence += 1;
+
+            this.currentOrderBookSnapshot = normalizeOrderBookSnapshot(
+                pairKey,
+                orderBookState,
+                nowMs,
+                this.marketSnapshotSequence,
+            );
+
+            const latestTrade = this.tradeTape?.getAll().at(-1) ?? null;
+            this.currentNormalizedTrade = latestTrade
+                ? normalizeTrade(latestTrade, nowMs, latestTrade.ts, 'tape', false)
+                : null;
+
+            this.currentMarketHealthScore = computeMarketHealth({
+                trade: this.currentNormalizedTrade,
+                book: this.currentOrderBookSnapshot,
+                amm: null,
+            });
+            this.lastOrderBookUpdateMs = nowMs;
+            if (this.currentNormalizedTrade) {
+                this.lastTradeUpdateMs = this.currentNormalizedTrade.eventTimeMs;
+            }
+
+            await this.ensureMarketDataHealthy(nowMs);
 
             // Compute flow metrics from trade tape and order book
             const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
             this.currentFlowMetrics = flowMetrics;
 
             // Record market snapshot for analytics (non-blocking, best-effort)
-            const pairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
             try {
                 feedbackEngine.recordSnapshot({
                     pairKey,
@@ -523,6 +560,18 @@ export class TradingRuntime {
         return this.currentFlowMetrics;
     }
 
+    getMarketHealth(): {
+        score: number;
+        orderBook: OrderBookSnapshot | null;
+        lastTrade: NormalizedTrade | null;
+    } {
+        return {
+            score: this.currentMarketHealthScore,
+            orderBook: this.currentOrderBookSnapshot,
+            lastTrade: this.currentNormalizedTrade,
+        };
+    }
+
     /**
      * Get the current governance decision from capital protection layer.
      * Returns null if not started or capital protection is disabled.
@@ -719,7 +768,12 @@ export class TradingRuntime {
 
     setTradingPair(pair: TradingPair): void {
         if (this.started) {
-            throw new Error('Cannot change trading pair while bot is running. Pause/kill first.');
+            const nextPairKey = `${pair.baseCurrency}/${pair.quoteCurrency}`;
+            const switched = this.setActivePair(nextPairKey);
+            if (!switched.success) {
+                throw new Error(switched.error || 'Failed to switch trading pair');
+            }
+            return;
         }
         validateTradingPair(pair);
         const { baseCurrency, quoteCurrency, baseIssuer, quoteIssuer, issuer, description } = pair;
@@ -735,7 +789,78 @@ export class TradingRuntime {
             ...(description ? { description } : {}),
         };
         this.baseConfig.tradingPairs = [this.baseConfig.tradingPair];
+        this.activePairKey = `${baseCurrency}/${quoteCurrency}`;
         logger.info({ tradingPair: this.baseConfig.tradingPair }, 'Updated trading pair');
+    }
+
+    getActivePair(): string {
+        return this.activePairKey;
+    }
+
+    setActivePair(pairKey: string): { success: boolean; activePair: string; error?: string } {
+        if (pairKey === this.activePairKey) {
+            return { success: true, activePair: this.activePairKey };
+        }
+
+        if (!pairKey || !isValidPairKey(pairKey)) {
+            return { success: false, activePair: this.activePairKey, error: `Invalid pair key: ${pairKey}` };
+        }
+
+        const target = TRADING_PAIRS.find((p) => p.key === pairKey);
+        if (!target) {
+            return { success: false, activePair: this.activePairKey, error: `Pair not found: ${pairKey}` };
+        }
+
+        const previousPair = { ...this.baseConfig.tradingPair };
+        const previousPairKey = this.activePairKey;
+
+        const applyPair = (candidate: TradingPair, candidateKey: string): void => {
+            this.baseConfig.tradingPair = { ...candidate };
+            this.baseConfig.tradingPairs = [{ ...candidate }];
+            this.activePairKey = candidateKey;
+            this.tradeTape?.setPair(candidate);
+            this.tradeTapeService?.setPair(candidate);
+            this.tracker?.setPair(candidate);
+            this.lastOrderBookUpdateMs = Date.now();
+            this.lastTradeUpdateMs = Date.now();
+        };
+
+        try {
+            const nextPair: TradingPair = {
+                baseCurrency: target.base.currency,
+                quoteCurrency: target.quote.currency,
+                baseIssuer: target.base.issuer,
+                quoteIssuer: target.quote.issuer,
+                issuer: target.quote.issuer ?? target.base.issuer,
+                description: target.description,
+            };
+
+            validateTradingPair(nextPair);
+            assertAllowedPair(nextPair);
+
+            applyPair(nextPair, pairKey);
+
+            this.attachTradeTapeListener();
+
+            logger.info({ from: previousPairKey, to: pairKey }, 'Switched active trading pair');
+            return { success: true, activePair: this.activePairKey };
+        } catch (err) {
+            try {
+                applyPair(previousPair, previousPairKey);
+            } catch (rollbackErr) {
+                logger.error({ rollbackErr, pair: previousPairKey }, 'Rollback applyPair failed');
+            }
+
+            try {
+                this.attachTradeTapeListener();
+            } catch {
+                // best-effort rewire
+            }
+
+            const error = err instanceof Error ? err.message : 'unknown error';
+            logger.error({ err, from: previousPairKey, attempted: pairKey }, 'Failed to switch pair, rolled back');
+            return { success: false, activePair: this.activePairKey, error };
+        }
     }
 
     /**
@@ -837,9 +962,52 @@ export class TradingRuntime {
         this.shutdownInProgress = false;
         this.tradeTape = null;
         this.tradeTapeService = null;
+        this.currentTxListener = null;
         this.httpServer = null;
         this.capitalProtection = null;
         this.capitalProtectionConfig = null;
         this.lastGovernanceDecision = null;
+    }
+
+    private attachTradeTapeListener(): void {
+        if (!this.xrpl || !this.tradeTapeService) return;
+
+        if (this.currentTxListener) {
+            this.xrpl.off('transaction', this.currentTxListener);
+            this.currentTxListener = null;
+        }
+
+        let txCount = 0;
+        const listener = (tx: TransactionStream): void => {
+            txCount += 1;
+            if (txCount % 5000 === 0) {
+                logger.info({ txCount, lastTxType: tx.transaction?.TransactionType }, 'TradeTape: Transaction stream active');
+            }
+            this.tradeTapeService?.processTransaction(tx);
+            this.lastTradeUpdateMs = Date.now();
+        };
+
+        this.xrpl.on('transaction', listener);
+        this.currentTxListener = listener;
+    }
+
+    private async ensureMarketDataHealthy(nowMs: number): Promise<void> {
+        if (!this.xrpl || !this.started) return;
+
+        const bookAge = nowMs - this.lastOrderBookUpdateMs;
+        const tradeAge = nowMs - this.lastTradeUpdateMs;
+        const stale = bookAge > this.marketStaleThresholdMs && tradeAge > this.marketStaleThresholdMs;
+        const cooledDown = nowMs - this.lastResubscribeAttemptMs > this.resubscribeCooldownMs;
+
+        if (!stale || !cooledDown) return;
+
+        this.lastResubscribeAttemptMs = nowMs;
+        try {
+            await this.xrpl.subscribe(this.baseConfig.tradingPair);
+            this.attachTradeTapeListener();
+            logger.warn({ pair: this.activePairKey, bookAge, tradeAge }, 'Market data stale - re-subscribed streams');
+        } catch (err) {
+            logger.error({ err, pair: this.activePairKey }, 'Market data self-heal resubscribe failed');
+        }
     }
 }

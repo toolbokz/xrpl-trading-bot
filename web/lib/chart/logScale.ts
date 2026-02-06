@@ -18,14 +18,16 @@ export function calculateMagnitudeSpan(data: OHLCData[]): number {
     let maxPrice = -Infinity;
 
     for (const candle of data) {
-        const low = candle.low;
-        const high = candle.high;
-
-        if (low > 0 && low < minPrice) minPrice = low;
-        if (high > maxPrice) maxPrice = high;
+        const close = candle.close;
+        if (close > 0 && close < minPrice) minPrice = close;
+        if (close > maxPrice) maxPrice = close;
     }
 
     if (minPrice <= 0 || maxPrice <= 0 || !Number.isFinite(minPrice) || !Number.isFinite(maxPrice)) {
+        return 0;
+    }
+
+    if (Math.abs(maxPrice - minPrice) < Number.EPSILON) {
         return 0;
     }
 
@@ -39,6 +41,10 @@ export function calculateMagnitudeSpan(data: OHLCData[]): number {
  */
 export function calculateMagnitudeSpanFromRange(minPrice: number, maxPrice: number): number {
     if (minPrice <= 0 || maxPrice <= 0 || !Number.isFinite(minPrice) || !Number.isFinite(maxPrice)) {
+        return 0;
+    }
+
+    if (Math.abs(maxPrice - minPrice) < Number.EPSILON) {
         return 0;
     }
 
