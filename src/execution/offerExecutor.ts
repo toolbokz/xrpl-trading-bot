@@ -8,6 +8,7 @@ import { feedbackEngine } from '../analytics/feedbackEngine';
 import { computeCostRealism } from '../analytics/costRealism';
 import { isAdaptiveEnabled } from '../analytics/adaptiveConfig';
 import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './offerBuilder';
+import { ExecutionQualityCollector, InFlightTrace } from '../analytics/executionQuality';
 
 /**
  * Represents the actual amounts filled by an OfferCreate transaction.
@@ -47,6 +48,9 @@ export interface SlippageCheckResult {
 export class OfferExecutor {
     private currentStrategy: string = 'unknown';
     private currentMidPrice: number | null = null;
+
+    // Execution quality analytics collector (injected by TradingRuntime)
+    private executionQualityCollector: ExecutionQualityCollector | null = null;
 
     // Adaptive learning overrides (set per-tick by TradingRuntime)
     private adaptiveMaxSlippageBps: number | null = null;
@@ -90,6 +94,14 @@ export class OfferExecutor {
      */
     setCurrentMidPrice(midPrice: number | null): void {
         this.currentMidPrice = midPrice;
+    }
+
+    /**
+     * Inject the execution quality collector for trace lifecycle.
+     * Called once by TradingRuntime during initialization.
+     */
+    setExecutionQualityCollector(collector: ExecutionQualityCollector): void {
+        this.executionQualityCollector = collector;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -510,6 +522,30 @@ export class OfferExecutor {
                 });
             } catch { /* feedback should never crash trading */ }
 
+            // ── Execution quality trace: paper trade (perfect fill, zero latency)
+            if (this.executionQualityCollector) {
+                try {
+                    const now = Date.now();
+                    const paperTrace = this.executionQualityCollector.createTrace({
+                        pairKey: pairSymbol,
+                        strategy: this.currentStrategy,
+                        side,
+                        arrivalMid: this.currentMidPrice ?? intent.price,
+                        expectedPrice: intent.price,
+                        isMaker: false,
+                    });
+                    this.executionQualityCollector.recordFill(paperTrace, {
+                        submitTimeMs: now,
+                        ledgerAcceptedTimeMs: now,
+                        fillPrice: intent.price,
+                        postFillMid: this.currentMidPrice ?? intent.price,
+                        fillRatio: 1,
+                        txHash: null,
+                        ledgerIndex: 0,
+                    });
+                } catch { /* analytics should never crash trading */ }
+            }
+
             return { accepted: true, reason: 'paper-mode' };
         }
         if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
@@ -528,7 +564,7 @@ export class OfferExecutor {
             Flags: this.mapFlags(flags),
             LastLedgerSequence: await this.computeLastLedgerSequence(),
         };
-        return this.submitWithGuards(tx, normalized.pair.symbol, intent);
+        return this.submitWithGuards(tx, normalized.pair.symbol, intent, flags);
     }
 
     async executeIntents(intents: TradeIntent[]): Promise<ExecutionResult[]> {
@@ -776,7 +812,21 @@ export class OfferExecutor {
     private static readonly SUBMIT_TIMEOUT_MS = 12_000;
 
     // Unified submit path with logging, validation, and error handling to avoid rippled parameter errors.
-    private async submitWithGuards(tx: any, pairSymbol?: string, intent?: TradeIntent): Promise<ExecutionResult> {
+    private async submitWithGuards(tx: any, pairSymbol?: string, intent?: TradeIntent, flags?: { passive?: boolean }): Promise<ExecutionResult> {
+        // ── Execution quality trace: start ──────────────────────────────────
+        let inflightTrace: InFlightTrace | null = null;
+        if (this.executionQualityCollector && intent && pairSymbol) {
+            const side = intent.side.toLowerCase() as 'buy' | 'sell';
+            inflightTrace = this.executionQualityCollector.createTrace({
+                pairKey: pairSymbol,
+                strategy: this.currentStrategy,
+                side,
+                arrivalMid: this.currentMidPrice ?? intent.price,
+                expectedPrice: intent.price,
+                isMaker: flags?.passive ?? false,
+            });
+        }
+
         try {
             if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
 
@@ -800,6 +850,9 @@ export class OfferExecutor {
             };
             logger.info({ tx: safePrepared, pair: pairSymbol }, 'Autofilled XRPL transaction');
             const signed = this.wallet.sign(prepared);
+
+            // ── Execution quality trace: mark submit ────────────────────────
+            const eqSubmitTimeMs = Date.now();
 
             // Wrap submitAndWait with timeout to prevent blocking indefinitely
             let res;
@@ -960,6 +1013,22 @@ export class OfferExecutor {
                         isPartial: fillResult.fillRatio < 1,
                     });
                 } catch { /* feedback should never crash trading */ }
+            }
+
+            // ── Execution quality trace: record fill ────────────────────────
+            if (inflightTrace && this.executionQualityCollector && intent) {
+                try {
+                    const actualFillPriceEq = fillResult.effectivePrice || intent.price;
+                    this.executionQualityCollector.recordFill(inflightTrace, {
+                        submitTimeMs: eqSubmitTimeMs,
+                        ledgerAcceptedTimeMs: Date.now(),
+                        fillPrice: actualFillPriceEq,
+                        postFillMid: this.currentMidPrice ?? actualFillPriceEq,
+                        fillRatio: fillResult.fillRatio,
+                        txHash: res.result.hash ?? null,
+                        ledgerIndex: (res.result as any).ledger_index ?? 0,
+                    });
+                } catch { /* analytics should never crash trading */ }
             }
 
             return {

@@ -91,6 +91,9 @@ import {
     buildRuntimeTelemetry,
     RuntimeTelemetry,
 } from './runtimeObservability';
+import {
+    ExecutionQualityCollector,
+} from '../analytics/executionQuality';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -198,6 +201,8 @@ export class TradingRuntime {
     private snapshotValidator = new SnapshotValidator();
     /** Centralized pair-keyed cache — the single source of truth for API routes. */
     private readonly cacheRegistry = new RuntimeCacheRegistry();
+    /** Execution quality analytics — per-fill tracing and aggregation. */
+    private readonly executionQualityCollector = new ExecutionQualityCollector();
     /** Whether the last snapshot passed structural validation. */
     private lastDataValid = true;
     /** Reasons the last snapshot failed validation (empty when valid). */
@@ -405,6 +410,7 @@ export class TradingRuntime {
             this.tracker = tracker;
             this.risk = risk;
             this.executor = executor;
+            executor.setExecutionQualityCollector(this.executionQualityCollector);
             this.walletAddress = wallet?.classicAddress ?? null;
             this.started = true;
 
@@ -467,6 +473,7 @@ export class TradingRuntime {
 
             // Start adaptive learning scheduler
             const pairKey = `${config.tradingPair.baseCurrency}/${config.tradingPair.quoteCurrency}`;
+            this.executionQualityCollector.setPairKey(pairKey);
             const strategyNames = this.strategies.map(s => s.name);
             startAdaptiveScheduler({
                 pairKeys: [pairKey],
@@ -960,6 +967,13 @@ export class TradingRuntime {
     }
 
     /**
+     * Get the execution quality analytics collector.
+     */
+    getExecutionQualityCollector(): ExecutionQualityCollector {
+        return this.executionQualityCollector;
+    }
+
+    /**
      * Get the current pair key (e.g. "XRP/RLUSD").
      */
     getCurrentPairKey(): string {
@@ -1390,6 +1404,9 @@ export class TradingRuntime {
 
                 // 3. Execution layer
                 this.executor?.setPair(newPair);
+                this.executionQualityCollector.setPairKey(
+                    `${newPair.baseCurrency}/${newPair.quoteCurrency}`,
+                );
 
                 // 4. Strategy layer
                 for (const strategy of this.strategies) {
@@ -1659,6 +1676,7 @@ export class TradingRuntime {
         this.lastDataValid = true;
         this.lastDataInvalidReasons = [];
         this.cacheRegistry.reset();
+        this.executionQualityCollector.reset();
 
         // Reset FSM to BOOTING for potential restart
         this.fsm.reset();
