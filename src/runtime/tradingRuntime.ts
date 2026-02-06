@@ -100,6 +100,7 @@ import {
     HardRiskPayload,
     loadHardRiskConfig,
 } from '../risk/hardRiskGuard';
+import { ObservabilityBus } from '../observability/eventBus';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -211,6 +212,8 @@ export class TradingRuntime {
     private readonly executionQualityCollector = new ExecutionQualityCollector();
     /** Hard risk guard — deterministic 7-condition capital safety gate. */
     private readonly hardRiskGuard = new HardRiskGuard(loadHardRiskConfig());
+    /** Observability event bus — structured event stream for forensic debugging. */
+    private readonly observabilityBus = new ObservabilityBus();
     /** Whether the last snapshot passed structural validation. */
     private lastDataValid = true;
     /** Reasons the last snapshot failed validation (empty when valid). */
@@ -403,6 +406,21 @@ export class TradingRuntime {
                 // Emit XRPL_RECONNECTED observability event on WebSocket reconnect
                 xrpl.on('reconnect', () => {
                     logger.info({ event: 'XRPL_RECONNECTED', timestamp: Date.now() }, 'XRPL WebSocket reconnected');
+                    const rPairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
+                    this.observabilityBus.emitXrplReconnected({
+                        pairKey: rPairKey,
+                        runtimeState: this.fsm.getState(),
+                    });
+                });
+
+                // Emit XRPL_DISCONNECTED observability event via underlying client
+                const underlyingClient = xrpl.getClient();
+                underlyingClient.on('disconnected', () => {
+                    const dPairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
+                    this.observabilityBus.emitXrplDisconnected({
+                        pairKey: dPairKey,
+                        runtimeState: this.fsm.getState(),
+                    });
                 });
 
                 this.listenersAttached = true;
@@ -589,6 +607,13 @@ export class TradingRuntime {
                     pairKey,
                     timestamp: nowMs,
                 }, 'DATA_INVALIDATED: snapshot failed structural validation');
+                this.observabilityBus.emitDataInvalidated({
+                    pairKey,
+                    runtimeState: this.fsm.getState(),
+                    reasons: validation.reasons,
+                    sequence: this.currentOrderBookSnapshot.sequence,
+                    nowMs,
+                });
             }
             if (validation.valid && wasInvalid) {
                 logger.info({
@@ -627,6 +652,11 @@ export class TradingRuntime {
                         stage: stallState?.stage ?? 'UNKNOWN',
                         timestamp: Date.now(),
                     }, 'FEED_STALE: feed stall detected, entering recovery');
+                    this.observabilityBus.emitFeedStale({
+                        pairKey,
+                        runtimeState: this.fsm.getState(),
+                        stage: stallState?.stage ?? 'UNKNOWN',
+                    });
                     logger.info({
                         event: 'RECOVERY_STAGE',
                         from: this.fsm.getState(),
@@ -634,7 +664,14 @@ export class TradingRuntime {
                         stage: stallState?.stage ?? 'UNKNOWN',
                         timestamp: Date.now(),
                     }, 'RECOVERY_STAGE: entering RECOVERING state');
+                    const fsmFromState = this.fsm.getState();
                     this.fsm.transition('RECOVERING', 'feed-stall-recovery-started');
+                    this.observabilityBus.emitFsmTransition({
+                        from: fsmFromState,
+                        to: 'RECOVERING',
+                        reason: 'feed-stall-recovery-started',
+                        pairKey,
+                    });
                 }
                 // FSM: transition out of RECOVERING when stall recovery completes
                 if (stallStateBefore && !stallStateAfter && this.fsm.getState() === 'RECOVERING') {
@@ -644,6 +681,10 @@ export class TradingRuntime {
                         to: 'DEGRADED',
                         timestamp: Date.now(),
                     }, 'RECOVERY_STAGE: stall recovery completed, transitioning to DEGRADED');
+                    this.observabilityBus.emitFeedRecovered({
+                        pairKey,
+                        runtimeState: 'DEGRADED',
+                    });
                     // Will determine READY vs DEGRADED after health scoring below
                     // For now go to DEGRADED; health check may promote to READY
                     this.fsm.transition('DEGRADED', 'feed-stall-recovery-completed');
@@ -706,17 +747,33 @@ export class TradingRuntime {
                 this.firstTickCompleted = true;
                 if (marketDataHealth.healthy) {
                     this.fsm.transition('READY', 'first-tick-healthy');
+                    this.observabilityBus.emitFsmTransition({ from: 'WARMING_MARKET_CACHE', to: 'READY', reason: 'first-tick-healthy', pairKey });
                 } else {
                     this.fsm.transition('DEGRADED', 'first-tick-unhealthy');
+                    this.observabilityBus.emitFsmTransition({ from: 'WARMING_MARKET_CACHE', to: 'DEGRADED', reason: 'first-tick-unhealthy', pairKey });
                 }
             } else if (currentFsmState === 'READY' && !marketDataHealth.healthy) {
                 // Health dropped below threshold
-                this.fsm.transition('DEGRADED', `health-degraded:${marketDataHealth.score}`);
+                const reason = `health-degraded:${marketDataHealth.score}`;
+                this.fsm.transition('DEGRADED', reason);
+                this.observabilityBus.emitFsmTransition({ from: 'READY', to: 'DEGRADED', reason, pairKey });
             } else if (currentFsmState === 'DEGRADED' && marketDataHealth.healthy &&
                 !(this.feedStallRecovery?.isRecovering())) {
                 // Health recovered and no stall recovery in progress
-                this.fsm.transition('READY', `health-recovered:${marketDataHealth.score}`);
+                const reason = `health-recovered:${marketDataHealth.score}`;
+                this.fsm.transition('READY', reason);
+                this.observabilityBus.emitFsmTransition({ from: 'DEGRADED', to: 'READY', reason, pairKey });
             }
+
+            // Emit edge-detected EXECUTION_BLOCKED / EXECUTION_ALLOWED events
+            this.observabilityBus.evaluateGateVerdict({
+                blocked: gateResult.verdict === 'BLOCK',
+                reasons: gateResult.reasons,
+                healthScore: gateResult.healthScore,
+                pairKey,
+                runtimeState: this.fsm.getState(),
+                nowMs,
+            });
 
             if (gateResult.verdict === 'BLOCK') {
                 const isBadData = gateResult.reasons.some(r => r === 'snapshot-invalid' || r.startsWith('data:'));
@@ -776,6 +833,13 @@ export class TradingRuntime {
                     pairKey,
                     timestamp: nowMs,
                 }, 'HARD_RISK_BLOCK: execution blocked by hard risk guard');
+                this.observabilityBus.emitRiskBlock({
+                    pairKey,
+                    runtimeState: this.fsm.getState(),
+                    reasons: hardRiskResult.riskBlockReasons,
+                    riskState: hardRiskResult.riskState,
+                    nowMs,
+                });
                 return;
             }
 
@@ -1019,6 +1083,13 @@ export class TradingRuntime {
      */
     getHardRiskPayload(): HardRiskPayload {
         return this.hardRiskGuard.getPayload();
+    }
+
+    /**
+     * Get the observability event bus (for API routes / forensic replay).
+     */
+    getObservabilityBus(): ObservabilityBus {
+        return this.observabilityBus;
     }
 
     /**
@@ -1417,6 +1488,11 @@ export class TradingRuntime {
         // ─── Legacy FSM: IDLE → SWITCHING ────────────────────────────────
         this.pairSwitchState = 'SWITCHING';
         this.emitSwitchEvent('PAIR_SWITCH_START', pairKey, currentPairKey);
+        this.observabilityBus.emitPairSwitchStart({
+            fromPair: currentPairKey,
+            toPair: pairKey,
+            runtimeState: this.fsm.getState(),
+        });
 
         const previousPair = { ...this.baseConfig.tradingPair };
         const previousPairKey = currentPairKey;
@@ -1553,6 +1629,11 @@ export class TradingRuntime {
                     if (result.success) {
                         this.emitSwitchEvent('PAIR_SWITCH_COMPLETE', pairKey, previousPairKey,
                             `orchestrator completed in ${result.durationMs}ms`);
+                        this.observabilityBus.emitPairSwitchReady({
+                            pairKey,
+                            runtimeState: this.fsm.getState(),
+                            durationMs: result.durationMs,
+                        });
                     } else {
                         // Orchestrator failed but sync path already succeeded —
                         // recover the orchestrator FSM to READY
@@ -1729,6 +1810,7 @@ export class TradingRuntime {
         this.cacheRegistry.reset();
         this.executionQualityCollector.reset();
         this.hardRiskGuard.reset();
+        this.observabilityBus.clear();
 
         // Reset FSM to BOOTING for potential restart
         this.fsm.reset();
