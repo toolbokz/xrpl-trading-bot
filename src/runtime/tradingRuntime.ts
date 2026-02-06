@@ -21,7 +21,6 @@ import { throttleStrategy } from '../utils/rateLimiter';
 import { isCpuHealthy, startCpuWatchdog, CpuWatchdog } from '../monitoring/cpuWatchdog';
 import { TradeTape, setGlobalTradeTape } from '../market/tradeTape';
 import { TradeTapeService } from '../market/tradeTapeService';
-import { BackendHttpServer, startBackendHttpServer, stopBackendHttpServer } from '../server/httpServer';
 import { FlowMetrics, computeFlowMetrics, FlowRegime } from '../market/flowMetrics';
 import {
     NormalizedTrade,
@@ -175,7 +174,6 @@ export class TradingRuntime {
     private cpuWatchdog: CpuWatchdog | null = null;
     private tradeTape: TradeTape | null = null;
     private tradeTapeService: TradeTapeService | null = null;
-    private httpServer: BackendHttpServer | null = null;
     private currentFlowMetrics: FlowMetrics | null = null;
     private capitalProtection: CapitalProtectionEngine | null = null;
     private capitalProtectionConfig: CapitalProtectionConfig | null = null;
@@ -524,10 +522,6 @@ export class TradingRuntime {
             this.cpuWatchdog = startCpuWatchdog(() => {
                 logger.warn('CPU watchdog triggered - trading paused due to high CPU');
             });
-
-            // Start backend HTTP server for SSE streaming
-            this.httpServer = await startBackendHttpServer();
-            logger.info({ httpPort: this.httpServer.getPort() }, 'Backend HTTP server for trade streaming ready');
 
             // Start adaptive learning scheduler
             const pairKey = `${config.tradingPair.baseCurrency}/${config.tradingPair.quoteCurrency}`;
@@ -1319,7 +1313,7 @@ export class TradingRuntime {
             this.fsm.forceHalt('graceful-shutdown');
         }
 
-        const totalSteps = 7;
+        const totalSteps = 6;
         let currentStep = 0;
 
         const logStep = (description: string) => {
@@ -1382,21 +1376,13 @@ export class TradingRuntime {
             logger.warn({ err }, 'Failed to stop adaptive scheduler');
         }
 
-        // Step 5: Stop backend HTTP server
-        logStep('Stopping backend HTTP server');
-        try {
-            await stopBackendHttpServer();
-        } catch (err) {
-            logger.warn({ err }, 'Failed to stop HTTP server');
-        }
-
-        // Step 6: Disconnect XRPL cleanly
+        // Step 5: Disconnect XRPL cleanly
         logStep('Disconnecting XRPL client');
         if (this.xrpl) {
             await this.xrpl.disconnect().catch((err) => logger.warn({ err }, 'XRPL disconnect failed during shutdown'));
         }
 
-        // Step 7: Reset state
+        // Step 6: Reset state
         logStep('Resetting runtime state');
         this.reset();
 
@@ -1880,7 +1866,6 @@ export class TradingRuntime {
         this.pairSwitchLastError = null;
         this.tradeTape = null;
         this.tradeTapeService = null;
-        this.httpServer = null;
         this.capitalProtection = null;
         this.capitalProtectionConfig = null;
         this.lastGovernanceDecision = null;

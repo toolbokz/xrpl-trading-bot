@@ -110,6 +110,32 @@ export interface RuntimePublicState {
 }
 
 // =============================================================================
+// Server Session ID (stable for the lifetime of this process)
+// =============================================================================
+
+/**
+ * Unique identifier for this server process instance.
+ * Survives Next.js HMR reloads via globalThis. Useful for detecting
+ * unintentional multi-instance deployments and correlating SSE streams.
+ */
+declare global {
+    // eslint-disable-next-line no-var
+    var __xrplServerSessionId: string | undefined;
+}
+
+if (!globalThis.__xrplServerSessionId) {
+    const { randomBytes } = require('crypto') as typeof import('crypto');
+    globalThis.__xrplServerSessionId = randomBytes(8).toString('hex');
+}
+
+/**
+ * Get the server session identifier (stable per process, survives HMR).
+ */
+export function getServerSessionId(): string {
+    return globalThis.__xrplServerSessionId!;
+}
+
+// =============================================================================
 // Singleton State (uses globalThis to survive Next.js module reloads)
 // =============================================================================
 

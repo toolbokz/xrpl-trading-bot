@@ -34,11 +34,11 @@
 - `src/monitoring/cpuWatchdog.ts`
 - `src/utils/cpuSafety.ts`
 - `src/persistence/breakerStore.ts`
-- `web/pages/api/analytics/*`
-- `web/pages/api/market/*`
-- `web/components/AdaptivePanel.tsx`
-- `web/components/MarketDataHealthPanel.tsx`
-- `web/components/LogsPanel.tsx`
+- `src/ui/pages/api/analytics/*`
+- `src/ui/pages/api/market/*`
+- `src/ui/components/AdaptivePanel.tsx`
+- `src/ui/components/MarketDataHealthPanel.tsx`
+- `src/ui/components/LogsPanel.tsx`
 
 ## New types / interfaces
 - `NormalizedTrade`
@@ -181,7 +181,7 @@
 5. Add `repricePolicy` to replace/cancel loop with churn counters persisted via `breakerStore`.
 6. Add event-loop lag tracker + auto-pause integration (`cpuWatchdog`, `cpuSafety`, `tradingRuntime`), include recovery hysteresis.
 7. Extend analytics persistence (`tradeHistory`, `pnl`, `costRealism`) for arrival/fill/post-fill metrics and attribution fields.
-8. Expose new metrics and trace endpoints in `web/pages/api/*`; surface in monitoring panels.
+8. Expose new metrics and trace endpoints in `src/ui/pages/api/*`; surface in monitoring panels.
 9. Backfill defaults for old rows (`NULL` tolerated); run one-time migration script via existing DB migration flow.
 10. Roll out in phases: shadow-mode logging -> enforce quality gate -> enforce auto-pause and churn breaker.
 

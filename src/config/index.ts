@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import { resolve } from 'path';
 
-// Load .env from project root (handles running from web/ subdirectory)
+// Load .env from project root
 // On Vercel, environment variables are already set via the dashboard
 dotenv.config({ path: resolve(__dirname, '../../.env') });
 dotenv.config({ path: resolve(process.cwd(), '.env') }); // Also try CWD as fallback

@@ -16,7 +16,7 @@ import {
     FeedType,
     RuntimeCacheSnapshot,
 } from '../runtimeCacheRegistry';
-import { buildPairPayload, isPairPayloadUsable, PairPayload } from '../../../web/lib/types/pairPayload';
+import { buildPairPayload, isPairPayloadUsable, PairPayload } from '../../ui/lib/types/pairPayload';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

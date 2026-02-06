@@ -1,17 +1,16 @@
 /**
- * Root Tailwind config — required because `next build web` / `next dev web`
+ * Root Tailwind config — required because `next build` / `next dev`
  * run with CWD = project root, so Tailwind resolves content paths from here.
- * Mirrors web/tailwind.config.ts with web/-prefixed content paths.
  */
 import type { Config } from 'tailwindcss';
 
 const config: Config = {
     darkMode: 'class',
     content: [
-        './web/app/**/*.{js,ts,jsx,tsx}',
-        './web/components/**/*.{js,ts,jsx,tsx}',
-        './web/pages/**/*.{js,ts,jsx,tsx}',
-        './web/app/globals.css',
+        './src/ui/app/**/*.{js,ts,jsx,tsx}',
+        './src/ui/components/**/*.{js,ts,jsx,tsx}',
+        './src/ui/pages/**/*.{js,ts,jsx,tsx}',
+        './src/ui/app/globals.css',
     ],
     theme: {
         extend: {

@@ -30,7 +30,7 @@ A localhost-only automated trading bot for the XRP Ledger decentralized exchange
 | Executor | [src/execution/offerExecutor.ts](src/execution/offerExecutor.ts) | Paper/live execution |
 | Feedback | [src/analytics/feedbackEngine.ts](src/analytics/feedbackEngine.ts) | Trade + market recording |
 | Adaptive | [src/analytics/adaptiveLearner.ts](src/analytics/adaptiveLearner.ts) | Parameter tuning |
-| Dashboard | [web/app/page.tsx](web/app/page.tsx) | Next.js UI |
+| Dashboard | [src/ui/app/page.tsx](src/ui/app/page.tsx) | Next.js UI |
 
 ---
 

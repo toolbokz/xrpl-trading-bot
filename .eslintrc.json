@@ -6,7 +6,7 @@
     "settings": {
         "next": {
             "rootDir": [
-                "web"
+                "."
             ]
         }
     },

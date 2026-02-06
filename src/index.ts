@@ -5,15 +5,15 @@ import { enforceLocalOnly, getLocalOnlyStatus, CloudExecutionBlockedError, Remot
 import { BOT_LOOP_MIN_DELAY_MS } from './utils/sleep';
 
 async function main(): Promise<void> {
-    // Check for single-process mode
-    if (process.env.SINGLE_PROCESS_MODE === 'true') {
-        logger.warn('='.repeat(70));
-        logger.warn('SINGLE_PROCESS_MODE=true detected');
-        logger.warn('In single-process mode, run "npm run dev:single" instead.');
-        logger.warn('The CLI (src/index.ts) is disabled - TradingRuntime runs inside Next.js.');
-        logger.warn('='.repeat(70));
-        process.exit(0);
-    }
+    // Single-process mode is the only supported mode.
+    // The runtime is started by the Next.js custom server (server.js).
+    // This CLI entry point is no longer used.
+    logger.warn('='.repeat(70));
+    logger.warn('src/index.ts is a legacy CLI entry point.');
+    logger.warn('Use "npm run dev" or "npm run start" instead.');
+    logger.warn('The TradingRuntime runs inside Next.js (single-process mode).');
+    logger.warn('='.repeat(70));
+    process.exit(0);
 
     // Security gate: enforce local-only execution at startup
     logger.info('Performing local-only security check...');

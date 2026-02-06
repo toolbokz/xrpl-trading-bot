@@ -1,11 +1,9 @@
 # Node.js dependencies - ONLY root node_modules should exist
 node_modules/
-web/node_modules/
-.pnp
-.pnp.js
 
 # Next.js build output
 .next/
+**/.next/
 out/
 build/
 dist/
