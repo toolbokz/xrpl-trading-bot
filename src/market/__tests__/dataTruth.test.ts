@@ -138,7 +138,7 @@ describe('Spec: Execution blocked when book stale', () => {
         expect(health.signals.book.score).toBe(0);
 
         const strictConfig = { ...DEFAULT_GATE_CONFIG, minHealthScore: 80 };
-        const gate = evaluateExecutionGate(buildGateInput(health), strictConfig);        expect(gate.verdict).toBe('BLOCK');
+        const gate = evaluateExecutionGate(buildGateInput(health), strictConfig); expect(gate.verdict).toBe('BLOCK');
     });
 });
 
