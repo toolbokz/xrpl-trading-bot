@@ -141,6 +141,11 @@ export const loadConfig = (): AppConfig => {
     const quoteCurrency = process.env.TRADE_QUOTE_CURRENCY || 'NZD';
     const legacyIssuer = process.env.TRADE_ISSUER || '';
 
+    // Per-asset issuers: TRADE_BASE_ISSUER / TRADE_QUOTE_ISSUER take precedence
+    // over the legacy single TRADE_ISSUER value.
+    const rawBaseIssuer = process.env.TRADE_BASE_ISSUER || legacyIssuer;
+    const rawQuoteIssuer = process.env.TRADE_QUOTE_ISSUER || legacyIssuer;
+
     // XRP is native and should never have an issuer
     const isBaseXRP = baseCurrency.toUpperCase() === 'XRP';
     const isQuoteXRP = quoteCurrency.toUpperCase() === 'XRP';
@@ -148,8 +153,8 @@ export const loadConfig = (): AppConfig => {
     const tradingPair: TradingPair = {
         baseCurrency,
         quoteCurrency,
-        baseIssuer: isBaseXRP ? undefined : legacyIssuer,
-        quoteIssuer: isQuoteXRP ? undefined : legacyIssuer,
+        baseIssuer: isBaseXRP ? undefined : rawBaseIssuer,
+        quoteIssuer: isQuoteXRP ? undefined : rawQuoteIssuer,
         issuer: legacyIssuer, // Keep for backward compatibility
     };
 

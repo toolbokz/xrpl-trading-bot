@@ -78,6 +78,8 @@ export interface TradeEventInput {
     ammFeeBps?: number | null;
     fillRatio?: number | null;
     isPartial?: boolean | null;
+    /** Execution source: AMM pool, DEX order book, mixed, or unknown. */
+    executionSource?: 'amm' | 'orderbook' | 'mixed' | 'unknown' | null;
 }
 
 /**

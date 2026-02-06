@@ -9,11 +9,12 @@ A localhost-only automated trading bot for the XRP Ledger decentralized exchange
 - **Three Strategies**: Order book scalping, AMM arbitrage, and path-finding arbitrage
 - **Real-Time Flow Analysis**: Trade flow, depth imbalance, VWAP, and regime classification
 - **Risk Management**: Daily loss limits, reserve floor, kill switch, circuit breakers
-- **Execution Engine**: Paper/live modes, slippage protection, partial fill detection
+- **Execution Engine**: Paper/live modes, slippage protection, partial fill detection, AMM vs order book source detection
+- **Exposure Tracking**: Real-time net position, notional exposure, and inventory skew from executed fills
 - **Analytics**: SQLite-backed feedback engine with win rate, expectancy, drawdown, regime matrix
 - **Adaptive Learning**: Bounded, explainable parameter tuning based on historical performance
 - **Dashboard**: Next.js UI with charts, controls, risk panel, and real-time metrics
-- **Security**: Localhost-only execution, cloud platform blocking, network mismatch protection
+- **Security**: Localhost-only execution, cloud platform blocking, network mismatch protection, production signer gating
 
 ---
 
@@ -27,7 +28,9 @@ A localhost-only automated trading bot for the XRP Ledger decentralized exchange
 | Flow Metrics | [src/market/flowMetrics.ts](src/market/flowMetrics.ts) | Signals, regimes, VWAP |
 | Strategies | [src/strategies/](src/strategies/) | Scalper, AMM Arb, Path Arb |
 | Risk Engine | [src/risk/riskEngine.ts](src/risk/riskEngine.ts) | Approvals, limits, kill switch |
-| Executor | [src/execution/offerExecutor.ts](src/execution/offerExecutor.ts) | Paper/live execution |
+| Exposure | [src/risk/exposureTracker.ts](src/risk/exposureTracker.ts) | Position tracking, skew, notional |
+| Executor | [src/execution/offerExecutor.ts](src/execution/offerExecutor.ts) | Paper/live execution, AMM detection |
+| Signer | [src/xrpl/signer.ts](src/xrpl/signer.ts) | Pluggable signing (seed/Xumm/KMS/Ledger) |
 | Feedback | [src/analytics/feedbackEngine.ts](src/analytics/feedbackEngine.ts) | Trade + market recording |
 | Adaptive | [src/analytics/adaptiveLearner.ts](src/analytics/adaptiveLearner.ts) | Parameter tuning |
 | Dashboard | [src/ui/app/page.tsx](src/ui/app/page.tsx) | Next.js UI |
@@ -58,6 +61,8 @@ flowchart TD
   EXEC -->|live mode| TX[OfferCreate Submit]
   TX --> XRPL
 
+  EXEC --> EXP[ExposureTracker]
+  EXP --> RISK
   EXEC --> FB[FeedbackEngine]
   FM --> FB
   OB --> FB
@@ -117,12 +122,19 @@ Paper mode simulates trades locally—no transactions sent to XRPL.
 - [ ] Set conservative risk limits
 - [ ] Start with `PAPER_TRADING=true` on mainnet
 - [ ] Validate paper results before enabling live
+- [ ] Configure a production signer (raw seed signing is **blocked** on mainnet)
+
+> 🔐 **Signer Gating**: On mainnet (or `NODE_ENV=production`), the default `SeedSigner`
+> is blocked. You must configure `XRPL_SIGNER=xumm`, `kms`, or `ledger`.
+> Scaffold implementations will fail `assertSignerReady()` at startup until
+> you provide a real integration. Bypass with `SIGNER_SKIP_READY_CHECK=true`
+> (dangerous — signing will fail at trade time).
 
 ```env
 XRPL_NETWORK=mainnet
 XRPL_WSS_URL=wss://xrplcluster.com
-XRPL_SEED=sYourMainnetSeed
-PAPER_TRADING=true          # Start paper, switch to false when ready
+XRPL_SIGNER=xumm            # or 'kms' or 'ledger' — raw seed blocked on mainnet
+PAPER_TRADING=true           # Start paper, switch to false when ready
 BOT_LOCAL_ONLY=true
 MAX_DAILY_LOSS_XRP=50
 MAX_TRADE_SIZE=100
@@ -138,6 +150,7 @@ RESERVE_FLOOR_XRP=50
 | Localhost-only | CLI, Runtime, API middleware all verify 127.0.0.1 |
 | Cloud blocking | Detects Vercel, AWS, GCP, Azure, Heroku, Railway, Render, Fly.io, DigitalOcean, Netlify, Kubernetes |
 | Network mismatch | Blocks testnet wallet on mainnet and vice versa |
+| Signer gating | Raw seed signing blocked on mainnet; requires Xumm/KMS/Ledger |
 | Remote override | `BOT_ALLOW_REMOTE=true` required (loud warnings) |
 
 ---
@@ -153,6 +166,7 @@ RESERVE_FLOOR_XRP=50
 | Max Trade Size | Size exceeds `MAX_TRADE_SIZE` | Reject intent |
 | Slippage Guard | Slippage > `MAX_SLIPPAGE_BPS` | Reject execution |
 | Circuit Breaker | Path arb cumulative loss | Pause strategy |
+| Exposure Guard | Notional exposure or inventory skew exceeds limits | Block execution (hard risk guard) |
 
 Kill switch halts all trading immediately. Graceful shutdown cancels open offers.
 
@@ -219,13 +233,32 @@ Analyzes trade outcomes to tune strategy parameters within safe bounds.
 | `XRPL_WSS_URL` | — | WebSocket endpoint |
 | `XRPL_NETWORK` | `mainnet` | `mainnet` or `testnet` |
 | `XRPL_SEED` | — | Wallet seed (secret) |
+| `XRPL_SEED_TESTNET` | — | Network-specific testnet seed |
+| `XRPL_SEED_MAINNET` | — | Network-specific mainnet seed |
 | `PAPER_TRADING` | `true` | Simulate trades |
+
+### Trading Pair
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRADE_BASE_CURRENCY` | `XRP` | Base currency code |
+| `TRADE_QUOTE_CURRENCY` | `RLUSD` | Quote currency code |
+| `TRADE_ISSUER` | — | Legacy issuer (fallback for both) |
+| `TRADE_BASE_ISSUER` | — | Base currency issuer (overrides `TRADE_ISSUER`) |
+| `TRADE_QUOTE_ISSUER` | — | Quote currency issuer (overrides `TRADE_ISSUER`) |
+
+### Signing
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `XRPL_SIGNER` | `seed` | Signer backend (`seed`, `xumm`, `kms`, `ledger`) |
+| `LEDGER_ENABLED` | `false` | Enable hardware wallet signing |
+| `SIGNER_SKIP_READY_CHECK` | `false` | Skip startup signer readiness check (dangerous) |
 
 ### Security
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BOT_LOCAL_ONLY` | `true` | Enforce localhost |
 | `BOT_ALLOW_REMOTE` | `false` | Override (dangerous) |
+| `BOT_API_DEV_MODE` | `false` | Skip proxy header checks (dev only) |
 
 ### Risk
 | Variable | Default | Description |
@@ -264,6 +297,8 @@ Analyzes trade outcomes to tune strategy parameters within safe bounds.
 | "Reserve floor" | Add more XRP to wallet |
 | "Kill switch triggered" | Review losses, restart bot |
 | "Risk engine rejected" | Check position size and limits |
+| "Signer not ready" | Configure a real signer for mainnet (Xumm/KMS/Ledger) |
+| "Raw seed signing blocked" | Set `XRPL_SIGNER=xumm` (or `kms`/`ledger`) on mainnet |
 
 ---
 

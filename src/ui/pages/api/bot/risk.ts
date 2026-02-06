@@ -23,6 +23,9 @@ function handler(req: LocalRequest, res: NextApiResponse) {
     // Hard risk guard payload (pair-keyed, deterministic)
     const hardRisk = runtime.getHardRiskPayload();
 
+    // Exposure tracker snapshot (live position tracking)
+    const exposure = runtime.getExposureSnapshot();
+
     if (!riskStatus) {
         // Runtime not started - return defaults from config
         const config = runtime.getConfig();
@@ -49,6 +52,7 @@ function handler(req: LocalRequest, res: NextApiResponse) {
         ...riskStatus,
         positionSize: runtime.getConfig().strategy.positionSize,
         hardRisk,
+        exposure,
         source: 'runtime',
         requestId: req.requestId,
     });

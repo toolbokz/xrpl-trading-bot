@@ -79,6 +79,8 @@ export interface ExecutionFill {
     txHash: string | null;
     /** Ledger index at fill. */
     ledgerIndex: number;
+    /** Execution source: AMM pool, DEX order book, mixed, or unknown. */
+    executionSource: 'amm' | 'orderbook' | 'mixed' | 'unknown';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -270,6 +272,7 @@ export class ExecutionQualityCollector {
             fillRatio: number;
             txHash: string | null;
             ledgerIndex: number;
+            executionSource?: 'amm' | 'orderbook' | 'mixed' | 'unknown';
         },
     ): ExecutionFill | null {
         // Cross-pair guard
@@ -310,6 +313,7 @@ export class ExecutionQualityCollector {
             wasReplaced: inflight.wasReplaced,
             txHash: fill.txHash,
             ledgerIndex: fill.ledgerIndex,
+            executionSource: fill.executionSource ?? 'unknown',
         };
 
         this.fills.push(entry);

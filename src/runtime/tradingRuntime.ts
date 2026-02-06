@@ -102,6 +102,7 @@ import {
     HardRiskPayload,
     loadHardRiskConfig,
 } from '../risk/hardRiskGuard';
+import { ExposureTracker, ExposureSnapshot } from '../risk/exposureTracker';
 import { ObservabilityBus } from '../observability/eventBus';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
@@ -204,6 +205,8 @@ export class TradingRuntime {
     private readonly executionQualityCollector = new ExecutionQualityCollector();
     /** Hard risk guard — deterministic 7-condition capital safety gate. */
     private readonly hardRiskGuard = new HardRiskGuard(loadHardRiskConfig());
+    /** Exposure tracker — lightweight position tracking from fills. */
+    private readonly exposureTracker = new ExposureTracker();
     /** Observability event bus — structured event stream for forensic debugging. */
     private readonly observabilityBus = new ObservabilityBus();
     /** Per-tick performance tracer — lightweight phase timing + event-loop lag. */
@@ -335,6 +338,7 @@ export class TradingRuntime {
         // Reset health state from previous pair
         this.lastMarketDataHealth = null;
         this.lastExecutionGateResult = null;
+        this.exposureTracker.reset();
     }
 
     async start(): Promise<void> {
@@ -470,6 +474,7 @@ export class TradingRuntime {
             this.risk = risk;
             this.executor = executor;
             executor.setExecutionQualityCollector(this.executionQualityCollector);
+            executor.setExposureTracker(this.exposureTracker);
             this.walletAddress = wallet?.classicAddress ?? null;
             this.started = true;
 
@@ -530,6 +535,8 @@ export class TradingRuntime {
             const pairKey = `${config.tradingPair.baseCurrency}/${config.tradingPair.quoteCurrency}`;
             this.executionQualityCollector.setPairKey(pairKey);
             this.hardRiskGuard.setPairKey(pairKey);
+            this.exposureTracker.setPairKey(pairKey);
+            this.exposureTracker.setMaxPositionBase(config.strategy.positionSize * 20);
             const strategyNames = this.strategies.map(s => s.name);
             startAdaptiveScheduler({
                 pairKeys: [pairKey],
@@ -893,9 +900,15 @@ export class TradingRuntime {
             // ─────────────────────────────────────────────────────────────────
             // Hard Risk Guard — deterministic capital safety gate
             // ─────────────────────────────────────────────────────────────────
+            // Update exposure tracker with latest mid-price
+            const bestBid = orderBookState.bids[0]?.price ?? 0;
+            const bestAsk = orderBookState.asks[0]?.price ?? 0;
+            const tickMid = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : bestBid || bestAsk;
+            if (tickMid > 0) this.exposureTracker.updateMidPrice(tickMid);
+
             const hardRiskInput: HardRiskInput = {
-                currentExposureNotional: this.risk?.getStatus().currentExposure ?? 0,
-                inventorySkewPct: 0, // TODO: compute from balance ratios when position tracking lands
+                currentExposureNotional: this.exposureTracker.getNotionalExposure(),
+                inventorySkewPct: this.exposureTracker.getInventorySkewPct(),
                 drawdownPct: this.lastGovernanceDecision?.metrics.drawdownPct ?? 0,
                 runtimeReady: this.fsm.getState() === 'READY',
                 marketDataValid: this.lastDataValid,
@@ -1161,6 +1174,13 @@ export class TradingRuntime {
      */
     getHardRiskGuard(): HardRiskGuard {
         return this.hardRiskGuard;
+    }
+
+    /**
+     * Get the current exposure snapshot (for API routes / risk display).
+     */
+    getExposureSnapshot(): ExposureSnapshot {
+        return this.exposureTracker.getSnapshot();
     }
 
     /**
@@ -1611,6 +1631,9 @@ export class TradingRuntime {
                 this.hardRiskGuard.setPairKey(
                     `${newPair.baseCurrency}/${newPair.quoteCurrency}`,
                 );
+                this.exposureTracker.setPairKey(
+                    `${newPair.baseCurrency}/${newPair.quoteCurrency}`,
+                );
 
                 // 4. Strategy layer
                 for (const strategy of this.strategies) {
@@ -1928,6 +1951,7 @@ export class TradingRuntime {
         this.cacheRegistry.reset();
         this.executionQualityCollector.reset();
         this.hardRiskGuard.reset();
+        this.exposureTracker.reset();
         this.observabilityBus.clear();
 
         // Reset FSM to BOOTING for potential restart

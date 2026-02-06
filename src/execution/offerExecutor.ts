@@ -9,6 +9,7 @@ import { computeCostRealism } from '../analytics/costRealism';
 import { isAdaptiveEnabled } from '../analytics/adaptiveConfig';
 import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './offerBuilder';
 import { ExecutionQualityCollector, InFlightTrace } from '../analytics/executionQuality';
+import { ExposureTracker } from '../risk/exposureTracker';
 
 export interface OfferParams {
     side: 'buy' | 'sell';
@@ -35,6 +36,9 @@ export class OfferExecutor {
 
     // Execution quality analytics collector (injected by TradingRuntime)
     private executionQualityCollector: ExecutionQualityCollector | null = null;
+
+    // Exposure tracker for position/inventory tracking (injected by TradingRuntime)
+    private exposureTracker: ExposureTracker | null = null;
 
     // Adaptive learning overrides (set per-tick by TradingRuntime)
     private adaptiveMaxSlippageBps: number | null = null;
@@ -86,6 +90,14 @@ export class OfferExecutor {
      */
     setExecutionQualityCollector(collector: ExecutionQualityCollector): void {
         this.executionQualityCollector = collector;
+    }
+
+    /**
+     * Inject the exposure tracker for position tracking.
+     * Called once by TradingRuntime during initialization.
+     */
+    setExposureTracker(tracker: ExposureTracker): void {
+        this.exposureTracker = tracker;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -530,6 +542,11 @@ export class OfferExecutor {
                 } catch { /* analytics should never crash trading */ }
             }
 
+            // Record fill in exposure tracker
+            if (this.exposureTracker) {
+                this.exposureTracker.recordFill(side, intent.amount, pairSymbol);
+            }
+
             return { accepted: true, reason: 'paper-mode' };
         }
         if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
@@ -795,6 +812,40 @@ export class OfferExecutor {
     // Timeout for submitAndWait (12 seconds - ~3 ledger closes)
     private static readonly SUBMIT_TIMEOUT_MS = 12_000;
 
+    /**
+     * Detect whether a fill was executed against an AMM pool or the DEX order book.
+     *
+     * XRPL AMM fills produce `AMM` ledger entries in `AffectedNodes`.
+     * - If any AffectedNode has LedgerEntryType === 'AMM', it touched an AMM pool.
+     * - If only Offer/AccountRoot/RippleState nodes, it was pure order book.
+     * - Mixed fills (AMM + order book) are classified as 'mixed'.
+     *
+     * Returns 'amm', 'orderbook', 'mixed', or 'unknown'.
+     */
+    detectExecutionSource(meta: TransactionMetadata | undefined): 'amm' | 'orderbook' | 'mixed' | 'unknown' {
+        if (!meta || typeof meta === 'string' || !meta.AffectedNodes) {
+            return 'unknown';
+        }
+
+        let hasAmm = false;
+        let hasOffer = false;
+
+        for (const node of meta.AffectedNodes) {
+            const entryType =
+                ('ModifiedNode' in node ? node.ModifiedNode.LedgerEntryType : undefined) ??
+                ('DeletedNode' in node ? node.DeletedNode.LedgerEntryType : undefined) ??
+                ('CreatedNode' in node ? node.CreatedNode.LedgerEntryType : undefined);
+
+            if (entryType === 'AMM') hasAmm = true;
+            if (entryType === 'Offer') hasOffer = true;
+        }
+
+        if (hasAmm && hasOffer) return 'mixed';
+        if (hasAmm) return 'amm';
+        if (hasOffer) return 'orderbook';
+        return 'unknown';
+    }
+
     // Unified submit path with logging, validation, and error handling to avoid rippled parameter errors.
     private async submitWithGuards(tx: any, pairSymbol?: string, intent?: TradeIntent, flags?: { passive?: boolean }): Promise<ExecutionResult> {
         // ── Execution quality trace: start ──────────────────────────────────
@@ -963,8 +1014,11 @@ export class OfferExecutor {
                     intentPrice: intent.price,
                     fillPrice: actualFillPrice,
                     midPriceAtDecision: this.currentMidPrice,
-                    ammFeeBps: null, // TODO: detect AMM vs order book
+                    ammFeeBps: null, // Populated below if AMM fill detected
                 });
+
+                // Detect execution source (AMM vs order book)
+                const fillExecutionSource = this.detectExecutionSource(meta);
 
                 // Standard XRPL transaction fee in XRP
                 const txFeeXrp = 0.000012;
@@ -992,9 +1046,10 @@ export class OfferExecutor {
                         edgeBpsVsMid: costMetrics.edgeBpsVsMid,
                         netEdgeBpsVsMid: costMetrics.netEdgeBpsVsMid,
                         txFeeXrp,
-                        ammFeeBps: null, // TODO: detect AMM vs order book
+                        ammFeeBps: null, // AMM fee detection requires pool-specific data
                         fillRatio: fillResult.fillRatio,
                         isPartial: fillResult.fillRatio < 1,
+                        executionSource: fillExecutionSource,
                     });
                 } catch { /* feedback should never crash trading */ }
             }
@@ -1003,6 +1058,7 @@ export class OfferExecutor {
             if (inflightTrace && this.executionQualityCollector && intent) {
                 try {
                     const actualFillPriceEq = fillResult.effectivePrice || intent.price;
+                    const executionSource = this.detectExecutionSource(meta);
                     this.executionQualityCollector.recordFill(inflightTrace, {
                         submitTimeMs: eqSubmitTimeMs,
                         ledgerAcceptedTimeMs: Date.now(),
@@ -1011,8 +1067,16 @@ export class OfferExecutor {
                         fillRatio: fillResult.fillRatio,
                         txHash: res.result.hash ?? null,
                         ledgerIndex: (res.result as any).ledger_index ?? 0,
+                        executionSource,
                     });
                 } catch { /* analytics should never crash trading */ }
+            }
+
+            // ── Exposure tracking: record fill for position tracking ────────
+            if (this.exposureTracker && intent && pairSymbol) {
+                const fillSide = intent.side.toLowerCase() as 'buy' | 'sell';
+                const fillSize = fillResult.takerGotAmount || intent.amount;
+                this.exposureTracker.recordFill(fillSide, fillSize, pairSymbol);
             }
 
             return {

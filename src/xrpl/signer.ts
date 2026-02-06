@@ -48,10 +48,10 @@ export class SeedSigner implements Signer {
     private wallet: Wallet;
 
     constructor(seedOrSecretNumbers: string, isSecretNumbers = false) {
-        // Block production usage
-        if (process.env.NODE_ENV === 'production') {
+        // Block mainnet and production usage
+        if (isMainnetContext()) {
             throw new Error(
-                'SeedSigner is disabled in production. ' +
+                'SeedSigner is disabled on mainnet and in production. ' +
                 'Use hardware wallet (Ledger), Xumm, or KMS signer instead.'
             );
         }
@@ -234,16 +234,36 @@ export class KmsSigner implements Signer {
 }
 
 /**
+ * Whether the runtime is targeting mainnet (live funds).
+ * Checks both NODE_ENV and XRPL_NETWORK to prevent accidental mainnet
+ * usage with development-only signers.
+ */
+function isMainnetContext(): boolean {
+    return (
+        process.env.XRPL_NETWORK === 'mainnet' ||
+        process.env.NODE_ENV === 'production'
+    );
+}
+
+/**
  * Create a signer based on environment configuration.
+ *
+ * Security gates:
+ *   1. Mainnet context (XRPL_NETWORK=mainnet OR NODE_ENV=production)
+ *      requires a non-seed signer (KMS, Xumm, or Ledger).
+ *   2. Non-seed signers are scaffolds — createSignerFromEnv() will throw
+ *      at startup rather than silently accepting an unusable signer.
+ *      Set SIGNER_SKIP_READY_CHECK=true to bypass (for integration testing only).
  */
 export function createSignerFromEnv(): Signer {
     const seed = process.env.XRPL_SEED;
     const secretNumbers = process.env.XRPL_SECRET_NUMBERS;
     const xummApiKey = process.env.XUMM_API_KEY;
     const kmsKeyId = process.env.KMS_KEY_ID;
+    const ledgerEnabled = process.env.LEDGER_ENABLED === 'true';
 
-    // Production: require non-seed signer
-    if (process.env.NODE_ENV === 'production') {
+    // Mainnet / production: require non-seed signer
+    if (isMainnetContext()) {
         if (kmsKeyId) {
             return new KmsSigner(kmsKeyId, process.env.AWS_REGION);
         }
@@ -254,13 +274,16 @@ export function createSignerFromEnv(): Signer {
                 process.env.XUMM_USER_TOKEN
             );
         }
+        if (ledgerEnabled) {
+            return new LedgerSigner(process.env.LEDGER_DERIVATION_PATH);
+        }
         throw new Error(
-            'Production requires KMS_KEY_ID or XUMM_API_KEY. ' +
-            'Seed-based signing is disabled in production.'
+            'Mainnet/production requires KMS_KEY_ID, XUMM_API_KEY, or LEDGER_ENABLED=true. ' +
+            'Seed-based signing is disabled on mainnet and in production.'
         );
     }
 
-    // Development: allow seed signer
+    // Development / testnet: allow seed signer
     if (secretNumbers) {
         return new SeedSigner(secretNumbers, true);
     }
@@ -270,8 +293,32 @@ export function createSignerFromEnv(): Signer {
 
     throw new Error(
         'No signing credentials found. Set XRPL_SEED or XRPL_SECRET_NUMBERS ' +
-        'for development, or KMS_KEY_ID/XUMM_API_KEY for production.'
+        'for development, or KMS_KEY_ID/XUMM_API_KEY/LEDGER_ENABLED for production.'
     );
+}
+
+/**
+ * Verify that a signer is operational before the bot starts trading.
+ * Non-seed signers are scaffolds today — this will fail fast and surface
+ * a clear error instead of crashing mid-trade.
+ *
+ * @throws Error if the signer reports not-ready and skip is not set
+ */
+export async function assertSignerReady(signer: Signer): Promise<void> {
+    if (process.env.SIGNER_SKIP_READY_CHECK === 'true') {
+        return;
+    }
+    if (typeof signer.isReady !== 'function') {
+        return; // SeedSigner has no isReady — always OK
+    }
+    const ready = await signer.isReady();
+    if (!ready) {
+        throw new Error(
+            `Signer type "${signer.type}" is not ready. ` +
+            'The selected signing backend is not yet implemented. ' +
+            'Use a seed signer on testnet, or set SIGNER_SKIP_READY_CHECK=true to bypass.'
+        );
+    }
 }
 
 /**
