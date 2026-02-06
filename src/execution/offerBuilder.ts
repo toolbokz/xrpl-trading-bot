@@ -1,6 +1,7 @@
 import { OfferCreate, xrpToDrops } from 'xrpl';
 import { TradingPair } from '../config';
 import { toXrplCurrency, XrplCurrency } from '../xrpl/currency';
+import { shouldCrossSpread } from './qualityGate';
 
 export type TradeSide = 'BUY' | 'SELL';
 
@@ -29,6 +30,21 @@ export interface NormalizedTradeIntent {
     price: number;
 }
 
+export interface MakerQuoteInput {
+    mid: number;
+    side: 'buy' | 'sell';
+    spreadBps: number;
+    volatilityBps: number;
+    stalenessMs: number;
+    minTick: number;
+}
+
+export interface MakerDecisionInput {
+    expectedEdgeBps: number;
+    feesBps: number;
+    slippageBudgetBps: number;
+}
+
 const isXRP = (code: string): boolean => code.toUpperCase() === 'XRP';
 
 const toPrecisionString = (value: number): string => {
@@ -37,6 +53,15 @@ const toPrecisionString = (value: number): string => {
     }
     const str = value.toPrecision(15);
     return str.replace(/\.0+$|(?<=\.\d*?)0+$/g, '').replace(/\.$/, '');
+};
+
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+
+const roundToTick = (price: number, tick: number, side: 'buy' | 'sell'): number => {
+    const safeTick = Number.isFinite(tick) && tick > 0 ? tick : 0.000001;
+    const ticks = price / safeTick;
+    const roundedTicks = side === 'buy' ? Math.floor(ticks) : Math.ceil(ticks);
+    return Math.max(safeTick, roundedTicks * safeTick);
 };
 
 export const normalizePair = (pair: TradingPair, opts?: { invert?: boolean }): NormalizedPair => {
@@ -92,6 +117,31 @@ const toXRPLAmount = (leg: TradingLeg, value: number): OfferCreate['TakerGets'] 
     const issued = normalized as Extract<XrplCurrency, { issuer: string }>;
     return { currency: issued.currency, issuer: issued.issuer, value: toPrecisionString(value) } as any;
 };
+
+export const computeMakerQuote = (input: MakerQuoteInput): number => {
+    const mid = Number.isFinite(input.mid) && input.mid > 0 ? input.mid : 0;
+    const spread = Math.max(0, Number.isFinite(input.spreadBps) ? input.spreadBps : 0);
+    const volatility = Math.max(0, Number.isFinite(input.volatilityBps) ? input.volatilityBps : 0);
+    const stalenessMs = Math.max(0, Number.isFinite(input.stalenessMs) ? input.stalenessMs : 0);
+
+    if (mid <= 0) {
+        return 0;
+    }
+
+    const halfSpreadBps = spread / 2;
+    const stalenessBps = stalenessMs / 500;
+    const widthBps = clamp(halfSpreadBps + (volatility * 0.25) + stalenessBps, 0.5, 250);
+    const rawOffset = (mid * widthBps) / 10_000;
+
+    const targetPrice = input.side === 'buy' ? mid - rawOffset : mid + rawOffset;
+    return roundToTick(targetPrice, input.minTick, input.side);
+};
+
+export const shouldCrossForEdge = (input: MakerDecisionInput): boolean => shouldCrossSpread({
+    expectedEdgeBps: input.expectedEdgeBps,
+    feesBps: input.feesBps,
+    slippageBudgetBps: input.slippageBudgetBps,
+});
 
 export const buildOfferCreate = (intent: NormalizedTradeIntent): Pick<OfferCreate, 'TakerGets' | 'TakerPays'> => {
     const baseAmount = intent.amount;

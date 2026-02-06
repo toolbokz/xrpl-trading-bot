@@ -19,8 +19,9 @@ export function countDecimals(value: number): number {
         return 0;
     }
 
-    // Convert to string and handle scientific notation
-    const str = Math.abs(value).toString();
+    // Normalize to suppress floating-point noise (e.g. 1.2300000000000002)
+    const normalized = Number(Math.abs(value).toFixed(12));
+    const str = normalized.toString();
 
     // Handle scientific notation (e.g., 1.23e-7)
     if (str.includes('e')) {
@@ -69,18 +70,25 @@ export function detectOHLCPrecision(data: OHLCData): number {
  */
 export function detectDatasetPrecision(data: OHLCData[]): number {
     if (!data || data.length === 0) {
-        return 2; // Default precision
+        return 0;
     }
 
-    let maxPrecision = 0;
+    let maxClosePrecision = 0;
+    let maxOhlcPrecision = 0;
+    let closeSum = 0;
+
     for (const candle of data) {
-        const precision = detectOHLCPrecision(candle);
-        if (precision > maxPrecision) {
-            maxPrecision = precision;
-        }
+        maxClosePrecision = Math.max(maxClosePrecision, countDecimals(candle.close));
+        maxOhlcPrecision = Math.max(maxOhlcPrecision, detectOHLCPrecision(candle));
+        closeSum += candle.close;
     }
 
-    return maxPrecision;
+    const avgClose = closeSum / data.length;
+    if (avgClose > 0 && avgClose < 0.001) {
+        return Math.max(maxClosePrecision, maxOhlcPrecision);
+    }
+
+    return maxClosePrecision;
 }
 
 /**

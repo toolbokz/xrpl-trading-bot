@@ -1,7 +1,7 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest, logSensitiveAction } from '../../../lib/localApi';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
-import { findPair, isValidPairKey, toLegacyPair } from '../../../../src/config/tradingPairs';
+import { findPair, isValidPairKey } from '../../../../src/config/tradingPairs';
 import { validateBody, tradingPairSchema } from '../../../lib/validation/schemas';
 import { logger } from '../../../../src/analytics/logger';
 
@@ -43,14 +43,21 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
 
     try {
         const runtime = ensureRuntimeHooks();
-        // Convert to legacy format for the bot runtime
-        runtime.setTradingPair(toLegacyPair(pair));
+        const switchResult = runtime.setActivePair(pairKey);
+        if (!switchResult.success) {
+            return res.status(400).json({
+                error: switchResult.error || 'Failed to switch trading pair',
+                code: 'UPDATE_FAILED',
+                requestId: req.requestId,
+            });
+        }
 
         // Audit log sensitive action
         await logSensitiveAction(req.requestId, 'bot:trading_pair', { pairKey });
 
         res.status(200).json({
             message: 'Trading pair updated',
+            activePair: switchResult.activePair,
             pair: {
                 key: pair.key,
                 base: pair.base,

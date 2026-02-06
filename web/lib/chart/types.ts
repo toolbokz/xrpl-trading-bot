@@ -119,8 +119,8 @@ export const DEFAULT_SCALING_OPTIONS: AdaptiveScalingOptions = {
     baseBarSpacing: 6,             // Slim professional candles
     spacingGrowthPerDecimal: 0.15,
     minBarSpacing: 2,              // Never below 2px for readability
-    maxBarSpacing: 10,             // Never above 10px for cleanliness
-    thickMicroCandles: false,
+    maxBarSpacing: 14,             // Allow extra spacing for high-precision / micro assets
+    thickMicroCandles: true,
 };
 
 /** TradingView-inspired color scheme - professional muted tones */
