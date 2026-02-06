@@ -2,7 +2,7 @@
 
 ## Architecture (big picture)
 - **Single-process runtime**: the bot backend and Next.js dashboard run in one process. No dual-process mode.
-- Backend loop lives in [src/index.ts](../../src/index.ts) and [src/runtime/tradingRuntime.ts](../src/runtime/tradingRuntime.ts): connect XRPL → refresh order book → run strategies → execute offers. Data flow: `XRPLWebSocket` → `OrderBookTracker` → strategies in [src/strategies/](../src/strategies/) → `OfferExecutor` → `RiskEngine`.
+- Backend loop lives in [src/index.ts](../src/index.ts) and [src/runtime/tradingRuntime.ts](../src/runtime/tradingRuntime.ts): connect XRPL → refresh order book → run strategies → execute offers. Data flow: `XRPLWebSocket` → `OrderBookTracker` → strategies in [src/strategies/](../src/strategies/) → `OfferExecutor` → `RiskEngine`.
 - Strategies are wired in `TradingRuntime.start()` (Scalper, AMM arb, Path arb). When adding a new strategy, register it there and respect `Strategy` interface in [src/strategies/types.ts](../src/strategies/types.ts).
 - Risk controls are centralized in [src/risk/riskEngine.ts](../src/risk/riskEngine.ts): daily loss reset, reserve checks, issuer allowlist/blacklist. Use it before sending any on-ledger action.
 - Order book normalization/price logic is in [src/market/orderBookTracker.ts](../src/market/orderBookTracker.ts); it converts XRP drops vs issued currency amounts and computes spread bps.
