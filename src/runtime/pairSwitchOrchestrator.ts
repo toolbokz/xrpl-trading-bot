@@ -19,6 +19,7 @@
 
 import { runtimeLog as logger } from '../analytics/logger';
 import { TradingPair } from '../config';
+import { sleep } from '../utils/sleep';
 import {
     PairSwitchFsm,
     PairSwitchPhase,
@@ -345,6 +346,3 @@ export class PairSwitchOrchestrator {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}

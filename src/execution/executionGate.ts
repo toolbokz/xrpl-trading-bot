@@ -32,11 +32,14 @@ export interface ExecutionGateConfig {
     minHealthScore: number;
     /** Maximum ledger staleness before blocking (default 60 000 ms) */
     maxLedgerStalenessMs: number;
+    /** Maximum balance staleness before blocking (default 120 000 ms) */
+    maxBalanceStalenessMs: number;
 }
 
 export const DEFAULT_GATE_CONFIG: ExecutionGateConfig = {
     minHealthScore: 50,
     maxLedgerStalenessMs: 60_000,
+    maxBalanceStalenessMs: 120_000,
 };
 
 export interface ExecutionGateInput {
@@ -64,6 +67,8 @@ export interface ExecutionGateInput {
     ledgerIndex: number;
     /** Time of last ledger close (ms epoch, 0 if unknown). */
     lastLedgerCloseMs: number;
+    /** Time of last balance snapshot (ms epoch, 0 if unknown). */
+    lastBalanceSnapshotMs: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,8 +87,9 @@ export interface ExecutionGateInput {
  * 5. Stall recovery in progress
  * 6. Risk engine kill-switch
  * 7. Snapshot structural validation failed
- * 8. Ledger stalled
- * 9. Health quorum below threshold
+ * 8. Balance stale
+ * 9. Ledger stalled
+ * 10. Health quorum below threshold
  */
 export function evaluateExecutionGate(
     input: ExecutionGateInput,
@@ -142,7 +148,16 @@ export function evaluateExecutionGate(
         return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
     }
 
-    // 8. Ledger staleness
+    // 8. Balance staleness
+    if (input.lastBalanceSnapshotMs > 0) {
+        const balanceAge = nowMs - input.lastBalanceSnapshotMs;
+        if (balanceAge > config.maxBalanceStalenessMs) {
+            reasons.push(`balance-stale:${Math.round(balanceAge)}ms`);
+            return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
+        }
+    }
+
+    // 9. Ledger staleness
     if (input.lastLedgerCloseMs > 0) {
         const ledgerAge = nowMs - input.lastLedgerCloseMs;
         if (ledgerAge > config.maxLedgerStalenessMs) {
@@ -151,7 +166,7 @@ export function evaluateExecutionGate(
         }
     }
 
-    // 9. Health quorum
+    // 10. Health quorum
     if (input.health.score < config.minHealthScore) {
         reasons.push(`health-below-threshold:${input.health.score}<${config.minHealthScore}`);
 

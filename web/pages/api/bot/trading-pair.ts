@@ -63,6 +63,8 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
         res.status(200).json({
             message: 'Trading pair updated',
             activePair: switchResult.activePair,
+            pending: switchResult.pending,
+            ...(switchResult.switchId ? { switchId: switchResult.switchId } : {}),
             pair: {
                 key: pair.key,
                 base: pair.base,

@@ -1,5 +1,5 @@
 import { Client, Wallet, TransactionMetadata, Amount, IssuedCurrencyAmount, dropsToXrp } from 'xrpl';
-import { ExecutionResult, OrderBookState } from '../utils/types';
+import { ExecutionResult, OrderBookState, PartialFillResult } from '../utils/types';
 import { RiskEngine } from '../risk/riskEngine';
 import { StrategyConfig, TradingPair } from '../config';
 import { executionLog as logger } from '../analytics/logger';
@@ -9,22 +9,6 @@ import { computeCostRealism } from '../analytics/costRealism';
 import { isAdaptiveEnabled } from '../analytics/adaptiveConfig';
 import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './offerBuilder';
 import { ExecutionQualityCollector, InFlightTrace } from '../analytics/executionQuality';
-
-/**
- * Represents the actual amounts filled by an OfferCreate transaction.
- */
-export interface PartialFillResult {
-    /** Amount of TakerGets actually delivered */
-    takerGotAmount: number;
-    /** Amount of TakerPays actually delivered */
-    takerPaidAmount: number;
-    /** Percentage of the original order filled (0-1) */
-    fillRatio: number;
-    /** Effective price achieved (takerPaidAmount / takerGotAmount) */
-    effectivePrice: number;
-    /** Slippage from expected price in basis points (can be negative for better execution) */
-    slippageBps: number;
-}
 
 export interface OfferParams {
     side: 'buy' | 'sell';

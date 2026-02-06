@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { TradingRuntime, PairSwitchState } from '../tradingRuntime';
+import { TradingRuntime, PairSwitchState, PairSwitchResult, PairSwitchStatus } from '../tradingRuntime';
 
 declare module '../tradingRuntime' {
     interface TradingRuntime {
         getActivePair(): string;
-        setActivePair(pairKey: string): { success: boolean; activePair: string; error?: string };
+        setActivePair(pairKey: string): PairSwitchResult;
         getPairSwitchState(): PairSwitchState;
+        getPairSwitchStatus(): PairSwitchStatus;
         getFlowMetrics(): any;
         getMarketHealth(): any;
     }
@@ -148,5 +149,70 @@ describe('TradingRuntime pair switching', () => {
         const result = runtime.setActivePair('XRP/USDC');
         expect(result.success).toBe(true);
         expect(mockSetPair).toHaveBeenCalledTimes(1);
+    });
+
+    // ── PR2: Pair switch readiness truth tests ───────────────────────────
+
+    it('returns pending=true and a switchId on successful switch', () => {
+        const result = runtime.setActivePair('XRP/USDC');
+        expect(result.success).toBe(true);
+        expect(result.pending).toBe(true);
+        expect(result.switchId).toBeDefined();
+        expect(typeof result.switchId).toBe('string');
+        expect(result.switchId!.length).toBeGreaterThan(0);
+    });
+
+    it('returns pending=false on idempotent (same pair) switch', () => {
+        const active = runtime.getActivePair();
+        const result = runtime.setActivePair(active);
+        expect(result.success).toBe(true);
+        expect(result.pending).toBe(false);
+        expect(result.switchId).toBeUndefined();
+    });
+
+    it('returns pending=false on failed switch (invalid pair)', () => {
+        const result = runtime.setActivePair('XRP/INVALID');
+        expect(result.success).toBe(false);
+        expect(result.pending).toBe(false);
+    });
+
+    it('returns pending=false on sync rollback failure', () => {
+        Reflect.set(runtime as unknown as object, 'tradeTape', {
+            setPair: () => { throw new Error('boom'); },
+        });
+        const result = runtime.setActivePair('XRP/USDC');
+        expect(result.success).toBe(false);
+        expect(result.pending).toBe(false);
+    });
+
+    it('getPairSwitchStatus() reflects pending state after switch', () => {
+        const result = runtime.setActivePair('XRP/USDC');
+        expect(result.success).toBe(true);
+
+        const status = runtime.getPairSwitchStatus();
+        expect(status.pending).toBe(true);
+        expect(status.switchId).toBe(result.switchId);
+        expect(status.targetPairKey).toBe('XRP/USDC');
+        expect(status.lastError).toBeNull();
+        expect(status.activePair).toBe('XRP/USDC');
+    });
+
+    it('getPairSwitchStatus() resets to clean state after shutdown', async () => {
+        runtime.setActivePair('XRP/USDC');
+        await runtime.shutdown();
+
+        const status = runtime.getPairSwitchStatus();
+        expect(status.pending).toBe(false);
+        expect(status.switchId).toBeNull();
+        expect(status.targetPairKey).toBeNull();
+        expect(status.lastError).toBeNull();
+    });
+
+    it('generates unique switchIds for consecutive switches', () => {
+        const r1 = runtime.setActivePair('XRP/USDC');
+        const r2 = runtime.setActivePair('XRP/RLUSD');
+        expect(r1.switchId).toBeDefined();
+        expect(r2.switchId).toBeDefined();
+        expect(r1.switchId).not.toBe(r2.switchId);
     });
 });

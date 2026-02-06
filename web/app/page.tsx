@@ -264,7 +264,7 @@ export default function Page() {
             fetchWalletInfo(currentPair);
         }, 500);
         return () => clearTimeout(deferredFetch);
-    }, []);
+    }, [fetchStatus, fetchRiskStatus, fetchTrades, fetchWalletInfo, currentPair]);
 
     // Polling intervals
     useEffect(() => {

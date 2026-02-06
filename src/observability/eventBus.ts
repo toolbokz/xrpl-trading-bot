@@ -35,6 +35,7 @@ export const OBSERVABILITY_EVENT_TYPES = [
     'FSM_TRANSITION',
     'PAIR_SWITCH_START',
     'PAIR_SWITCH_READY',
+    'PAIR_SWITCH_FAILED',
     'EXECUTION_BLOCKED',
     'EXECUTION_ALLOWED',
     'FEED_STALE',
@@ -43,6 +44,8 @@ export const OBSERVABILITY_EVENT_TYPES = [
     'XRPL_DISCONNECTED',
     'RISK_BLOCK',
     'DATA_INVALIDATED',
+    'BALANCE_STALE',
+    'BALANCE_REFRESHED',
 ] as const;
 
 export type ObservabilityEventType = typeof OBSERVABILITY_EVENT_TYPES[number];
@@ -210,6 +213,62 @@ export class ObservabilityBus {
             pairKey: params.pairKey,
             runtimeState: params.runtimeState,
             detail: { durationMs: params.durationMs ?? 0 },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit PAIR_SWITCH_FAILED event.
+     */
+    emitPairSwitchFailed(params: {
+        pairKey: string;
+        runtimeState: string;
+        error: string;
+        switchId?: string;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'PAIR_SWITCH_FAILED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: { error: params.error, switchId: params.switchId },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit BALANCE_STALE event (edge-triggered — dedup prevents repeats).
+     */
+    emitBalanceStale(params: {
+        pairKey: string;
+        runtimeState: string;
+        stalenessMs: number;
+        lastRefreshMs: number;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'BALANCE_STALE',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: { stalenessMs: params.stalenessMs, lastRefreshMs: params.lastRefreshMs },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit BALANCE_REFRESHED event.
+     */
+    emitBalanceRefreshed(params: {
+        pairKey: string;
+        runtimeState: string;
+        stalenessMs: number;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'BALANCE_REFRESHED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: { stalenessMs: params.stalenessMs },
             nowMs: params.nowMs,
         });
     }

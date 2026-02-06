@@ -49,6 +49,12 @@ export class XRPLWebSocket extends EventEmitter {
     private reconnecting = false;
     private handlersAttached = false;
 
+    // Stored handler references for safe .off() cleanup
+    private attachedClient: Client | null = null;
+    private onLedgerClosed: ((ledger: LedgerStreamResponse) => void) | null = null;
+    private onTransaction: ((tx: TransactionStream) => void) | null = null;
+    private onClientDisconnected: (() => void) | null = null;
+
     constructor(private readonly cfg: XRPLConfig) {
         super();
         // Client is now obtained from shared singleton on connect()
@@ -59,17 +65,35 @@ export class XRPLWebSocket extends EventEmitter {
     }
 
     async disconnect(): Promise<void> {
-        if (this.connected) {
-            // Don't disconnect shared client - just mark as disconnected locally
-            // The shared client is managed globally
-            this.connected = false;
-            this.handlersAttached = false;
-            // Remove our listeners from the shared client
-            if (this.client) {
-                this.client.removeAllListeners('ledgerClosed');
-                this.client.removeAllListeners('transaction');
-            }
+        // Idempotent: safe to call multiple times
+        this.detachFromClient();
+        this.connected = false;
+    }
+
+    /**
+     * Detach our owned listeners from the shared Client by reference.
+     * Does NOT disconnect the shared Client (owned by sharedClient.ts).
+     * Does NOT use removeAllListeners (would break other consumers).
+     */
+    private detachFromClient(): void {
+        const target = this.attachedClient;
+        if (!target) return;
+
+        if (this.onLedgerClosed) {
+            target.off('ledgerClosed', this.onLedgerClosed);
+            this.onLedgerClosed = null;
         }
+        if (this.onTransaction) {
+            target.off('transaction', this.onTransaction);
+            this.onTransaction = null;
+        }
+        if (this.onClientDisconnected) {
+            target.off('disconnected', this.onClientDisconnected);
+            this.onClientDisconnected = null;
+        }
+
+        this.attachedClient = null;
+        this.handlersAttached = false;
     }
 
     isConnected(): boolean {
@@ -198,27 +222,36 @@ export class XRPLWebSocket extends EventEmitter {
     }
 
     private attachHandlers(): void {
-        if (!this.client || this.handlersAttached) return;
+        if (!this.client) return;
 
-        // Don't remove all listeners - other code may be using the shared client
-        // Just add our specific listeners
-        this.handlersAttached = true;
+        // If already attached to this exact client, skip
+        if (this.handlersAttached && this.attachedClient === this.client) return;
 
-        this.client.on('ledgerClosed', (ledger: LedgerStreamResponse) => {
+        // If attached to a different client, detach old first
+        if (this.attachedClient && this.attachedClient !== this.client) {
+            this.detachFromClient();
+        }
+
+        // Create bound handlers and store references for .off() cleanup
+        this.onLedgerClosed = (ledger: LedgerStreamResponse) => {
             this.currentLedgerIndex = ledger.ledger_index;
             this.emitEvent('ledger', ledger);
-        });
-        this.client.on('transaction', (tx: TransactionStream) => {
+        };
+        this.onTransaction = (tx: TransactionStream) => {
             this.emitEvent('transaction', tx);
-        });
-
-        // Monitor for disconnection - the shared client handles reconnection automatically
-        // but we need to update our local state
-        this.client.on('disconnected', () => {
+        };
+        this.onClientDisconnected = () => {
             this.connected = false;
             this.handlersAttached = false;
             logger.warn('XRPL shared client disconnected - will reconnect automatically');
-        });
+        };
+
+        this.client.on('ledgerClosed', this.onLedgerClosed);
+        this.client.on('transaction', this.onTransaction);
+        this.client.on('disconnected', this.onClientDisconnected);
+
+        this.attachedClient = this.client;
+        this.handlersAttached = true;
     }
 
     private emitEvent<T extends EventKey>(key: T, payload: Parameters<XRPLEvents[T]>[0]): void {

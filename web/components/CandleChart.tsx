@@ -14,6 +14,8 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+    const dataLengthRef = useRef(data.length);
+    dataLengthRef.current = data.length;
 
     // Initialize chart
     useEffect(() => {
@@ -22,7 +24,7 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
         // Get actual pixel dimensions
         const containerWidth = containerRef.current.clientWidth || 600;
         const containerHeight = containerRef.current.clientHeight || (typeof height === 'number' ? height : 320);
-        const dataLength = data.length || 50;
+        const dataLength = dataLengthRef.current || 50;
 
         // Calculate dynamic pixel-aware spacing
         const dynamicSpacing = calculateDynamicBarSpacing(containerWidth, dataLength);
@@ -92,7 +94,7 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
             if (containerRef.current && chartRef.current) {
                 const newWidth = containerRef.current.clientWidth || 600;
                 const newHeight = containerRef.current.clientHeight || (typeof height === 'number' ? height : 320);
-                const currentDataLength = data.length || 50;
+                const currentDataLength = dataLengthRef.current || 50;
 
                 // Recalculate dynamic spacing on resize
                 const newDynamicSpacing = calculateDynamicBarSpacing(newWidth, currentDataLength);

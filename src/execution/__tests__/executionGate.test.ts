@@ -37,6 +37,7 @@ const baseInput = (): ExecutionGateInput => ({
     dataInvalidReasons: [],
     ledgerIndex: 100,
     lastLedgerCloseMs: Date.now() - 3_000,
+    lastBalanceSnapshotMs: Date.now() - 5_000,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -314,5 +315,71 @@ describe('evaluateExecutionGate', () => {
         const result = evaluateExecutionGate(input);
         expect(result.verdict).toBe('BLOCK');
         expect(result.reasons[0]).toBe('snapshot-invalid');
+    });
+
+    // ─── Balance staleness checks ────────────────────────────────────────
+
+    it('BLOCK when balance snapshot is stale (>120s)', () => {
+        const input = baseInput();
+        input.lastBalanceSnapshotMs = Date.now() - 150_000; // 150s > 120s default
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toMatch(/^balance-stale:/);
+    });
+
+    it('ALLOW when balance snapshot is fresh (<120s)', () => {
+        const input = baseInput();
+        input.lastBalanceSnapshotMs = Date.now() - 60_000; // 60s < 120s default
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('ALLOW');
+    });
+
+    it('ALLOW when lastBalanceSnapshotMs is 0 (not yet set)', () => {
+        const input = baseInput();
+        input.lastBalanceSnapshotMs = 0;
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('ALLOW');
+    });
+
+    it('respects custom maxBalanceStalenessMs', () => {
+        const input = baseInput();
+        input.lastBalanceSnapshotMs = Date.now() - 40_000; // 40s
+        // Default 120s → ALLOW
+        expect(evaluateExecutionGate(input).verdict).toBe('ALLOW');
+        // Lower threshold to 30s → BLOCK
+        const result = evaluateExecutionGate(input, {
+            ...DEFAULT_GATE_CONFIG,
+            maxBalanceStalenessMs: 30_000,
+        });
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toMatch(/^balance-stale:/);
+    });
+
+    it('balance-stale yields to snapshot-invalid (higher priority)', () => {
+        const input = baseInput();
+        input.dataValid = false;
+        input.dataInvalidReasons = ['crossed-book'];
+        input.lastBalanceSnapshotMs = Date.now() - 200_000;
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toBe('snapshot-invalid');
+    });
+
+    it('balance-stale takes precedence over ledger-stalled', () => {
+        const input = baseInput();
+        input.lastBalanceSnapshotMs = Date.now() - 200_000; // stale balance
+        input.lastLedgerCloseMs = Date.now() - 200_000;     // stale ledger
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toMatch(/^balance-stale:/);
+    });
+
+    it('balance-stale takes precedence over health-below-threshold', () => {
+        const input = baseInput();
+        input.lastBalanceSnapshotMs = Date.now() - 200_000;
+        input.health = { ...healthyResult(), score: 10, healthy: false };
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toMatch(/^balance-stale:/);
     });
 });

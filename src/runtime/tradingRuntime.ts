@@ -1,7 +1,9 @@
 import { Wallet, isValidClassicAddress, Client, TransactionStream } from 'xrpl';
+import crypto from 'crypto';
 import { AppConfig, TradingPair, FlowConfig, loadConfig } from '../config';
 import { TRADING_PAIRS, isValidPairKey } from '../config/tradingPairs';
 import { runtimeLog as logger } from '../analytics/logger';
+import { sleep } from '../utils/sleep';
 import { XRPLWebSocket } from '../xrpl/client';
 import { OrderBookTracker } from '../market/orderBookTracker';
 import { RiskEngine } from '../risk/riskEngine';
@@ -153,19 +155,8 @@ export const assertAllowedPair = (pair: TradingPair): void => {
  * @deprecated Use PairSwitchPhase from pairSwitchFsm.ts for the 12-state FSM.
  * Kept for backward compatibility with tests and external consumers.
  */
-export type PairSwitchState = 'IDLE' | 'SWITCHING' | 'SYNCING' | 'READY' | 'FAILED';
-
-/** Structured pair-switch lifecycle event for observability */
-export interface PairSwitchEvent {
-    event: string;
-    pairKey: string;
-    previousPairKey?: string | undefined;
-    timestamp: number;
-    switchState: PairSwitchState;
-    /** The 12-state FSM phase (if orchestrator is active). */
-    switchPhase?: PairSwitchPhase | undefined;
-    detail?: string | undefined;
-}
+export type { PairSwitchState, PairSwitchEvent, PairSwitchResult, PairSwitchStatus } from './runtimeTypes';
+import type { PairSwitchState, PairSwitchEvent, PairSwitchResult, PairSwitchStatus } from './runtimeTypes';
 
 export class TradingRuntime {
     private xrpl: XRPLWebSocket | null = null;
@@ -199,6 +190,8 @@ export class TradingRuntime {
     private previousLedgerIndex = 0;
     private lastBalanceSnapshotMs = 0;
     private lastBalanceLedgerIndex = 0;
+    /** Edge-detection flag: true when balance staleness was detected on previous tick. */
+    private lastBalanceStale = false;
     private feedStallRecovery: FeedStallRecovery | null = null;
     private lastMarketDataHealth: MarketHealthResult | null = null;
     private lastExecutionGateResult: ExecutionGateResult | null = null;
@@ -230,6 +223,17 @@ export class TradingRuntime {
     private lastLedgerAdvanceMs = 0;
     /** Guard to prevent duplicate event listeners on restart. */
     private listenersAttached = false;
+    // ── Stored handler references for symmetric .off() cleanup ──
+    private onXrplLedger: (() => void) | null = null;
+    private onXrplTransaction: ((tx: TransactionStream) => void) | null = null;
+    private onXrplReconnect: (() => void) | null = null;
+    private onUnderlyingDisconnected: (() => void) | null = null;
+    private underlyingClientRef: Client | null = null;
+    // ── Pair-switch pending state (PR2: readiness truth) ──
+    private pairSwitchPending = false;
+    private pairSwitchSwitchId: string | null = null;
+    private pairSwitchTargetPairKey: string | null = null;
+    private pairSwitchLastError: string | null = null;
 
     constructor(config?: AppConfig) {
         // Security gate: enforce local-only execution on construction
@@ -276,6 +280,23 @@ export class TradingRuntime {
     }
 
     /**
+     * Get the full pair-switch status including async pending state.
+     * This is the source of truth for whether a pair switch is truly complete.
+     */
+    getPairSwitchStatus(): PairSwitchStatus {
+        return {
+            activePair: this.getActivePair(),
+            pending: this.pairSwitchPending,
+            switchId: this.pairSwitchSwitchId,
+            targetPairKey: this.pairSwitchTargetPairKey,
+            lastError: this.pairSwitchLastError,
+            legacyState: this.pairSwitchState,
+            orchestratorPhase: this.pairSwitchOrchestrator.getPhase(),
+            orchestratorReady: this.pairSwitchOrchestrator.isReady(),
+        };
+    }
+
+    /**
      * Get the pair-switch orchestrator (for API/observability).
      */
     getPairSwitchOrchestrator(): PairSwitchOrchestrator {
@@ -309,6 +330,7 @@ export class TradingRuntime {
         this.lastLedgerAdvanceMs = 0;
         this.lastBalanceSnapshotMs = 0;
         this.lastBalanceLedgerIndex = 0;
+        this.lastBalanceStale = false;
         // Reset health state from previous pair
         this.lastMarketDataHealth = null;
         this.lastExecutionGateResult = null;
@@ -381,18 +403,22 @@ export class TradingRuntime {
             // Prevents stacking duplicate event listeners if start() is
             // somehow called again after a reset()/restart cycle.
             if (!this.listenersAttached) {
-                // Track ledger close time for health scoring
-                xrpl.on('ledger', () => {
+                // Detach any stale listeners (defensive — should be no-op on fresh start)
+                this.detachRuntimeListeners();
+
+                let txCount = 0;
+
+                // Create handler references (stored for symmetric .off() in reset/shutdown)
+                this.onXrplLedger = () => {
                     this.lastLedgerCloseMs = Date.now();
                     this.lastLedgerAdvanceMs = Date.now();
                     this.previousLedgerIndex = this.xrpl?.getLedgerIndex() ?? 0;
                     // Inform stall recovery that the book feed is alive
                     // (ledger events prove the WS is active even if no trades)
                     this.feedStallRecovery?.recordBookEvent();
-                });
+                };
 
-                let txCount = 0;
-                xrpl.on('transaction', (tx: TransactionStream) => {
+                this.onXrplTransaction = (tx: TransactionStream) => {
                     txCount += 1;
                     this.lastTapeUpdateMs = Date.now();
                     if (txCount % 5000 === 0) {
@@ -401,27 +427,33 @@ export class TradingRuntime {
                     this.tradeTapeService?.processTransaction(tx);
                     // Inform stall recovery that the tape feed is alive
                     this.feedStallRecovery?.recordTapeEvent();
-                });
+                };
 
                 // Emit XRPL_RECONNECTED observability event on WebSocket reconnect
-                xrpl.on('reconnect', () => {
+                this.onXrplReconnect = () => {
                     logger.info({ event: 'XRPL_RECONNECTED', timestamp: Date.now() }, 'XRPL WebSocket reconnected');
                     const rPairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
                     this.observabilityBus.emitXrplReconnected({
                         pairKey: rPairKey,
                         runtimeState: this.fsm.getState(),
                     });
-                });
+                };
+
+                xrpl.on('ledger', this.onXrplLedger);
+                xrpl.on('transaction', this.onXrplTransaction);
+                xrpl.on('reconnect', this.onXrplReconnect);
 
                 // Emit XRPL_DISCONNECTED observability event via underlying client
                 const underlyingClient = xrpl.getClient();
-                underlyingClient.on('disconnected', () => {
+                this.underlyingClientRef = underlyingClient;
+                this.onUnderlyingDisconnected = () => {
                     const dPairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
                     this.observabilityBus.emitXrplDisconnected({
                         pairKey: dPairKey,
                         runtimeState: this.fsm.getState(),
                     });
-                });
+                };
+                underlyingClient.on('disconnected', this.onUnderlyingDisconnected);
 
                 this.listenersAttached = true;
             }
@@ -569,6 +601,18 @@ export class TradingRuntime {
                 // Track balance snapshot freshness for health scoring
                 this.lastBalanceSnapshotMs = Date.now();
                 this.lastBalanceLedgerIndex = this.xrpl?.getLedgerIndex() ?? 0;
+
+                // Edge-detect: balance was stale, now refreshed
+                if (this.lastBalanceStale) {
+                    this.lastBalanceStale = false;
+                    const balPairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
+                    this.observabilityBus.emitBalanceRefreshed({
+                        pairKey: balPairKey,
+                        runtimeState: this.fsm.getState(),
+                        stalenessMs: 0,
+                        nowMs: this.lastBalanceSnapshotMs,
+                    });
+                }
             }
             await this.tracker.refresh();
             this.lastBookUpdateMs = Date.now();
@@ -735,6 +779,7 @@ export class TradingRuntime {
                 dataInvalidReasons: this.lastDataInvalidReasons,
                 ledgerIndex: this.xrpl.getLedgerIndex(),
                 lastLedgerCloseMs: this.lastLedgerCloseMs,
+                lastBalanceSnapshotMs: this.lastBalanceSnapshotMs,
             }, this.gateConfig);
             this.lastExecutionGateResult = gateResult;
 
@@ -774,6 +819,20 @@ export class TradingRuntime {
                 runtimeState: this.fsm.getState(),
                 nowMs,
             });
+
+            // Edge-detect: balance staleness from gate reasons
+            const isBalanceStale = gateResult.reasons.some(r => r.startsWith('balance-stale:'));
+            if (isBalanceStale && !this.lastBalanceStale) {
+                this.lastBalanceStale = true;
+                const balanceAge = nowMs - (this.lastBalanceSnapshotMs || nowMs);
+                this.observabilityBus.emitBalanceStale({
+                    pairKey,
+                    runtimeState: this.fsm.getState(),
+                    stalenessMs: balanceAge,
+                    lastRefreshMs: this.lastBalanceSnapshotMs,
+                    nowMs,
+                });
+            }
 
             if (gateResult.verdict === 'BLOCK') {
                 const isBadData = gateResult.reasons.some(r => r === 'snapshot-invalid' || r.startsWith('data:'));
@@ -890,7 +949,7 @@ export class TradingRuntime {
 
                 // Apply governance cooldown if any
                 if (globalCooldownMs > 0) {
-                    await new Promise(resolve => setTimeout(resolve, globalCooldownMs));
+                    await sleep(globalCooldownMs);
                 }
             }
 
@@ -1006,7 +1065,7 @@ export class TradingRuntime {
 
                         // Apply cooldown if set
                         if (tuning.coolDownMs > 0) {
-                            await new Promise(resolve => setTimeout(resolve, tuning.coolDownMs));
+                            await sleep(tuning.coolDownMs);
                         }
                     } else {
                         // No tuning - clear overrides
@@ -1435,17 +1494,17 @@ export class TradingRuntime {
         return `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
     }
 
-    setActivePair(pairKey: string): { success: boolean; activePair: string; error?: string } {
+    setActivePair(pairKey: string): PairSwitchResult {
         const currentPairKey = this.getActivePair();
 
         // Idempotent: no-op if already on this pair
         if (pairKey === currentPairKey) {
-            return { success: true, activePair: currentPairKey };
+            return { success: true, activePair: currentPairKey, pending: false };
         }
 
         // Reject if already switching (legacy FSM guard)
         if (this.pairSwitchState === 'SWITCHING' || this.pairSwitchState === 'SYNCING') {
-            return { success: false, activePair: currentPairKey, error: 'Pair switch already in progress (legacy)' };
+            return { success: false, activePair: currentPairKey, pending: this.pairSwitchPending, error: 'Pair switch already in progress (legacy)' };
         }
         // If orchestrator is still running async warmup from previous switch,
         // force-reset it. The sync path already succeeded for the previous pair,
@@ -1459,12 +1518,12 @@ export class TradingRuntime {
         }
 
         if (!pairKey || !isValidPairKey(pairKey)) {
-            return { success: false, activePair: currentPairKey, error: `Invalid pair key: ${pairKey}` };
+            return { success: false, activePair: currentPairKey, pending: false, error: `Invalid pair key: ${pairKey}` };
         }
 
         const target = TRADING_PAIRS.find((p) => p.key === pairKey);
         if (!target) {
-            return { success: false, activePair: currentPairKey, error: `Pair not found: ${pairKey}` };
+            return { success: false, activePair: currentPairKey, pending: false, error: `Pair not found: ${pairKey}` };
         }
 
         // ─── Build the target TradingPair ────────────────────────────────
@@ -1482,7 +1541,7 @@ export class TradingRuntime {
             assertAllowedPair(nextPair);
         } catch (err) {
             const error = err instanceof Error ? err.message : 'unknown error';
-            return { success: false, activePair: currentPairKey, error };
+            return { success: false, activePair: currentPairKey, pending: false, error };
         }
 
         // ─── Legacy FSM: IDLE → SWITCHING ────────────────────────────────
@@ -1607,6 +1666,13 @@ export class TradingRuntime {
             // ─── Legacy FSM: SYNCING → IDLE ──────────────────────────────
             this.pairSwitchState = 'IDLE';
 
+            // ─── Pending state: mark switch as in-flight ─────────────────
+            const switchId = crypto.randomUUID();
+            this.pairSwitchPending = true;
+            this.pairSwitchSwitchId = switchId;
+            this.pairSwitchTargetPairKey = pairKey;
+            this.pairSwitchLastError = null;
+
             // ─── 12-State Orchestrator: async phases ─────────────────────
             // Drive the orchestrator through all 12 phases asynchronously.
             // Execution is blocked by the orchestrator FSM guard in tick().
@@ -1627,6 +1693,7 @@ export class TradingRuntime {
             this.pairSwitchOrchestrator.executePairSwitch(previousPair, nextPair, orchestratorActions)
                 .then((result) => {
                     if (result.success) {
+                        this.pairSwitchPending = false;
                         this.emitSwitchEvent('PAIR_SWITCH_COMPLETE', pairKey, previousPairKey,
                             `orchestrator completed in ${result.durationMs}ms`);
                         this.observabilityBus.emitPairSwitchReady({
@@ -1635,22 +1702,42 @@ export class TradingRuntime {
                             durationMs: result.durationMs,
                         });
                     } else {
-                        // Orchestrator failed but sync path already succeeded —
-                        // recover the orchestrator FSM to READY
+                        // Orchestrator failed — propagate failure visibly
+                        this.pairSwitchPending = false;
+                        this.pairSwitchLastError = result.error ?? 'Orchestrator async phases failed';
                         this.pairSwitchOrchestrator.recoverFromFailure();
+                        this.emitSwitchEvent('PAIR_SWITCH_FAILED', pairKey, previousPairKey,
+                            this.pairSwitchLastError);
+                        this.observabilityBus.emitPairSwitchFailed({
+                            pairKey,
+                            runtimeState: this.fsm.getState(),
+                            error: this.pairSwitchLastError,
+                            switchId,
+                        });
                         logger.warn({
                             error: result.error,
                             phases: result.phases,
-                        }, 'Pair switch orchestrator reported failure but sync path succeeded — recovered');
+                            switchId,
+                        }, 'Pair switch orchestrator reported failure — PAIR_SWITCH_FAILED emitted');
                     }
                 })
                 .catch((err) => {
                     // Should not happen (executePairSwitch catches internally)
-                    logger.error({ err }, 'Unexpected orchestrator error');
+                    const errorMsg = err instanceof Error ? err.message : 'Unexpected orchestrator error';
+                    this.pairSwitchPending = false;
+                    this.pairSwitchLastError = errorMsg;
                     this.pairSwitchOrchestrator.recoverFromFailure();
+                    this.emitSwitchEvent('PAIR_SWITCH_FAILED', pairKey, previousPairKey, errorMsg);
+                    this.observabilityBus.emitPairSwitchFailed({
+                        pairKey,
+                        runtimeState: this.fsm.getState(),
+                        error: errorMsg,
+                        switchId,
+                    });
+                    logger.error({ err, switchId }, 'Unexpected orchestrator error — PAIR_SWITCH_FAILED emitted');
                 });
 
-            return { success: true, activePair: this.getActivePair() };
+            return { success: true, pending: true, switchId, activePair: this.getActivePair() };
         } catch (err) {
             // ─── Failure → rollback ──────────────────────────────────────
             this.pairSwitchState = 'FAILED';
@@ -1677,7 +1764,7 @@ export class TradingRuntime {
 
             const error = err instanceof Error ? err.message : 'unknown error';
             logger.error({ err, from: previousPairKey, attempted: pairKey }, 'Failed to switch pair, rolled back');
-            return { success: false, activePair: this.getActivePair(), error };
+            return { success: false, activePair: this.getActivePair(), pending: false, error };
         }
     }
 
@@ -1760,6 +1847,10 @@ export class TradingRuntime {
     }
 
     private reset(): void {
+        // ── Detach all runtime-owned event listeners first ────────────
+        // Must happen BEFORE this.xrpl = null so we still have the reference.
+        this.detachRuntimeListeners();
+
         // Stop CPU watchdog
         if (this.cpuWatchdog) {
             this.cpuWatchdog.stop();
@@ -1783,6 +1874,10 @@ export class TradingRuntime {
         this.shutdownInProgress = false;
         this.pairSwitchState = 'IDLE';
         this.pairSwitchOrchestrator.reset();
+        this.pairSwitchPending = false;
+        this.pairSwitchSwitchId = null;
+        this.pairSwitchTargetPairKey = null;
+        this.pairSwitchLastError = null;
         this.tradeTape = null;
         this.tradeTapeService = null;
         this.httpServer = null;
@@ -1800,10 +1895,10 @@ export class TradingRuntime {
         this.previousLedgerIndex = 0;
         this.lastBalanceSnapshotMs = 0;
         this.lastBalanceLedgerIndex = 0;
+        this.lastBalanceStale = false;
         this.lastBookUpdateMs = 0;
         this.lastTapeUpdateMs = 0;
         this.lastLedgerAdvanceMs = 0;
-        this.listenersAttached = false;
         this.snapshotValidator.reset();
         this.lastDataValid = true;
         this.lastDataInvalidReasons = [];
@@ -1816,4 +1911,30 @@ export class TradingRuntime {
         this.fsm.reset();
     }
 
+    /**
+     * Detach all runtime-owned event listeners from the XRPLWebSocket wrapper
+     * and the underlying XRPL Client. Uses stored handler references for safe
+     * .off() (never removeAllListeners). Idempotent.
+     */
+    private detachRuntimeListeners(): void {
+        // Tier 2: listeners on the XRPLWebSocket EventEmitter
+        if (this.xrpl) {
+            if (this.onXrplLedger) this.xrpl.off('ledger', this.onXrplLedger);
+            if (this.onXrplTransaction) this.xrpl.off('transaction', this.onXrplTransaction);
+            if (this.onXrplReconnect) this.xrpl.off('reconnect', this.onXrplReconnect);
+        }
+
+        // Tier 1: listener on the underlying shared Client
+        if (this.underlyingClientRef && this.onUnderlyingDisconnected) {
+            this.underlyingClientRef.off('disconnected', this.onUnderlyingDisconnected);
+        }
+
+        // Clear references
+        this.onXrplLedger = null;
+        this.onXrplTransaction = null;
+        this.onXrplReconnect = null;
+        this.onUnderlyingDisconnected = null;
+        this.underlyingClientRef = null;
+        this.listenersAttached = false;
+    }
 }

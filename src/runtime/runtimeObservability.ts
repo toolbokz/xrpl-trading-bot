@@ -15,7 +15,7 @@ import { RuntimeState, RuntimeFSMSnapshot } from './runtimeFsm';
 import { ExecutionGateResult } from '../execution/executionGate';
 import { MarketHealthResult } from '../market/marketDataHealth';
 import { FeedStallState, StallRecoveryStage } from '../market/feedStallRecovery';
-import { PairSwitchState } from './tradingRuntime';
+import type { PairSwitchState } from './runtimeTypes';
 import { PairSwitchPhase } from './pairSwitchFsm';
 
 // ─────────────────────────────────────────────────────────────────────────────

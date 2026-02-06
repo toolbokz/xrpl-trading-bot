@@ -121,6 +121,8 @@ export function useCandles(
     const isMountedRef = useRef(true);
     const abortControllerRef = useRef<AbortController | null>(null);
     const isInitialFetchRef = useRef(true);
+    const lastUpdatedRef = useRef(lastUpdated);
+    lastUpdatedRef.current = lastUpdated;
 
     const fetchCandles = useCallback(async (isInitial = false) => {
         if (!pairKey || !enabled) return;
@@ -143,8 +145,8 @@ export function useCandles(
             });
 
             // For incremental updates, fetch only recent candles
-            if (!isInitial && lastUpdated) {
-                params.set('since', String(lastUpdated));
+            if (!isInitial && lastUpdatedRef.current) {
+                params.set('since', String(lastUpdatedRef.current));
                 params.set('limit', '5'); // Only fetch last few candles for updates
             }
 
@@ -189,7 +191,7 @@ export function useCandles(
                 setLoading(false);
             }
         }
-    }, [pairKey, interval, limit, enabled, lastUpdated]);
+    }, [pairKey, interval, limit, enabled]);
 
     // Initial fetch and polling
     useEffect(() => {
@@ -220,7 +222,7 @@ export function useCandles(
                 abortControllerRef.current.abort();
             }
         };
-    }, [pairKey, interval, limit, pollInterval, enabled]); // Note: intentionally not including fetchCandles to avoid re-subscription
+    }, [pairKey, interval, limit, pollInterval, enabled, fetchCandles]);
 
     // Reset on pair change
     useEffect(() => {
