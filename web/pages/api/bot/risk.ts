@@ -20,6 +20,9 @@ function handler(req: LocalRequest, res: NextApiResponse) {
         runtimeState: cache?.runtimeState ?? null,
     };
 
+    // Hard risk guard payload (pair-keyed, deterministic)
+    const hardRisk = runtime.getHardRiskPayload();
+
     if (!riskStatus) {
         // Runtime not started - return defaults from config
         const config = runtime.getConfig();
@@ -34,6 +37,7 @@ function handler(req: LocalRequest, res: NextApiResponse) {
             maxTradeSize: config.risk.maxTradeSize,
             reserveFloorXRP: config.risk.reserveFloorXRP,
             positionSize: config.strategy.positionSize,
+            hardRisk,
             source: 'config',
             requestId: req.requestId,
         });
@@ -44,6 +48,7 @@ function handler(req: LocalRequest, res: NextApiResponse) {
         ...pairMeta,
         ...riskStatus,
         positionSize: runtime.getConfig().strategy.positionSize,
+        hardRisk,
         source: 'runtime',
         requestId: req.requestId,
     });

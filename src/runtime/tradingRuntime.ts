@@ -94,6 +94,12 @@ import {
 import {
     ExecutionQualityCollector,
 } from '../analytics/executionQuality';
+import {
+    HardRiskGuard,
+    HardRiskInput,
+    HardRiskPayload,
+    loadHardRiskConfig,
+} from '../risk/hardRiskGuard';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -203,6 +209,8 @@ export class TradingRuntime {
     private readonly cacheRegistry = new RuntimeCacheRegistry();
     /** Execution quality analytics — per-fill tracing and aggregation. */
     private readonly executionQualityCollector = new ExecutionQualityCollector();
+    /** Hard risk guard — deterministic 7-condition capital safety gate. */
+    private readonly hardRiskGuard = new HardRiskGuard(loadHardRiskConfig());
     /** Whether the last snapshot passed structural validation. */
     private lastDataValid = true;
     /** Reasons the last snapshot failed validation (empty when valid). */
@@ -474,6 +482,7 @@ export class TradingRuntime {
             // Start adaptive learning scheduler
             const pairKey = `${config.tradingPair.baseCurrency}/${config.tradingPair.quoteCurrency}`;
             this.executionQualityCollector.setPairKey(pairKey);
+            this.hardRiskGuard.setPairKey(pairKey);
             const strategyNames = this.strategies.map(s => s.name);
             startAdaptiveScheduler({
                 pairKeys: [pairKey],
@@ -746,6 +755,31 @@ export class TradingRuntime {
             }
 
             // ─────────────────────────────────────────────────────────────────
+            // Hard Risk Guard — deterministic capital safety gate
+            // ─────────────────────────────────────────────────────────────────
+            const hardRiskInput: HardRiskInput = {
+                currentExposureNotional: this.risk?.getStatus().currentExposure ?? 0,
+                inventorySkewPct: 0, // TODO: compute from balance ratios when position tracking lands
+                drawdownPct: this.lastGovernanceDecision?.metrics.drawdownPct ?? 0,
+                runtimeReady: this.fsm.getState() === 'READY',
+                marketDataValid: this.lastDataValid,
+                balanceStalenessMs: nowMs - (this.lastBalanceSnapshotMs || nowMs),
+                feedHealthScore: marketDataHealth.score,
+            };
+            const hardRiskResult = this.hardRiskGuard.evaluate(hardRiskInput);
+            if (!hardRiskResult.executionAllowed) {
+                logger.info({
+                    event: 'HARD_RISK_BLOCK',
+                    riskState: hardRiskResult.riskState,
+                    reasons: hardRiskResult.riskBlockReasons,
+                    metrics: hardRiskResult.metrics,
+                    pairKey,
+                    timestamp: nowMs,
+                }, 'HARD_RISK_BLOCK: execution blocked by hard risk guard');
+                return;
+            }
+
+            // ─────────────────────────────────────────────────────────────────
             // Capital Protection Gate
             // ─────────────────────────────────────────────────────────────────
             let governanceDecision: CapitalProtectionDecision | undefined;
@@ -971,6 +1005,20 @@ export class TradingRuntime {
      */
     getExecutionQualityCollector(): ExecutionQualityCollector {
         return this.executionQualityCollector;
+    }
+
+    /**
+     * Get the hard risk guard (for API routes / observability).
+     */
+    getHardRiskGuard(): HardRiskGuard {
+        return this.hardRiskGuard;
+    }
+
+    /**
+     * Get the hard risk payload for API endpoint.
+     */
+    getHardRiskPayload(): HardRiskPayload {
+        return this.hardRiskGuard.getPayload();
     }
 
     /**
@@ -1407,6 +1455,9 @@ export class TradingRuntime {
                 this.executionQualityCollector.setPairKey(
                     `${newPair.baseCurrency}/${newPair.quoteCurrency}`,
                 );
+                this.hardRiskGuard.setPairKey(
+                    `${newPair.baseCurrency}/${newPair.quoteCurrency}`,
+                );
 
                 // 4. Strategy layer
                 for (const strategy of this.strategies) {
@@ -1677,6 +1728,7 @@ export class TradingRuntime {
         this.lastDataInvalidReasons = [];
         this.cacheRegistry.reset();
         this.executionQualityCollector.reset();
+        this.hardRiskGuard.reset();
 
         // Reset FSM to BOOTING for potential restart
         this.fsm.reset();
