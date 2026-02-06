@@ -33,7 +33,7 @@ export function isLocalhostIp(ip: string | undefined): boolean {
 }
 
 export function getClientIpInfo(req: NextApiRequest): {
-    remoteAddress: string | undefined;
+    remoteAddress?: string;
     forwardedFor?: string;
     realIp?: string;
     proxyDetected: boolean;
@@ -51,7 +51,7 @@ export function getClientIpInfo(req: NextApiRequest): {
         : realIp;
 
     return {
-        remoteAddress,
+        ...(remoteAddress ? { remoteAddress } : {}),
         ...(forwardedFor ? { forwardedFor } : {}),
         ...(normalizedRealIp ? { realIp: normalizedRealIp } : {}),
         proxyDetected: !!forwardedFor || !!normalizedRealIp,
@@ -63,14 +63,24 @@ export interface LocalOnlyConfig {
     forceLocalOnly: boolean;
     isProduction: boolean;
     cloudPlatform: string | null;
+    cloudCheck: {
+        isCloud: boolean;
+        platform: string | null;
+    };
 }
 
 export function loadLocalOnlyConfig(): LocalOnlyConfig {
+    const cloudPlatform = isCloudEnvironment();
+
     return {
         allowRemote: process.env.BOT_ALLOW_REMOTE === 'true',
         forceLocalOnly: process.env.BOT_LOCAL_ONLY === 'true',
         isProduction: process.env.NODE_ENV === 'production',
-        cloudPlatform: isCloudEnvironment(),
+        cloudPlatform,
+        cloudCheck: {
+            isCloud: cloudPlatform !== null,
+            platform: cloudPlatform,
+        },
     };
 }
 
@@ -89,7 +99,7 @@ export function validateLocalhostRequest(req: NextApiRequest): LocalhostCheckRes
         return {
             allowed: true,
             reason: 'BOT_ALLOW_REMOTE override',
-            remoteAddress: clientInfo.remoteAddress,
+            ...(clientInfo.remoteAddress ? { remoteAddress: clientInfo.remoteAddress } : {}),
             proxyDetected: clientInfo.proxyDetected,
         };
     }
@@ -98,7 +108,7 @@ export function validateLocalhostRequest(req: NextApiRequest): LocalhostCheckRes
         return {
             allowed: false,
             reason: `Remote access disabled: Cloud platform ${config.cloudPlatform}`,
-            remoteAddress: clientInfo.remoteAddress,
+            ...(clientInfo.remoteAddress ? { remoteAddress: clientInfo.remoteAddress } : {}),
             proxyDetected: clientInfo.proxyDetected,
         };
     }
@@ -107,7 +117,7 @@ export function validateLocalhostRequest(req: NextApiRequest): LocalhostCheckRes
         return {
             allowed: false,
             reason: 'Remote access disabled: Proxy headers detected',
-            remoteAddress: clientInfo.remoteAddress,
+            ...(clientInfo.remoteAddress ? { remoteAddress: clientInfo.remoteAddress } : {}),
             proxyDetected: true,
         };
     }
@@ -116,14 +126,14 @@ export function validateLocalhostRequest(req: NextApiRequest): LocalhostCheckRes
         return {
             allowed: false,
             reason: `Remote access disabled: Non-localhost IP ${clientInfo.remoteAddress ?? 'unknown'}`,
-            remoteAddress: clientInfo.remoteAddress,
+            ...(clientInfo.remoteAddress ? { remoteAddress: clientInfo.remoteAddress } : {}),
             proxyDetected: false,
         };
     }
 
     return {
         allowed: true,
-        remoteAddress: clientInfo.remoteAddress,
+        ...(clientInfo.remoteAddress ? { remoteAddress: clientInfo.remoteAddress } : {}),
         proxyDetected: false,
     };
 }
@@ -148,7 +158,7 @@ export function enforceLocalhostRequest(
     return {
         error: 'Remote access disabled',
         reason: result.reason ?? 'Remote access disabled',
-        remoteAddress: result.remoteAddress,
+        ...(result.remoteAddress ? { remoteAddress: result.remoteAddress } : {}),
         status: 403,
     };
 }
