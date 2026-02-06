@@ -26,6 +26,12 @@ export interface FeedHealthTelemetry {
     connected: boolean;
     /** Whether the WebSocket is in a reconnecting state. */
     reconnecting: boolean;
+    /** Timestamp of last order-book update received (ms epoch). */
+    lastBookUpdateMs: number;
+    /** Timestamp of last trade-tape event received (ms epoch). */
+    lastTapeUpdateMs: number;
+    /** Timestamp of last validated ledger advance (ms epoch). */
+    lastLedgerAdvanceMs: number;
     /** Current feed-stall recovery stage. */
     stallRecoveryStage: StallRecoveryStage;
     /** Whether stall recovery is actively executing. */
@@ -90,6 +96,9 @@ export interface RuntimeTelemetryInput {
     lastLedgerCloseMs: number;
     lastBalanceSnapshotMs: number;
     lastBalanceLedgerIndex: number;
+    lastBookUpdateMs: number;
+    lastTapeUpdateMs: number;
+    lastLedgerAdvanceMs: number;
     marketHealth: MarketHealthResult | null;
     executionGate: ExecutionGateResult | null;
 }
@@ -111,6 +120,9 @@ export function buildRuntimeTelemetry(
         feed: {
             connected: input.isConnected,
             reconnecting: input.isReconnecting,
+            lastBookUpdateMs: input.lastBookUpdateMs,
+            lastTapeUpdateMs: input.lastTapeUpdateMs,
+            lastLedgerAdvanceMs: input.lastLedgerAdvanceMs,
             stallRecoveryStage: feedStall?.stage ?? 'HEALTHY',
             stallRecoveryActive: feedStall?.recovering ?? false,
             stallRecoveryAttempts: feedStall?.recoveryAttempts ?? 0,

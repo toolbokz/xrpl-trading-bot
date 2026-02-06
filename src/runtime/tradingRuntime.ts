@@ -71,6 +71,9 @@ import {
     FeedStallState,
 } from '../market/feedStallRecovery';
 import {
+    SnapshotValidator,
+} from '../market/snapshotValidator';
+import {
     RuntimeFSM,
     RuntimeState,
     RuntimeFSMSnapshot,
@@ -174,10 +177,24 @@ export class TradingRuntime {
     private lastExecutionGateResult: ExecutionGateResult | null = null;
     private healthConfig: MarketHealthConfig = DEFAULT_HEALTH_CONFIG;
     private gateConfig: ExecutionGateConfig = DEFAULT_GATE_CONFIG;
+    /** Structural snapshot validator — detects sequence gaps, timestamp regressions, NaN. */
+    private snapshotValidator = new SnapshotValidator();
+    /** Whether the last snapshot passed structural validation. */
+    private lastDataValid = true;
+    /** Reasons the last snapshot failed validation (empty when valid). */
+    private lastDataInvalidReasons: string[] = [];
     /** Runtime lifecycle FSM — replaces the old `started`/`shutdownInProgress` booleans. */
     private readonly fsm: RuntimeFSM;
     /** Whether the first tick with market data has completed (triggers WARMING→READY). */
     private firstTickCompleted = false;
+    /** Timestamp of last order-book update received (ms epoch). */
+    private lastBookUpdateMs = 0;
+    /** Timestamp of last trade-tape event received (ms epoch). */
+    private lastTapeUpdateMs = 0;
+    /** Timestamp of last validated ledger advance (ms epoch). */
+    private lastLedgerAdvanceMs = 0;
+    /** Guard to prevent duplicate event listeners on restart. */
+    private listenersAttached = false;
 
     constructor(config?: AppConfig) {
         // Security gate: enforce local-only execution on construction
@@ -224,6 +241,9 @@ export class TradingRuntime {
         this.currentNormalizedTrade = null;
         this.currentMarketHealthScore = 0;
         this.marketSnapshotSequence = 0;
+        this.snapshotValidator.reset();
+        this.lastDataValid = true;
+        this.lastDataInvalidReasons = [];
     }
 
     async start(): Promise<void> {
@@ -289,25 +309,39 @@ export class TradingRuntime {
             this.tradeTape = tradeTape;
             this.tradeTapeService = tradeTapeService;
 
-            // Track ledger close time for health scoring
-            xrpl.on('ledger', () => {
-                this.lastLedgerCloseMs = Date.now();
-                this.previousLedgerIndex = this.xrpl?.getLedgerIndex() ?? 0;
-                // Inform stall recovery that the book feed is alive
-                // (ledger events prove the WS is active even if no trades)
-                this.feedStallRecovery?.recordBookEvent();
-            });
+            // ── Listener dedup guard ─────────────────────────────────────
+            // Prevents stacking duplicate event listeners if start() is
+            // somehow called again after a reset()/restart cycle.
+            if (!this.listenersAttached) {
+                // Track ledger close time for health scoring
+                xrpl.on('ledger', () => {
+                    this.lastLedgerCloseMs = Date.now();
+                    this.lastLedgerAdvanceMs = Date.now();
+                    this.previousLedgerIndex = this.xrpl?.getLedgerIndex() ?? 0;
+                    // Inform stall recovery that the book feed is alive
+                    // (ledger events prove the WS is active even if no trades)
+                    this.feedStallRecovery?.recordBookEvent();
+                });
 
-            let txCount = 0;
-            xrpl.on('transaction', (tx: TransactionStream) => {
-                txCount += 1;
-                if (txCount % 5000 === 0) {
-                    logger.info({ txCount, lastTxType: tx.transaction?.TransactionType }, 'TradeTape: Transaction stream active');
-                }
-                this.tradeTapeService?.processTransaction(tx);
-                // Inform stall recovery that the tape feed is alive
-                this.feedStallRecovery?.recordTapeEvent();
-            });
+                let txCount = 0;
+                xrpl.on('transaction', (tx: TransactionStream) => {
+                    txCount += 1;
+                    this.lastTapeUpdateMs = Date.now();
+                    if (txCount % 5000 === 0) {
+                        logger.info({ txCount, lastTxType: tx.transaction?.TransactionType }, 'TradeTape: Transaction stream active');
+                    }
+                    this.tradeTapeService?.processTransaction(tx);
+                    // Inform stall recovery that the tape feed is alive
+                    this.feedStallRecovery?.recordTapeEvent();
+                });
+
+                // Emit XRPL_RECONNECTED observability event on WebSocket reconnect
+                xrpl.on('reconnect', () => {
+                    logger.info({ event: 'XRPL_RECONNECTED', timestamp: Date.now() }, 'XRPL WebSocket reconnected');
+                });
+
+                this.listenersAttached = true;
+            }
 
             this.strategies = [
                 new ScalperStrategy(tracker, config.strategy, config.tradingPair, executor, risk, config.flow),
@@ -446,6 +480,7 @@ export class TradingRuntime {
                 this.lastBalanceLedgerIndex = this.xrpl?.getLedgerIndex() ?? 0;
             }
             await this.tracker.refresh();
+            this.lastBookUpdateMs = Date.now();
 
             // Final null check before accessing state (may have been killed during refresh)
             if (!this.tracker || !this.xrpl) {
@@ -464,6 +499,32 @@ export class TradingRuntime {
                 nowMs,
                 this.marketSnapshotSequence,
             );
+
+            // ─────────────────────────────────────────────────────────────────
+            // Snapshot Structural Validation — sequence, timestamps, numerics
+            // ─────────────────────────────────────────────────────────────────
+            const validation = this.snapshotValidator.validate(this.currentOrderBookSnapshot);
+            const wasInvalid = !this.lastDataValid;
+            this.lastDataValid = validation.valid;
+            this.lastDataInvalidReasons = validation.reasons;
+
+            if (!validation.valid && (wasInvalid !== true || this.lastDataInvalidReasons.length > 0)) {
+                logger.info({
+                    event: 'DATA_INVALIDATED',
+                    reasons: validation.reasons,
+                    sequence: this.currentOrderBookSnapshot.sequence,
+                    pairKey,
+                    timestamp: nowMs,
+                }, 'DATA_INVALIDATED: snapshot failed structural validation');
+            }
+            if (validation.valid && wasInvalid) {
+                logger.info({
+                    event: 'DATA_RECOVERED',
+                    sequence: this.currentOrderBookSnapshot.sequence,
+                    pairKey,
+                    timestamp: nowMs,
+                }, 'DATA_RECOVERED: snapshot validation passed after previous failure');
+            }
 
             const latestTrade = this.tradeTape?.getAll().at(-1) ?? null;
             this.currentNormalizedTrade = latestTrade
@@ -487,10 +548,29 @@ export class TradingRuntime {
                 // FSM: transition to RECOVERING when stall recovery starts
                 if (!stallStateBefore && stallStateAfter &&
                     (this.fsm.getState() === 'READY' || this.fsm.getState() === 'DEGRADED')) {
+                    const stallState = this.feedStallRecovery?.getState();
+                    logger.info({
+                        event: 'FEED_STALE',
+                        stage: stallState?.stage ?? 'UNKNOWN',
+                        timestamp: Date.now(),
+                    }, 'FEED_STALE: feed stall detected, entering recovery');
+                    logger.info({
+                        event: 'RECOVERY_STAGE',
+                        from: this.fsm.getState(),
+                        to: 'RECOVERING',
+                        stage: stallState?.stage ?? 'UNKNOWN',
+                        timestamp: Date.now(),
+                    }, 'RECOVERY_STAGE: entering RECOVERING state');
                     this.fsm.transition('RECOVERING', 'feed-stall-recovery-started');
                 }
                 // FSM: transition out of RECOVERING when stall recovery completes
                 if (stallStateBefore && !stallStateAfter && this.fsm.getState() === 'RECOVERING') {
+                    logger.info({
+                        event: 'RECOVERY_STAGE',
+                        from: 'RECOVERING',
+                        to: 'DEGRADED',
+                        timestamp: Date.now(),
+                    }, 'RECOVERY_STAGE: stall recovery completed, transitioning to DEGRADED');
                     // Will determine READY vs DEGRADED after health scoring below
                     // For now go to DEGRADED; health check may promote to READY
                     this.fsm.transition('DEGRADED', 'feed-stall-recovery-completed');
@@ -536,6 +616,9 @@ export class TradingRuntime {
                 pairSwitchState: this.pairSwitchState,
                 isShuttingDown: this.shutdownInProgress,
                 isInRecovery: this.feedStallRecovery?.isRecovering() ?? false,
+                isRiskShutdown: this.risk.isShutdown(),
+                dataValid: this.lastDataValid,
+                dataInvalidReasons: this.lastDataInvalidReasons,
                 ledgerIndex: this.xrpl.getLedgerIndex(),
                 lastLedgerCloseMs: this.lastLedgerCloseMs,
             }, this.gateConfig);
@@ -563,11 +646,17 @@ export class TradingRuntime {
             }
 
             if (gateResult.verdict === 'BLOCK') {
-                logger.debug({
+                const isBadData = gateResult.reasons.some(r => r === 'snapshot-invalid' || r.startsWith('data:'));
+                logger.info({
+                    event: isBadData ? 'EXECUTION_BLOCKED_BAD_DATA' : 'EXECUTION_BLOCKED',
                     verdict: gateResult.verdict,
                     healthScore: gateResult.healthScore,
                     reasons: gateResult.reasons,
-                }, 'Execution gate BLOCKED tick');
+                    runtimeState: this.fsm.getState(),
+                    timestamp: Date.now(),
+                }, isBadData
+                    ? 'EXECUTION_BLOCKED_BAD_DATA: gate denied tick — snapshot structural validation failed'
+                    : 'EXECUTION_BLOCKED: gate denied tick execution');
                 return;
             }
 
@@ -906,6 +995,9 @@ export class TradingRuntime {
             lastLedgerCloseMs: this.lastLedgerCloseMs,
             lastBalanceSnapshotMs: this.lastBalanceSnapshotMs,
             lastBalanceLedgerIndex: this.lastBalanceLedgerIndex,
+            lastBookUpdateMs: this.lastBookUpdateMs,
+            lastTapeUpdateMs: this.lastTapeUpdateMs,
+            lastLedgerAdvanceMs: this.lastLedgerAdvanceMs,
             marketHealth: this.lastMarketDataHealth,
             executionGate: this.lastExecutionGateResult,
         });
@@ -1329,6 +1421,13 @@ export class TradingRuntime {
         this.previousLedgerIndex = 0;
         this.lastBalanceSnapshotMs = 0;
         this.lastBalanceLedgerIndex = 0;
+        this.lastBookUpdateMs = 0;
+        this.lastTapeUpdateMs = 0;
+        this.lastLedgerAdvanceMs = 0;
+        this.listenersAttached = false;
+        this.snapshotValidator.reset();
+        this.lastDataValid = true;
+        this.lastDataInvalidReasons = [];
 
         // Reset FSM to BOOTING for potential restart
         this.fsm.reset();

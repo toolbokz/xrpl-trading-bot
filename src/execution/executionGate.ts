@@ -54,6 +54,12 @@ export interface ExecutionGateInput {
     isShuttingDown: boolean;
     /** Whether the stall recovery system is currently in recovery mode. */
     isInRecovery: boolean;
+    /** Whether the risk engine has triggered a kill-switch / emergency shutdown. */
+    isRiskShutdown: boolean;
+    /** Whether the latest market snapshot passed structural validation. */
+    dataValid: boolean;
+    /** Reasons the snapshot failed validation (empty when dataValid is true). */
+    dataInvalidReasons: string[];
     /** Current ledger index (0 if unknown). */
     ledgerIndex: number;
     /** Time of last ledger close (ms epoch, 0 if unknown). */
@@ -74,8 +80,10 @@ export interface ExecutionGateInput {
  * 3. Feed disconnected / reconnecting
  * 4. Pair switch in progress
  * 5. Stall recovery in progress
- * 6. Ledger stalled
- * 7. Health quorum below threshold
+ * 6. Risk engine kill-switch
+ * 7. Snapshot structural validation failed
+ * 8. Ledger stalled
+ * 9. Health quorum below threshold
  */
 export function evaluateExecutionGate(
     input: ExecutionGateInput,
@@ -119,7 +127,22 @@ export function evaluateExecutionGate(
         return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
     }
 
-    // 6. Ledger staleness
+    // 6. Risk engine kill-switch
+    if (input.isRiskShutdown) {
+        reasons.push('risk-engine-blocked');
+        return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
+    }
+
+    // 7. Snapshot structural validation
+    if (!input.dataValid) {
+        reasons.push('snapshot-invalid');
+        for (const r of input.dataInvalidReasons) {
+            reasons.push(`data:${r}`);
+        }
+        return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
+    }
+
+    // 8. Ledger staleness
     if (input.lastLedgerCloseMs > 0) {
         const ledgerAge = nowMs - input.lastLedgerCloseMs;
         if (ledgerAge > config.maxLedgerStalenessMs) {
@@ -128,7 +151,7 @@ export function evaluateExecutionGate(
         }
     }
 
-    // 7. Health quorum
+    // 9. Health quorum
     if (input.health.score < config.minHealthScore) {
         reasons.push(`health-below-threshold:${input.health.score}<${config.minHealthScore}`);
 

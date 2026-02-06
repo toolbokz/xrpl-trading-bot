@@ -32,6 +32,9 @@ const baseInput = (): ExecutionGateInput => ({
     pairSwitchState: 'IDLE',
     isShuttingDown: false,
     isInRecovery: false,
+    isRiskShutdown: false,
+    dataValid: true,
+    dataInvalidReasons: [],
     ledgerIndex: 100,
     lastLedgerCloseMs: Date.now() - 3_000,
 });
@@ -230,5 +233,66 @@ describe('evaluateExecutionGate', () => {
         input2.isConnected = false;
         const r2 = evaluateExecutionGate(input2);
         expect(r2.reasons[0]).toMatch(/runtime-not-ready/);
+    });
+
+    // ─── Risk engine kill-switch checks ──────────────────────────────────
+
+    it('BLOCK when risk engine is shutdown', () => {
+        const input = baseInput();
+        input.isRiskShutdown = true;
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons).toContain('risk-engine-blocked');
+    });
+
+    it('risk-engine-blocked yields to stall-recovery (higher priority)', () => {
+        const input = baseInput();
+        input.isInRecovery = true;
+        input.isRiskShutdown = true;
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        // stall recovery is check 5, risk is check 6 — stall wins
+        expect(result.reasons).toEqual(['stall-recovery-in-progress']);
+    });
+
+    it('risk-engine-blocked takes precedence over ledger-stalled', () => {
+        const input = baseInput();
+        input.isRiskShutdown = true;
+        input.lastLedgerCloseMs = Date.now() - 120_000; // stale ledger
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons).toEqual(['risk-engine-blocked']);
+    });
+
+    // ─── Snapshot validation checks ──────────────────────────────────────
+
+    it('BLOCK when snapshot data is invalid', () => {
+        const input = baseInput();
+        input.dataValid = false;
+        input.dataInvalidReasons = ['sequence-gap:expected=5,got=7'];
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons).toContain('snapshot-invalid');
+        expect(result.reasons).toContain('data:sequence-gap:expected=5,got=7');
+    });
+
+    it('snapshot-invalid yields to risk-engine-blocked (higher priority)', () => {
+        const input = baseInput();
+        input.isRiskShutdown = true;
+        input.dataValid = false;
+        input.dataInvalidReasons = ['crossed-book'];
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons).toEqual(['risk-engine-blocked']);
+    });
+
+    it('snapshot-invalid takes precedence over ledger-stalled', () => {
+        const input = baseInput();
+        input.dataValid = false;
+        input.dataInvalidReasons = ['nan-or-infinite:bestBid=NaN'];
+        input.lastLedgerCloseMs = Date.now() - 120_000;
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toBe('snapshot-invalid');
     });
 });
