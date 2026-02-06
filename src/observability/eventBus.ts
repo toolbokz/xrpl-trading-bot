@@ -544,17 +544,32 @@ export class ObservabilityBus {
 
 /**
  * Build a deterministic dedup key from event type, pair, and detail.
- * Used to suppress sequential identical events.
+ * Uses a cheap approach: concatenate primitive values directly,
+ * only falling back to JSON.stringify for non-primitive detail values.
  */
 function buildDedupKey(
     eventType: ObservabilityEventType,
     pairKey: string,
     detail: Record<string, unknown>,
 ): DedupKey {
-    // For most events, the dedup key is eventType + pairKey + sorted detail keys/values
-    const detailStr = Object.keys(detail)
-        .sort()
-        .map((k) => `${k}=${JSON.stringify(detail[k])}`)
-        .join('|');
+    const keys = Object.keys(detail);
+    if (keys.length === 0) {
+        return `${eventType}:${pairKey}:` as DedupKey;
+    }
+    keys.sort();
+    let detailStr = '';
+    for (let i = 0; i < keys.length; i++) {
+        const k = keys[i]!;
+        const v = detail[k];
+        // Fast path: primitives don't need JSON.stringify
+        if (i > 0) detailStr += '|';
+        detailStr += k;
+        detailStr += '=';
+        if (v === null || v === undefined || typeof v !== 'object') {
+            detailStr += String(v);
+        } else {
+            detailStr += JSON.stringify(v);
+        }
+    }
     return `${eventType}:${pairKey}:${detailStr}`;
 }

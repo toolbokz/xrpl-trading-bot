@@ -63,6 +63,12 @@ export class TradeTape {
     private seenIds: Set<string> = new Set();
     /** Current trading pair key */
     private pairKey: string;
+    /**
+     * Per-tick cache for getRecent() results.
+     * Key: `${windowMs}`, Value: { result, epoch (trades.length at cache time), latestTs }.
+     * Invalidated automatically when trades are added (length or latestTs change).
+     */
+    private recentCache: Map<number, { result: Trade[]; epoch: number; latestTs: number }> = new Map();
 
     constructor(pair: TradingPair) {
         this.pairKey = `${pair.baseCurrency}/${pair.quoteCurrency}`;
@@ -126,12 +132,37 @@ export class TradeTape {
 
     /**
      * Get recent trades within a time window.
+     * Results are cached within a tick — calling with the same windowMs
+     * returns the same array until a new trade is added.
      * @param windowMs - Time window in milliseconds (default: 60000 = 1 minute)
      * @returns Trades within the window, sorted by ts ascending
      */
     getRecent(windowMs = 60_000): Trade[] {
+        const epoch = this.trades.length;
+        const latestTs = epoch > 0 ? this.trades[epoch - 1]!.ts : 0;
+
+        const cached = this.recentCache.get(windowMs);
+        if (cached && cached.epoch === epoch && cached.latestTs === latestTs) {
+            return cached.result;
+        }
+
         const cutoff = Date.now() - windowMs;
-        return this.trades.filter(t => t.ts >= cutoff);
+
+        // Binary search for the first trade >= cutoff (trades are sorted by ts asc)
+        let lo = 0;
+        let hi = epoch;
+        while (lo < hi) {
+            const mid = (lo + hi) >>> 1;
+            if (this.trades[mid]!.ts < cutoff) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+
+        const result = lo < epoch ? this.trades.slice(lo) : [];
+        this.recentCache.set(windowMs, { result, epoch, latestTs });
+        return result;
     }
 
     /**
@@ -139,6 +170,13 @@ export class TradeTape {
      */
     getAll(): Trade[] {
         return [...this.trades];
+    }
+
+    /**
+     * Get the most recent trade without copying the entire buffer.
+     */
+    getLast(): Trade | null {
+        return this.trades.length > 0 ? this.trades[this.trades.length - 1]! : null;
     }
 
     /**
@@ -201,6 +239,7 @@ export class TradeTape {
     clear(): void {
         this.trades = [];
         this.seenIds.clear();
+        this.recentCache.clear();
         logger.debug({ pairKey: this.pairKey }, 'TradeTape cleared');
     }
 

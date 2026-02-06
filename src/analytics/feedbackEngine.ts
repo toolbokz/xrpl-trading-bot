@@ -204,9 +204,19 @@ export interface AnalyticsResponse {
 // Feedback Engine Class
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Number of ticks between batched snapshot writes (configurable via env, default 5). */
+const SNAPSHOT_FLUSH_INTERVAL_TICKS = Math.max(
+    1,
+    parseInt(process.env.SNAPSHOT_FLUSH_INTERVAL ?? '5', 10) || 5,
+);
+
 class FeedbackEngine {
     private initialized = false;
     private pruneIntervalId: NodeJS.Timeout | null = null;
+    /** Buffered snapshots awaiting batch write. */
+    private snapshotBuffer: MarketSnapshotRecord[] = [];
+    /** Tick counter for snapshot flush scheduling. */
+    private snapshotTickCounter = 0;
 
     /**
      * Initialize the feedback engine (lazy, called on first use)
@@ -234,7 +244,9 @@ class FeedbackEngine {
     }
 
     /**
-     * Record a market snapshot
+     * Record a market snapshot.
+     * Snapshots are buffered and flushed to SQLite every SNAPSHOT_FLUSH_INTERVAL_TICKS
+     * ticks to reduce synchronous IO pressure on the event loop.
      */
     recordSnapshot(input: MarketSnapshotInput): void {
         if (!this.ensureInitialized()) return;
@@ -262,9 +274,39 @@ class FeedbackEngine {
                 volumeVelocity: input.flow?.volumeVelocity ?? null,
             };
 
-            insertMarketSnapshot(snapshot);
+            this.snapshotBuffer.push(snapshot);
+            this.snapshotTickCounter++;
+
+            if (this.snapshotTickCounter >= SNAPSHOT_FLUSH_INTERVAL_TICKS) {
+                this.flushSnapshots();
+            }
         } catch (err) {
             logger.warn({ err, pairKey: input.pairKey }, 'Failed to record snapshot');
+        }
+    }
+
+    /**
+     * Flush buffered snapshots to SQLite.
+     * Writing N snapshots as N individual inserts is still faster than
+     * 1 insert per tick because the event-loop cost is amortized over
+     * SNAPSHOT_FLUSH_INTERVAL_TICKS ticks instead of paid every tick.
+     * Called periodically and on shutdown.
+     */
+    flushSnapshots(): void {
+        if (this.snapshotBuffer.length === 0) {
+            this.snapshotTickCounter = 0;
+            return;
+        }
+
+        try {
+            for (const snapshot of this.snapshotBuffer) {
+                insertMarketSnapshot(snapshot);
+            }
+        } catch (err) {
+            logger.warn({ err, count: this.snapshotBuffer.length }, 'Failed to flush snapshot batch');
+        } finally {
+            this.snapshotBuffer = [];
+            this.snapshotTickCounter = 0;
         }
     }
 
@@ -1053,6 +1095,12 @@ class FeedbackEngine {
      * Shutdown the engine
      */
     shutdown(): void {
+        // Flush any remaining buffered snapshots before closing
+        try {
+            this.flushSnapshots();
+        } catch {
+            // Best-effort on shutdown
+        }
         if (this.pruneIntervalId) {
             clearInterval(this.pruneIntervalId);
             this.pruneIntervalId = null;

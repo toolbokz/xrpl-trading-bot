@@ -19,6 +19,7 @@ import { closeBreakerStore } from '../persistence/breakerStore';
 import { enforceLocalOnly } from '../security/localOnly';
 import { throttleStrategy } from '../utils/rateLimiter';
 import { isCpuHealthy, startCpuWatchdog, CpuWatchdog } from '../monitoring/cpuWatchdog';
+import { PerfTracer, getPerfTracer, stopPerfTracer } from '../monitoring/perfTracer';
 import { TradeTape, setGlobalTradeTape } from '../market/tradeTape';
 import { TradeTapeService } from '../market/tradeTapeService';
 import { FlowMetrics, computeFlowMetrics, FlowRegime } from '../market/flowMetrics';
@@ -205,6 +206,8 @@ export class TradingRuntime {
     private readonly hardRiskGuard = new HardRiskGuard(loadHardRiskConfig());
     /** Observability event bus — structured event stream for forensic debugging. */
     private readonly observabilityBus = new ObservabilityBus();
+    /** Per-tick performance tracer — lightweight phase timing + event-loop lag. */
+    private perfTracer: PerfTracer | null = null;
     /** Whether the last snapshot passed structural validation. */
     private lastDataValid = true;
     /** Reasons the last snapshot failed validation (empty when valid). */
@@ -533,6 +536,10 @@ export class TradingRuntime {
                 strategies: strategyNames,
             });
 
+            // Start lightweight per-tick performance tracer
+            this.perfTracer = getPerfTracer();
+            this.perfTracer.start();
+
             logger.info('Trading runtime started');
         } catch (err) {
             await xrpl.disconnect().catch(() => undefined);
@@ -585,8 +592,13 @@ export class TradingRuntime {
                 return;
             }
 
+            // ── PERF: start tick timing ──
+            this.perfTracer?.tickStart();
+
             // Check for daily loss reset at UTC midnight
             this.risk.checkAndResetDaily();
+
+            this.perfTracer?.phaseEnd(0); // riskReset
 
             if (this.risk.isShutdown()) return;
             if (this.walletAddress) {
@@ -608,8 +620,11 @@ export class TradingRuntime {
                     });
                 }
             }
+            this.perfTracer?.phaseEnd(1); // reserveCheck
+
             await this.tracker.refresh();
             this.lastBookUpdateMs = Date.now();
+            this.perfTracer?.phaseEnd(2); // bookRefresh
 
             // Final null check before accessing state (may have been killed during refresh)
             if (!this.tracker || !this.xrpl) {
@@ -662,7 +677,7 @@ export class TradingRuntime {
                 }, 'DATA_RECOVERED: snapshot validation passed after previous failure');
             }
 
-            const latestTrade = this.tradeTape?.getAll().at(-1) ?? null;
+            const latestTrade = this.tradeTape?.getLast() ?? null;
             this.currentNormalizedTrade = latestTrade
                 ? normalizeTrade(latestTrade, nowMs, latestTrade.ts, 'tape', false)
                 : null;
@@ -672,6 +687,8 @@ export class TradingRuntime {
                 book: this.currentOrderBookSnapshot,
                 amm: null,
             });
+
+            this.perfTracer?.phaseEnd(3); // snapshot (includes bookRefresh[2]+normalize+validate)
 
             // ─────────────────────────────────────────────────────────────────
             // Feed Stall Recovery — evaluate and trigger staged reconnect
@@ -728,6 +745,8 @@ export class TradingRuntime {
                     this.fsm.transition('DEGRADED', 'feed-stall-recovery-completed');
                 }
             }
+
+            this.perfTracer?.phaseEnd(4); // feedStall
 
             // ─────────────────────────────────────────────────────────────────
             // Market Data Health Quorum — multi-signal truth enforcement
@@ -828,6 +847,9 @@ export class TradingRuntime {
                 });
             }
 
+            this.perfTracer?.phaseEnd(5); // healthQuorum (includes gate + FSM)
+            this.perfTracer?.phaseEnd(6); // fsmTransitions
+
             if (gateResult.verdict === 'BLOCK') {
                 const isBadData = gateResult.reasons.some(r => r === 'snapshot-invalid' || r.startsWith('data:'));
                 logger.info({
@@ -848,9 +870,12 @@ export class TradingRuntime {
             // Compute flow metrics from trade tape and order book
             const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
             this.currentFlowMetrics = flowMetrics;
+            this.perfTracer?.phaseEnd(7); // flowMetrics
 
             // Update cache registry with full tick data
             this.updateCacheSnapshot(pairKey, gateResult, flowMetrics);
+
+            this.perfTracer?.phaseEnd(8); // cacheUpdate
 
             // Record market snapshot for analytics (non-blocking, best-effort)
             try {
@@ -863,6 +888,7 @@ export class TradingRuntime {
             } catch {
                 // Feedback recording should never crash trading
             }
+            this.perfTracer?.phaseEnd(9); // feedbackRecord
 
             // ─────────────────────────────────────────────────────────────────
             // Hard Risk Guard — deterministic capital safety gate
@@ -895,6 +921,8 @@ export class TradingRuntime {
                 });
                 return;
             }
+
+            this.perfTracer?.phaseEnd(10); // hardRisk
 
             // ─────────────────────────────────────────────────────────────────
             // Capital Protection Gate
@@ -946,6 +974,8 @@ export class TradingRuntime {
                     await sleep(globalCooldownMs);
                 }
             }
+
+            this.perfTracer?.phaseEnd(11); // capitalProtection
 
             const ctx = {
                 orderBook: orderBookState,
@@ -1082,7 +1112,9 @@ export class TradingRuntime {
                     this.executor.clearRegimePolicyOverrides();
                 }
             }
+            this.perfTracer?.phaseEnd(12); // strategies
         } finally {
+            this.perfTracer?.tickEnd();
             this.tickInFlight = false;
         }
     }
@@ -1841,6 +1873,12 @@ export class TradingRuntime {
         if (this.cpuWatchdog) {
             this.cpuWatchdog.stop();
             this.cpuWatchdog = null;
+        }
+
+        // Stop perf tracer
+        if (this.perfTracer) {
+            stopPerfTracer();
+            this.perfTracer = null;
         }
 
         // Clear global trade tape reference
