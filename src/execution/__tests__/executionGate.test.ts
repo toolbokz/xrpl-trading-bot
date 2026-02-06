@@ -25,6 +25,7 @@ const healthyResult = (): MarketHealthResult => ({
 });
 
 const baseInput = (): ExecutionGateInput => ({
+    runtimeState: 'READY',
     health: healthyResult(),
     isConnected: true,
     isReconnecting: false,
@@ -148,5 +149,86 @@ describe('evaluateExecutionGate', () => {
         const result = evaluateExecutionGate(input);
         expect(result.verdict).toBe('BLOCK');
         expect(result.reasons).toEqual(['shutdown-in-progress']);
+    });
+
+    // ─── Runtime FSM state checks ────────────────────────────────────────
+
+    it('BLOCK when runtimeState is BOOTING', () => {
+        const input = baseInput();
+        input.runtimeState = 'BOOTING';
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toMatch(/runtime-not-ready:BOOTING/);
+    });
+
+    it('BLOCK when runtimeState is SYNCING_LEDGER', () => {
+        const input = baseInput();
+        input.runtimeState = 'SYNCING_LEDGER';
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toMatch(/runtime-not-ready/);
+    });
+
+    it('BLOCK when runtimeState is SUBSCRIBING_FEEDS', () => {
+        const input = baseInput();
+        input.runtimeState = 'SUBSCRIBING_FEEDS';
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toMatch(/runtime-not-ready/);
+    });
+
+    it('BLOCK when runtimeState is WARMING_MARKET_CACHE', () => {
+        const input = baseInput();
+        input.runtimeState = 'WARMING_MARKET_CACHE';
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toMatch(/runtime-not-ready/);
+    });
+
+    it('BLOCK when runtimeState is DEGRADED', () => {
+        const input = baseInput();
+        input.runtimeState = 'DEGRADED';
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toMatch(/runtime-not-ready:DEGRADED/);
+    });
+
+    it('BLOCK when runtimeState is RECOVERING', () => {
+        const input = baseInput();
+        input.runtimeState = 'RECOVERING';
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toMatch(/runtime-not-ready:RECOVERING/);
+    });
+
+    it('BLOCK when runtimeState is HALTED', () => {
+        const input = baseInput();
+        input.runtimeState = 'HALTED';
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('BLOCK');
+        expect(result.reasons[0]).toMatch(/runtime-not-ready:HALTED/);
+    });
+
+    it('ALLOW when runtimeState is READY', () => {
+        const input = baseInput();
+        input.runtimeState = 'READY';
+        const result = evaluateExecutionGate(input);
+        expect(result.verdict).toBe('ALLOW');
+    });
+
+    it('runtime-not-ready takes precedence over feed/health but not shutdown', () => {
+        // shutdown still wins
+        const input1 = baseInput();
+        input1.runtimeState = 'DEGRADED';
+        input1.isShuttingDown = true;
+        const r1 = evaluateExecutionGate(input1);
+        expect(r1.reasons).toEqual(['shutdown-in-progress']);
+
+        // runtime-not-ready wins over feed disconnect
+        const input2 = baseInput();
+        input2.runtimeState = 'WARMING_MARKET_CACHE';
+        input2.isConnected = false;
+        const r2 = evaluateExecutionGate(input2);
+        expect(r2.reasons[0]).toMatch(/runtime-not-ready/);
     });
 });

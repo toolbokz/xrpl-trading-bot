@@ -11,6 +11,7 @@
 
 import { MarketHealthResult } from '../market/marketDataHealth';
 import { PairSwitchState } from '../runtime/tradingRuntime';
+import { RuntimeState } from '../runtime/runtimeFsm';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -39,6 +40,8 @@ export const DEFAULT_GATE_CONFIG: ExecutionGateConfig = {
 };
 
 export interface ExecutionGateInput {
+    /** Current runtime lifecycle FSM state. Execution only allowed in READY. */
+    runtimeState: RuntimeState;
     /** Latest market data health result from MarketDataHealth scorer. */
     health: MarketHealthResult;
     /** Whether the XRPL WebSocket is currently connected. */
@@ -67,11 +70,12 @@ export interface ExecutionGateInput {
  *
  * Block precedence (checked top-to-bottom, first match wins):
  * 1. Shutdown in progress
- * 2. Feed disconnected / reconnecting
- * 3. Pair switch in progress
- * 4. Stall recovery in progress
- * 5. Ledger stalled
- * 6. Health quorum below threshold
+ * 2. Runtime FSM not in READY state
+ * 3. Feed disconnected / reconnecting
+ * 4. Pair switch in progress
+ * 5. Stall recovery in progress
+ * 6. Ledger stalled
+ * 7. Health quorum below threshold
  */
 export function evaluateExecutionGate(
     input: ExecutionGateInput,
@@ -86,7 +90,13 @@ export function evaluateExecutionGate(
         return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
     }
 
-    // 2. Feed disconnected / reconnecting
+    // 2. Runtime FSM not READY
+    if (input.runtimeState !== 'READY') {
+        reasons.push(`runtime-not-ready:${input.runtimeState}`);
+        return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
+    }
+
+    // 3. Feed disconnected / reconnecting
     if (!input.isConnected) {
         reasons.push('feed-disconnected');
     }
@@ -97,19 +107,19 @@ export function evaluateExecutionGate(
         return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
     }
 
-    // 3. Pair switching
+    // 4. Pair switching
     if (input.pairSwitchState === 'SWITCHING' || input.pairSwitchState === 'SYNCING') {
         reasons.push(`pair-switch-state:${input.pairSwitchState}`);
         return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
     }
 
-    // 4. Stall recovery
+    // 5. Stall recovery
     if (input.isInRecovery) {
         reasons.push('stall-recovery-in-progress');
         return { verdict: 'BLOCK', reasons, healthScore: input.health.score, evaluatedAt: nowMs };
     }
 
-    // 5. Ledger staleness
+    // 6. Ledger staleness
     if (input.lastLedgerCloseMs > 0) {
         const ledgerAge = nowMs - input.lastLedgerCloseMs;
         if (ledgerAge > config.maxLedgerStalenessMs) {
@@ -118,7 +128,7 @@ export function evaluateExecutionGate(
         }
     }
 
-    // 6. Health quorum
+    // 7. Health quorum
     if (input.health.score < config.minHealthScore) {
         reasons.push(`health-below-threshold:${input.health.score}<${config.minHealthScore}`);
 

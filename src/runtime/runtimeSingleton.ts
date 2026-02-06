@@ -10,6 +10,8 @@
  */
 
 import { TradingRuntime } from './tradingRuntime';
+import { RuntimeState } from './runtimeFsm';
+import { RuntimeTelemetry } from './runtimeObservability';
 import { loadConfig, TradingPair } from '../config';
 import { logger } from '../analytics/logger';
 import { OrderBookState } from '../utils/types';
@@ -46,6 +48,10 @@ export interface RuntimePublicState {
     lastUpdatedMs: number;
     /** Whether runtime is currently starting up */
     warmingUp: boolean;
+    /** Runtime lifecycle FSM state */
+    runtimeState: RuntimeState | null;
+    /** Full runtime telemetry snapshot */
+    telemetry: RuntimeTelemetry | null;
 
     /** Connection state from sharedClient */
     connection: ConnectionState | null;
@@ -233,6 +239,8 @@ export function getRuntimeState(): RuntimePublicState {
         pair: null,
         lastUpdatedMs: Date.now(),
         warmingUp: isStarting,
+        runtimeState: null,
+        telemetry: null,
         connection: null,
         orderBook: null,
         flow: null,
@@ -294,6 +302,10 @@ export function getRuntimeState(): RuntimePublicState {
         ? `${tradingPairConfig.baseCurrency}/${tradingPairConfig.quoteCurrency}`
         : null;
 
+    // Get runtime FSM state and telemetry
+    const runtimeState = runtimeInstance.getRuntimeState();
+    const telemetry = runtimeInstance.getRuntimeTelemetry();
+
     // Build order book response
     let orderBookData: RuntimePublicState['orderBook'] = null;
     if (orderBookState && orderBookState.bids.length > 0) {
@@ -318,6 +330,8 @@ export function getRuntimeState(): RuntimePublicState {
         pair: pairKey,
         lastUpdatedMs: Date.now(),
         warmingUp: isStarting,
+        runtimeState,
+        telemetry,
         connection,
         orderBook: orderBookData,
         flow: flowMetrics,
@@ -338,6 +352,8 @@ export function isRuntimeReady(): boolean {
     const runtimeInstance = globalThis.__xrplTradingBotRuntime;
     if (!runtimeInstance) return false;
     if (!runtimeInstance.isStarted()) return false;
+    // Also require FSM to be in READY state
+    if (!runtimeInstance.isRuntimeReady()) return false;
     const client = runtimeInstance.getClient();
     return client?.isConnected() ?? false;
 }

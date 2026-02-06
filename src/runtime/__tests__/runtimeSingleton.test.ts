@@ -26,6 +26,9 @@ function createMockRuntime() {
             tradingPair: { baseCurrency: 'XRP', quoteCurrency: 'RLUSD' },
             xrpl: { network: 'mainnet' }
         }),
+        getRuntimeState: vi.fn().mockReturnValue('READY'),
+        getRuntimeTelemetry: vi.fn().mockReturnValue(null),
+        isRuntimeReady: vi.fn().mockReturnValue(true),
     };
 }
 

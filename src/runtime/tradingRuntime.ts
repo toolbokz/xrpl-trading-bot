@@ -70,6 +70,15 @@ import {
     FeedStallRecovery,
     FeedStallState,
 } from '../market/feedStallRecovery';
+import {
+    RuntimeFSM,
+    RuntimeState,
+    RuntimeFSMSnapshot,
+} from './runtimeFsm';
+import {
+    buildRuntimeTelemetry,
+    RuntimeTelemetry,
+} from './runtimeObservability';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -165,6 +174,10 @@ export class TradingRuntime {
     private lastExecutionGateResult: ExecutionGateResult | null = null;
     private healthConfig: MarketHealthConfig = DEFAULT_HEALTH_CONFIG;
     private gateConfig: ExecutionGateConfig = DEFAULT_GATE_CONFIG;
+    /** Runtime lifecycle FSM — replaces the old `started`/`shutdownInProgress` booleans. */
+    private readonly fsm: RuntimeFSM;
+    /** Whether the first tick with market data has completed (triggers WARMING→READY). */
+    private firstTickCompleted = false;
 
     constructor(config?: AppConfig) {
         // Security gate: enforce local-only execution on construction
@@ -176,6 +189,7 @@ export class TradingRuntime {
         }
 
         this.baseConfig = config ?? loadConfig();
+        this.fsm = new RuntimeFSM();
     }
 
     /**
@@ -217,6 +231,12 @@ export class TradingRuntime {
         enforceLocalOnly('TradingRuntime.start');
 
         if (this.started) return;
+
+        // FSM: ensure we are in BOOTING state
+        if (this.fsm.getState() !== 'BOOTING') {
+            throw new Error(`Cannot start runtime: FSM is in ${this.fsm.getState()}, expected BOOTING`);
+        }
+
         const config = cloneConfig(this.baseConfig);
 
         // Validate trading pair structure
@@ -243,7 +263,12 @@ export class TradingRuntime {
 
         const xrpl = new XRPLWebSocket(config.xrpl);
         try {
+            // FSM: BOOTING → SYNCING_LEDGER
+            this.fsm.transition('SYNCING_LEDGER', 'xrpl-connecting');
             await xrpl.connect();
+
+            // FSM: SYNCING_LEDGER → SUBSCRIBING_FEEDS
+            this.fsm.transition('SUBSCRIBING_FEEDS', 'xrpl-subscribing');
             await xrpl.subscribe(config.tradingPair);
 
             const client = xrpl.getClient();
@@ -296,6 +321,9 @@ export class TradingRuntime {
             this.executor = executor;
             this.walletAddress = wallet?.classicAddress ?? null;
             this.started = true;
+
+            // FSM: SUBSCRIBING_FEEDS → WARMING_MARKET_CACHE
+            this.fsm.transition('WARMING_MARKET_CACHE', 'components-initialized');
 
             // Initialize capital protection engine
             const cpConfig = loadCapitalProtectionConfig();
@@ -362,6 +390,7 @@ export class TradingRuntime {
             logger.info('Trading runtime started');
         } catch (err) {
             await xrpl.disconnect().catch(() => undefined);
+            this.fsm.forceHalt('start-failed');
             this.reset();
             throw err;
         }
@@ -370,6 +399,10 @@ export class TradingRuntime {
     async tick(): Promise<void> {
         // Silently skip if runtime not ready or shutting down
         if (!this.started || this.shutdownInProgress) {
+            return;
+        }
+        // FSM guard: skip ticks in non-operational states
+        if (this.fsm.isHalted()) {
             return;
         }
         // Block ticks during pair switching to prevent mixed-pair execution
@@ -447,7 +480,21 @@ export class TradingRuntime {
             // Feed Stall Recovery — evaluate and trigger staged reconnect
             // ─────────────────────────────────────────────────────────────────
             if (this.feedStallRecovery) {
+                const stallStateBefore = this.feedStallRecovery.isRecovering();
                 await this.feedStallRecovery.evaluate();
+                const stallStateAfter = this.feedStallRecovery.isRecovering();
+
+                // FSM: transition to RECOVERING when stall recovery starts
+                if (!stallStateBefore && stallStateAfter &&
+                    (this.fsm.getState() === 'READY' || this.fsm.getState() === 'DEGRADED')) {
+                    this.fsm.transition('RECOVERING', 'feed-stall-recovery-started');
+                }
+                // FSM: transition out of RECOVERING when stall recovery completes
+                if (stallStateBefore && !stallStateAfter && this.fsm.getState() === 'RECOVERING') {
+                    // Will determine READY vs DEGRADED after health scoring below
+                    // For now go to DEGRADED; health check may promote to READY
+                    this.fsm.transition('DEGRADED', 'feed-stall-recovery-completed');
+                }
             }
 
             // ─────────────────────────────────────────────────────────────────
@@ -482,6 +529,7 @@ export class TradingRuntime {
             // Execution Gate — block strategies if data truth quorum fails
             // ─────────────────────────────────────────────────────────────────
             const gateResult = evaluateExecutionGate({
+                runtimeState: this.fsm.getState(),
                 health: marketDataHealth,
                 isConnected: this.xrpl.isConnected(),
                 isReconnecting: this.xrpl.isReconnecting(),
@@ -492,6 +540,27 @@ export class TradingRuntime {
                 lastLedgerCloseMs: this.lastLedgerCloseMs,
             }, this.gateConfig);
             this.lastExecutionGateResult = gateResult;
+
+            // ─────────────────────────────────────────────────────────────────
+            // Runtime FSM — health-based state transitions
+            // ─────────────────────────────────────────────────────────────────
+            const currentFsmState = this.fsm.getState();
+            if (currentFsmState === 'WARMING_MARKET_CACHE' && !this.firstTickCompleted) {
+                // First tick with data received — transition to operational state
+                this.firstTickCompleted = true;
+                if (marketDataHealth.healthy) {
+                    this.fsm.transition('READY', 'first-tick-healthy');
+                } else {
+                    this.fsm.transition('DEGRADED', 'first-tick-unhealthy');
+                }
+            } else if (currentFsmState === 'READY' && !marketDataHealth.healthy) {
+                // Health dropped below threshold
+                this.fsm.transition('DEGRADED', `health-degraded:${marketDataHealth.score}`);
+            } else if (currentFsmState === 'DEGRADED' && marketDataHealth.healthy &&
+                !(this.feedStallRecovery?.isRecovering())) {
+                // Health recovered and no stall recovery in progress
+                this.fsm.transition('READY', `health-recovered:${marketDataHealth.score}`);
+            }
 
             if (gateResult.verdict === 'BLOCK') {
                 logger.debug({
@@ -715,6 +784,9 @@ export class TradingRuntime {
     }
 
     async kill(): Promise<void> {
+        if (!this.fsm.isHalted()) {
+            this.fsm.forceHalt('kill');
+        }
         if (this.xrpl) {
             await this.xrpl.disconnect().catch((err) => logger.warn({ err }, 'XRPL disconnect failed'));
         }
@@ -796,6 +868,49 @@ export class TradingRuntime {
         return this.feedStallRecovery?.getState() ?? null;
     }
 
+    // ─── Runtime FSM Getters ─────────────────────────────────────────────
+
+    /**
+     * Get the current runtime lifecycle FSM state.
+     */
+    getRuntimeState(): RuntimeState {
+        return this.fsm.getState();
+    }
+
+    /**
+     * Get a full FSM snapshot with transition history.
+     */
+    getRuntimeFSMSnapshot(): RuntimeFSMSnapshot {
+        return this.fsm.getSnapshot();
+    }
+
+    /**
+     * Whether the runtime FSM is in the READY state (execution allowed).
+     */
+    isRuntimeReady(): boolean {
+        return this.fsm.isExecutionAllowed();
+    }
+
+    /**
+     * Get aggregated telemetry snapshot for observability / API exposure.
+     */
+    getRuntimeTelemetry(): RuntimeTelemetry {
+        return buildRuntimeTelemetry({
+            fsmSnapshot: this.fsm.getSnapshot(),
+            pairSwitchState: this.pairSwitchState,
+            isConnected: this.xrpl?.isConnected() ?? false,
+            isReconnecting: this.xrpl?.isReconnecting() ?? false,
+            feedStallState: this.feedStallRecovery?.getState() ?? null,
+            ledgerIndex: this.xrpl?.getLedgerIndex() ?? 0,
+            previousLedgerIndex: this.previousLedgerIndex,
+            lastLedgerCloseMs: this.lastLedgerCloseMs,
+            lastBalanceSnapshotMs: this.lastBalanceSnapshotMs,
+            lastBalanceLedgerIndex: this.lastBalanceLedgerIndex,
+            marketHealth: this.lastMarketDataHealth,
+            executionGate: this.lastExecutionGateResult,
+        });
+    }
+
     /**
      * Graceful shutdown: cancel open offers, stop strategies, disconnect.
      * Called on SIGTERM/SIGINT for clean process exit.
@@ -810,6 +925,11 @@ export class TradingRuntime {
             return;
         }
         this.shutdownInProgress = true;
+
+        // FSM: transition to HALTED (from any operational state)
+        if (!this.fsm.isHalted()) {
+            this.fsm.forceHalt('graceful-shutdown');
+        }
 
         const totalSteps = 7;
         let currentStep = 0;
@@ -1198,6 +1318,7 @@ export class TradingRuntime {
         this.capitalProtection = null;
         this.capitalProtectionConfig = null;
         this.lastGovernanceDecision = null;
+        this.firstTickCompleted = false;
 
         // Reset feed stall recovery and health state
         this.feedStallRecovery?.reset();
@@ -1208,6 +1329,9 @@ export class TradingRuntime {
         this.previousLedgerIndex = 0;
         this.lastBalanceSnapshotMs = 0;
         this.lastBalanceLedgerIndex = 0;
+
+        // Reset FSM to BOOTING for potential restart
+        this.fsm.reset();
     }
 
 }
