@@ -77,7 +77,7 @@ function healthyActions(): PairSwitchActions {
         destroyPairContext: vi.fn(),
         resetMetricsWindows: vi.fn(),
         applyNewPair: vi.fn(),
-        subscribeFeeds: vi.fn(async () => {}),
+        subscribeFeeds: vi.fn(async () => { }),
         refreshOrderBook: vi.fn(async () => true),
         hasTapeEvent: vi.fn(() => true),
         refreshBalances: vi.fn(async () => true),

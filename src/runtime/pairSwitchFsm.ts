@@ -89,18 +89,18 @@ export interface PairSwitchEvent {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const VALID_TRANSITIONS: ReadonlyMap<PairSwitchPhase, ReadonlySet<PairSwitchPhase>> = new Map([
-    ['READY',                      new Set<PairSwitchPhase>(['FREEZE_EXECUTION'])],
-    ['FREEZE_EXECUTION',           new Set<PairSwitchPhase>(['UNSUBSCRIBE_OLD_FEEDS', 'FAILED'])],
-    ['UNSUBSCRIBE_OLD_FEEDS',      new Set<PairSwitchPhase>(['DESTROY_PAIR_CONTEXT', 'FAILED'])],
-    ['DESTROY_PAIR_CONTEXT',       new Set<PairSwitchPhase>(['RESET_PAIR_METRICS_WINDOWS', 'FAILED'])],
+    ['READY', new Set<PairSwitchPhase>(['FREEZE_EXECUTION'])],
+    ['FREEZE_EXECUTION', new Set<PairSwitchPhase>(['UNSUBSCRIBE_OLD_FEEDS', 'FAILED'])],
+    ['UNSUBSCRIBE_OLD_FEEDS', new Set<PairSwitchPhase>(['DESTROY_PAIR_CONTEXT', 'FAILED'])],
+    ['DESTROY_PAIR_CONTEXT', new Set<PairSwitchPhase>(['RESET_PAIR_METRICS_WINDOWS', 'FAILED'])],
     ['RESET_PAIR_METRICS_WINDOWS', new Set<PairSwitchPhase>(['CREATE_NEW_PAIR_CONTEXT', 'FAILED'])],
-    ['CREATE_NEW_PAIR_CONTEXT',    new Set<PairSwitchPhase>(['SUBSCRIBE_NEW_FEEDS', 'FAILED'])],
-    ['SUBSCRIBE_NEW_FEEDS',        new Set<PairSwitchPhase>(['WAIT_FIRST_BOOK', 'FAILED'])],
-    ['WAIT_FIRST_BOOK',            new Set<PairSwitchPhase>(['WAIT_FIRST_TAPE', 'FAILED'])],
-    ['WAIT_FIRST_TAPE',            new Set<PairSwitchPhase>(['REFRESH_BALANCES', 'FAILED'])],
-    ['REFRESH_BALANCES',           new Set<PairSwitchPhase>(['VALIDATE_DATA_TRUTH', 'FAILED'])],
-    ['VALIDATE_DATA_TRUTH',        new Set<PairSwitchPhase>(['READY', 'FAILED'])],
-    ['FAILED',                     new Set<PairSwitchPhase>(['READY'])],
+    ['CREATE_NEW_PAIR_CONTEXT', new Set<PairSwitchPhase>(['SUBSCRIBE_NEW_FEEDS', 'FAILED'])],
+    ['SUBSCRIBE_NEW_FEEDS', new Set<PairSwitchPhase>(['WAIT_FIRST_BOOK', 'FAILED'])],
+    ['WAIT_FIRST_BOOK', new Set<PairSwitchPhase>(['WAIT_FIRST_TAPE', 'FAILED'])],
+    ['WAIT_FIRST_TAPE', new Set<PairSwitchPhase>(['REFRESH_BALANCES', 'FAILED'])],
+    ['REFRESH_BALANCES', new Set<PairSwitchPhase>(['VALIDATE_DATA_TRUTH', 'FAILED'])],
+    ['VALIDATE_DATA_TRUTH', new Set<PairSwitchPhase>(['READY', 'FAILED'])],
+    ['FAILED', new Set<PairSwitchPhase>(['READY'])],
 ]);
 
 // ─────────────────────────────────────────────────────────────────────────────

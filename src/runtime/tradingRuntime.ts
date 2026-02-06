@@ -1474,10 +1474,10 @@ export class TradingRuntime {
             const orchestratorActions: PairSwitchActions = {
                 ...actions,
                 // Sync path already called these — make them no-ops in orchestrator
-                detachOldFeeds: () => {},
-                destroyPairContext: () => {},
-                resetMetricsWindows: () => {},
-                applyNewPair: () => {},
+                detachOldFeeds: () => { },
+                destroyPairContext: () => { },
+                resetMetricsWindows: () => { },
+                applyNewPair: () => { },
             };
 
             this.pairSwitchOrchestrator.executePairSwitch(previousPair, nextPair, orchestratorActions)
