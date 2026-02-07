@@ -40,17 +40,32 @@ function getClientIp(req: NextApiRequest): string | undefined {
 }
 
 /**
- * Check if request appears to be proxied.
+ * Check if request appears to be proxied from a REMOTE source.
  * Proxied requests are rejected in localhost-only mode.
+ *
+ * NOTE: Next.js base-server.js always injects x-forwarded-for from
+ * socket.remoteAddress (even on custom servers bound to 127.0.0.1).
+ * We allow the header if its value is a localhost address — that means
+ * it came from Next.js's own internal pipeline, not a real proxy.
  */
 function isProxiedRequest(req: NextApiRequest): { proxied: boolean; header?: string } {
     const forwardedFor = req.headers['x-forwarded-for'];
     if (forwardedFor) {
-        return { proxied: true, header: 'x-forwarded-for' };
+        // Extract the first IP (client IP in standard proxy chains)
+        const firstIp = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor)
+            ?.split(',')[0]?.trim();
+        // If the forwarded IP is localhost, it's Next.js's own custom-server
+        // pipeline — not a real reverse proxy. Allow it.
+        if (!firstIp || !isLocalhostIp(firstIp)) {
+            return { proxied: true, header: 'x-forwarded-for' };
+        }
     }
     const realIp = req.headers['x-real-ip'];
     if (realIp) {
-        return { proxied: true, header: 'x-real-ip' };
+        const ip = Array.isArray(realIp) ? realIp[0] : realIp;
+        if (!ip || !isLocalhostIp(ip)) {
+            return { proxied: true, header: 'x-real-ip' };
+        }
     }
     return { proxied: false };
 }

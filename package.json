@@ -9,7 +9,7 @@
         "build:backend": "tsc -p tsconfig.json",
         "build:frontend": "next build src/ui",
         "build": "npm run build:backend && npm run build:frontend",
-        "start": "BOT_LOCAL_ONLY=true SINGLE_PROCESS_MODE=true node server.js",
+        "start": "NODE_ENV=production BOT_LOCAL_ONLY=true SINGLE_PROCESS_MODE=true node server.js",
         "dev": "BOT_LOCAL_ONLY=true SINGLE_PROCESS_MODE=true next dev src/ui -H 127.0.0.1",
         "dashboard": "BOT_LOCAL_ONLY=true SINGLE_PROCESS_MODE=true node server.js",
         "lint": "next lint src/ui --no-inline-config",

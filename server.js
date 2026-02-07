@@ -14,6 +14,10 @@ const { parse } = require('url');
 const next = require('next');
 const path = require('path');
 
+// Load .env BEFORE anything else reads process.env
+// This ensures NODE_ENV from .env is available for the `dev` flag below.
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+
 // Security: Only bind to localhost
 const HOSTNAME = '127.0.0.1';
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -84,6 +88,16 @@ async function main() {
 
     const server = createServer(async (req, res) => {
         try {
+            // Strip proxy headers injected by Node.js HTTP internals.
+            // Since this server is bound to 127.0.0.1, every connection
+            // is genuinely local.  The x-forwarded-for / x-real-ip headers
+            // are artifacts of the custom-server pipeline and would cause
+            // withLocalApi to wrongly reject requests as "proxied".
+            delete req.headers['x-forwarded-for'];
+            delete req.headers['x-real-ip'];
+            delete req.headers['x-forwarded-host'];
+            delete req.headers['x-forwarded-proto'];
+
             const parsedUrl = parse(req.url, true);
             await handle(req, res, parsedUrl);
         } catch (err) {
