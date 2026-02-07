@@ -263,7 +263,7 @@ export const SEED_INSTRUMENTS: readonly Instrument[] = Object.freeze([
     {
         key: 'XRP/USDT',
         base: { currency: 'XRP' },
-        quote: { currency: 'USDT', issuer: 'rUSgK22aQnZ42P5Ww96f13S3yR3UgjZ5f4' },
+        quote: { currency: 'USDT', issuer: 'rcvxE9PS9YBwxtGg1qNeewV6ZB3wGubZq' },
         description: 'XRP/USDT',
         liquidity: 'medium' as LiquidityLevel,
         network: 'mainnet' as Network,
@@ -329,8 +329,8 @@ export const SEED_ISSUERS: readonly IssuerRecord[] = Object.freeze([
         updatedAt: '2025-01-01T00:00:00.000Z',
     },
     {
-        address: 'rUSgK22aQnZ42P5Ww96f13S3yR3UgjZ5f4',
-        label: 'USDT Issuer',
+        address: 'rcvxE9PS9YBwxtGg1qNeewV6ZB3wGubZq',
+        label: 'Bitstamp (USDT)',
         currency: 'USDT',
         tier: 'tier2' as IssuerTier,
         network: 'mainnet' as Network,
