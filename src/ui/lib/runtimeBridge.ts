@@ -69,17 +69,40 @@ export async function initRuntimeBridge(): Promise<void> {
     initPromise = (async () => {
         try {
             // Start the runtime
-            const runtime = await ensureRuntimeStarted();
+            await ensureRuntimeStarted();
 
-            // Wire up bot controller hooks so dashboard controls work
+            // Wire up bot controller hooks so dashboard controls work.
+            // These hooks reference the singleton dynamically so they
+            // survive kill/restart cycles.
+            //
+            // NOTE: runtimeHooks.ts also registers hooks.  Whichever
+            // module initializes last wins.  Both are now written to
+            // delegate to the runtimeSingleton, so the effect is the
+            // same regardless of registration order.
             botController.setHooks({
-                start: () => {
-                    // Runtime already started
-                    return Promise.resolve();
+                start: async () => {
+                    // ensureRuntimeStarted creates a fresh runtime if the
+                    // previous one was killed/stopped.
+                    await ensureRuntimeStarted();
                 },
-                pause: () => runtime.pause(),
-                kill: () => runtime.kill(),
-                tick: () => runtime.tick(),
+                pause: async () => {
+                    const rt = getRuntime();
+                    if (rt) await rt.pause();
+                },
+                kill: async () => {
+                    const rt = getRuntime();
+                    if (!rt) return;
+                    await rt.kill();
+                    // Clear singleton so next start creates fresh runtime
+                    globalThis.__xrplTradingBotRuntime = null;
+                    globalThis.__xrplTradingBotStartPromise = null;
+                    globalThis.__xrplTradingBotIsStarting = false;
+                    isInitialized = false;
+                },
+                tick: async () => {
+                    const rt = getRuntime();
+                    if (rt?.isStarted()) await rt.tick();
+                },
             });
 
             isInitialized = true;
