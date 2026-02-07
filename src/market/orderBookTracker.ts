@@ -34,26 +34,28 @@ export class OrderBookTracker extends EventEmitter {
             const bids: NormalizedOffer[] = [];
             const asks: NormalizedOffer[] = [];
 
-            // For bids: someone wants to buy base (TakerGets=base) by paying quote (TakerPays=quote)
-            // Price = quote/base = TakerPays / TakerGets
-            for (const offer of rawBids) {
-                const takerGets = this.toAmount(offer.TakerGets); // base amount
-                const takerPays = this.toAmount(offer.TakerPays); // quote amount
-                if (takerGets <= 0 || takerPays <= 0) continue;
-                const price = takerPays / takerGets; // quote per base
-                const quantity = takerGets;
-                if (!Number.isFinite(price) || price <= 0) continue;
-                bids.push({ price, quantity, quality: Number(offer.quality), isBuy: true, raw: offer });
-            }
-
-            // For asks: someone wants to sell base (TakerPays=base) for quote (TakerGets=quote)
+            // Bids: offers to BUY base — maker sells quote (TakerGets=quote), wants base (TakerPays=base)
             // Price = quote/base = TakerGets / TakerPays
-            for (const offer of rawAsks) {
+            // Quantity = base amount = TakerPays
+            for (const offer of rawBids) {
                 const takerGets = this.toAmount(offer.TakerGets); // quote amount
                 const takerPays = this.toAmount(offer.TakerPays); // base amount
                 if (takerGets <= 0 || takerPays <= 0) continue;
                 const price = takerGets / takerPays; // quote per base
                 const quantity = takerPays;
+                if (!Number.isFinite(price) || price <= 0) continue;
+                bids.push({ price, quantity, quality: Number(offer.quality), isBuy: true, raw: offer });
+            }
+
+            // Asks: offers to SELL base — maker sells base (TakerGets=base), wants quote (TakerPays=quote)
+            // Price = quote/base = TakerPays / TakerGets
+            // Quantity = base amount = TakerGets
+            for (const offer of rawAsks) {
+                const takerGets = this.toAmount(offer.TakerGets); // base amount
+                const takerPays = this.toAmount(offer.TakerPays); // quote amount
+                if (takerGets <= 0 || takerPays <= 0) continue;
+                const price = takerPays / takerGets; // quote per base
+                const quantity = takerGets;
                 if (!Number.isFinite(price) || price <= 0) continue;
                 asks.push({ price, quantity, quality: Number(offer.quality), isBuy: false, raw: offer });
             }

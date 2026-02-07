@@ -158,16 +158,26 @@ export class XRPLWebSocket extends EventEmitter {
         const quoteIssuerRaw = pair.quoteIssuer ?? pair.issuer ?? '';
         const baseIssuer = pair.baseCurrency.toUpperCase() === 'XRP' ? undefined : baseIssuerRaw;
         const quoteIssuer = pair.quoteCurrency.toUpperCase() === 'XRP' ? undefined : quoteIssuerRaw;
+
+        // XRPL book_offers semantics:
+        //   taker_gets = what the taker receives = what the maker is SELLING
+        //   taker_pays = what the taker pays     = what the maker is BUYING
+        //
+        // For pair XRP/RLUSD (base/quote):
+        //   Bids = offers to BUY base (XRP) by SELLING quote (RLUSD)
+        //        → maker sells RLUSD (taker_gets=quote), maker buys XRP (taker_pays=base)
+        //   Asks = offers to SELL base (XRP) by BUYING quote (RLUSD)
+        //        → maker sells XRP (taker_gets=base), maker buys RLUSD (taker_pays=quote)
         const bidsReq = {
             command: 'book_offers',
-            taker_gets: toBookCurrency(pair.baseCurrency, baseIssuer),
-            taker_pays: toBookCurrency(pair.quoteCurrency, quoteIssuer),
+            taker_gets: toBookCurrency(pair.quoteCurrency, quoteIssuer),
+            taker_pays: toBookCurrency(pair.baseCurrency, baseIssuer),
             ...common,
         } as const;
         const asksReq = {
             command: 'book_offers',
-            taker_gets: toBookCurrency(pair.quoteCurrency, quoteIssuer),
-            taker_pays: toBookCurrency(pair.baseCurrency, baseIssuer),
+            taker_gets: toBookCurrency(pair.baseCurrency, baseIssuer),
+            taker_pays: toBookCurrency(pair.quoteCurrency, quoteIssuer),
             ...common,
         } as const;
 
