@@ -161,6 +161,14 @@ export const TRADING_PAIRS: readonly TradingPair[] = Object.freeze([
         liquidity: 'high',
         network: 'mainnet',
     },
+    {
+        key: 'XRP/USDT',
+        base: { currency: 'XRP' },
+        quote: { currency: 'USDT', issuer: 'rUSgK22aQnZ42P5Ww96f13S3yR3UgjZ5f4' },
+        description: 'XRP/USDT',
+        liquidity: 'medium',
+        network: 'mainnet',
+    },
 ] as const);
 
 // =============================================================================

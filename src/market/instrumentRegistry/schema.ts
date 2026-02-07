@@ -260,6 +260,18 @@ export const SEED_INSTRUMENTS: readonly Instrument[] = Object.freeze([
         createdAt: '2025-01-01T00:00:00.000Z',
         updatedAt: '2025-01-01T00:00:00.000Z',
     },
+    {
+        key: 'XRP/USDT',
+        base: { currency: 'XRP' },
+        quote: { currency: 'USDT', issuer: 'rUSgK22aQnZ42P5Ww96f13S3yR3UgjZ5f4' },
+        description: 'XRP/USDT',
+        liquidity: 'medium' as LiquidityLevel,
+        network: 'mainnet' as Network,
+        status: 'active' as RegistryStatus,
+        sortOrder: 6,
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+    },
 ]);
 
 /**
@@ -311,6 +323,16 @@ export const SEED_ISSUERS: readonly IssuerRecord[] = Object.freeze([
         label: 'GateHub (ETH)',
         currency: 'ETH',
         tier: 'tier1' as IssuerTier,
+        network: 'mainnet' as Network,
+        status: 'active' as RegistryStatus,
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+    },
+    {
+        address: 'rUSgK22aQnZ42P5Ww96f13S3yR3UgjZ5f4',
+        label: 'USDT Issuer',
+        currency: 'USDT',
+        tier: 'tier2' as IssuerTier,
         network: 'mainnet' as Network,
         status: 'active' as RegistryStatus,
         createdAt: '2025-01-01T00:00:00.000Z',
