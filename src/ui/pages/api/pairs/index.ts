@@ -6,7 +6,7 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { TRADING_PAIRS, listPairs, Network } from '../../../lib/tradingPairs';
+import { listPairs, Network } from '../../../lib/tradingPairs';
 import { loadConfig } from '../../../../config';
 
 export const config = {

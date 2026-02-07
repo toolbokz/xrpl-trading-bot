@@ -2,6 +2,7 @@ import { OfferCreate, xrpToDrops } from 'xrpl';
 import { TradingPair } from '../config';
 import { toXrplCurrency, XrplCurrency } from '../xrpl/currency';
 import { shouldCrossSpread } from './qualityGate';
+import { resolveToNormalizedPair } from '../market/executionPairResolver';
 
 export type TradeSide = 'BUY' | 'SELL';
 
@@ -45,7 +46,6 @@ export interface MakerDecisionInput {
     slippageBudgetBps: number;
 }
 
-const isXRP = (code: string): boolean => code.toUpperCase() === 'XRP';
 
 const toPrecisionString = (value: number): string => {
     if (!Number.isFinite(value) || value <= 0) {
@@ -65,24 +65,9 @@ const roundToTick = (price: number, tick: number, side: 'buy' | 'sell'): number 
 };
 
 export const normalizePair = (pair: TradingPair, opts?: { invert?: boolean }): NormalizedPair => {
-    const inverted = !!opts?.invert;
-    const baseCurrency = inverted ? pair.quoteCurrency : pair.baseCurrency;
-    const quoteCurrency = inverted ? pair.baseCurrency : pair.quoteCurrency;
-
-    if (baseCurrency.toUpperCase() === quoteCurrency.toUpperCase()) {
-        throw new Error('Base and quote currency must differ');
-    }
-
-    const baseIssuer = isXRP(baseCurrency) ? undefined : (inverted ? pair.quoteIssuer ?? pair.issuer : pair.baseIssuer ?? pair.issuer);
-    const quoteIssuer = isXRP(quoteCurrency) ? undefined : (inverted ? pair.baseIssuer ?? pair.issuer : pair.quoteIssuer ?? pair.issuer);
-    const normBase = toXrplCurrency({ currency: baseCurrency, issuer: baseIssuer as any });
-    const normQuote = toXrplCurrency({ currency: quoteCurrency, issuer: quoteIssuer as any });
-
-    return {
-        base: normBase,
-        quote: normQuote,
-        symbol: `${normBase.currency}/${normQuote.currency}`,
-    };
+    // Delegate to ExecutionPairResolver for deterministic, auditable resolution.
+    // This replaces the legacy cascade: pair.quoteIssuer ?? pair.issuer
+    return resolveToNormalizedPair(pair, { invert: !!opts?.invert });
 };
 
 export const normalizeIntent = (intent: TradeIntent): NormalizedTradeIntent => {

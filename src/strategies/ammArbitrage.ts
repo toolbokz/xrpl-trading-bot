@@ -5,6 +5,7 @@ import { OfferExecutor } from '../execution/offerExecutor';
 import { RiskEngine } from '../risk/riskEngine';
 import { logger } from '../analytics/logger';
 import { isRegimeSafeForArb, getRegimeDescription, getRegimeSizeMultiplier } from '../market/flowMetrics';
+import { resolveIssuerForRisk, resolveLegsForApi } from '../market/executionPairResolver';
 
 /**
  * Default flow config when not provided (should be passed from TradingRuntime)
@@ -69,16 +70,12 @@ export class AMMArbitrageStrategy implements Strategy {
         const bestBid = firstBid.price;
         const bestAsk = firstAsk.price;
 
-        const baseIssuer = this.pair.baseCurrency.toUpperCase() === 'XRP'
-            ? undefined
-            : (this.pair.baseIssuer ?? this.pair.issuer);
-        const quoteIssuer = this.pair.quoteCurrency.toUpperCase() === 'XRP'
-            ? undefined
-            : (this.pair.quoteIssuer ?? this.pair.issuer);
+        // Resolve legs via ExecutionPairResolver (replaces legacy issuer cascade)
+        const resolvedLegs = resolveLegsForApi(this.pair);
 
         const ammInfo = await this.amm.fetchAMMInfo(
-            baseIssuer ? { currency: this.pair.baseCurrency, issuer: baseIssuer } : { currency: 'XRP' },
-            quoteIssuer ? { currency: this.pair.quoteCurrency, issuer: quoteIssuer } : { currency: 'XRP' }
+            resolvedLegs.base,
+            resolvedLegs.quote,
         );
         if (!ammInfo || !ammInfo.tradingFee || !Number.isFinite(ammInfo.tradingFee)) return;
         if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk) || bestBid <= 0 || bestAsk <= 0) return;
@@ -103,7 +100,7 @@ export class AMMArbitrageStrategy implements Strategy {
         // ─────────────────────────────────────────────────────────────────────
         // Risk Engine Approval
         // ─────────────────────────────────────────────────────────────────────
-        const issuer = quoteIssuer ?? baseIssuer;
+        const issuer = resolveIssuerForRisk(this.pair);
         if (issuer) {
             const riskIntent = {
                 issuer,

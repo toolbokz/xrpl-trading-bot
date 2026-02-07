@@ -11,6 +11,7 @@ import {
     hasAdverseSelectionRisk,
     getRegimeDescription,
 } from '../market/flowMetrics';
+import { resolveIssuerForRisk } from '../market/executionPairResolver';
 
 interface PositionState {
     side: 'flat' | 'long' | 'short';
@@ -123,9 +124,9 @@ export class ScalperStrategy implements Strategy {
             }
         }
 
-        const issuer = this.pair.quoteIssuer || this.pair.baseIssuer || this.pair.issuer;
+        const issuer = resolveIssuerForRisk(this.pair);
         if (!issuer) {
-            logger.info({ pair: this.pair }, 'Scalper: ❌ No issuer configured for trading pair');
+            logger.info({ pair: this.pair }, 'Scalper: ❌ No issuer resolved for trading pair');
             return;
         }
 

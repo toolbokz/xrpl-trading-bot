@@ -4,8 +4,8 @@ import { StrategyConfig, TradingPair, FlowConfig } from '../config';
 import { OfferExecutor } from '../execution/offerExecutor';
 import { RiskEngine } from '../risk/riskEngine';
 import { logger } from '../analytics/logger';
-import { toXrplCurrency } from '../xrpl/currency';
 import { getBreakerStore, BreakerState, BreakerStore } from '../persistence/breakerStore';
+import { extractPrimaryIssuer, resolvePair } from '../market/executionPairResolver';
 import { isRegimeSafeForArb, getRegimeDescription, getRegimeSizeMultiplier } from '../market/flowMetrics';
 
 /**
@@ -252,17 +252,19 @@ export class PathArbitrageStrategy implements Strategy {
             return;
         }
 
-        const baseIssuer = this.pair.baseCurrency.toUpperCase() === 'XRP'
-            ? undefined
-            : (this.pair.baseIssuer ?? this.pair.issuer);
-        const quoteIssuer = this.pair.quoteCurrency.toUpperCase() === 'XRP'
-            ? undefined
-            : (this.pair.quoteIssuer ?? this.pair.issuer);
+        // ─────────────────────────────────────────────────────────────────────
+        // Resolve pair via ExecutionPairResolver (replaces legacy issuer cascade)
+        // ─────────────────────────────────────────────────────────────────────
+        const resolved = resolvePair(this.pair, { failOnUnresolvable: false });
+        if (!resolved.executable) {
+            logger.debug({ blockReason: resolved.blockReason }, 'Path Arb: pair not executable');
+            return;
+        }
 
         // ─────────────────────────────────────────────────────────────────────
         // Risk Engine Approval
         // ─────────────────────────────────────────────────────────────────────
-        const riskIssuer = quoteIssuer ?? baseIssuer;
+        const riskIssuer = extractPrimaryIssuer(resolved);
         if (riskIssuer) {
             const riskIntent = {
                 issuer: riskIssuer,
@@ -278,15 +280,11 @@ export class PathArbitrageStrategy implements Strategy {
             }
         }
 
-        const base = baseIssuer
-            ? toXrplCurrency({ currency: this.pair.baseCurrency, issuer: baseIssuer })
-            : toXrplCurrency({ currency: 'XRP' });
-        const quote = quoteIssuer
-            ? toXrplCurrency({ currency: this.pair.quoteCurrency, issuer: quoteIssuer })
-            : toXrplCurrency({ currency: 'XRP' });
+        const base = resolved.base.xrplCurrencyObj;
+        const quote = resolved.quote.xrplCurrencyObj;
         const baseIssued = base.currency === 'XRP' ? null : (base as Extract<typeof base, { issuer: string }>);
         const quoteIssued = quote.currency === 'XRP' ? null : (quote as Extract<typeof quote, { issuer: string }>);
-        const issuer = quoteIssued ? quoteIssued.issuer : baseIssued ? baseIssued.issuer : null;
+        const issuer = extractPrimaryIssuer(resolved);
         if (!issuer) return;
 
         const destAmount = quoteIssued

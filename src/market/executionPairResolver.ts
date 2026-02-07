@@ -462,9 +462,19 @@ interface CacheEntry {
 export class ExecutionPairResolver {
     private readonly config: ExecutionPairResolverConfig;
     private readonly cache = new Map<string, CacheEntry>();
+    /** Optional callback invoked on every cache miss (for observability). */
+    private onCacheMiss: ((pairKey: string, reason: string) => void) | null = null;
 
     constructor(config?: Partial<ExecutionPairResolverConfig>) {
         this.config = { ...DEFAULT_CONFIG, ...config };
+    }
+
+    /**
+     * Set a callback invoked on every cache miss.
+     * Used by TradingRuntime to emit RESOLVER_CACHE_MISS observability events.
+     */
+    setOnCacheMiss(cb: (pairKey: string, reason: string) => void): void {
+        this.onCacheMiss = cb;
     }
 
     /**
@@ -485,6 +495,10 @@ export class ExecutionPairResolver {
                 return cached.resolved;
             }
         }
+
+        // Cache miss — resolve fresh
+        const missReason = this.cache.has(key) ? 'expired' : 'cold';
+        this.onCacheMiss?.(key, missReason);
 
         // Resolve
         const resolved = resolvePair(input, this.config);

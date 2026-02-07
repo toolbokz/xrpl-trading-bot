@@ -1,7 +1,6 @@
 import { Wallet, isValidClassicAddress, Client, TransactionStream } from 'xrpl';
 import crypto from 'crypto';
 import { AppConfig, TradingPair, FlowConfig, loadConfig } from '../config';
-import { TRADING_PAIRS, isValidPairKey } from '../config/tradingPairs';
 import { runtimeLog as logger } from '../analytics/logger';
 import { sleep } from '../utils/sleep';
 import { XRPLWebSocket } from '../xrpl/client';
@@ -107,6 +106,9 @@ import { ObservabilityBus } from '../observability/eventBus';
 import { EventLoopLagTracker, loadEventLoopLagConfig, type EventLoopLagState } from '../monitoring/eventLoopLag';
 import { enforceSafetyPolicy } from '../security/safetyPolicy';
 import { LiquidityIntelligence, LiquiditySnapshot, loadLiquidityConfig } from '../market/liquidityIntelligence';
+import { ExecutionPairResolver, loadExecutionPairResolverConfig } from '../market/executionPairResolver';
+import { AvailabilityScanner, loadAvailabilityScannerConfig, type AvailabilityScannerSnapshot, type PairAvailability } from '../market/availabilityScanner';
+import { getInstruments, findInstrument, isValidPairKey } from '../market/instrumentRegistry';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -148,7 +150,7 @@ export const validateTradingPair = (pair: TradingPair): void => {
 export const assertAllowedPair = (pair: TradingPair): void => {
     const pairKey = `${pair.baseCurrency}/${pair.quoteCurrency}`;
     if (!isValidPairKey(pairKey)) {
-        const allowedKeys = TRADING_PAIRS.map((p) => p.key).join(', ');
+        const allowedKeys = getInstruments().map((p) => p.key).join(', ');
         throw new Error(
             `Trading pair "${pairKey}" is not allowed. Only these pairs are supported: ${allowedKeys}`
         );
@@ -214,6 +216,10 @@ export class TradingRuntime {
     private readonly observabilityBus = new ObservabilityBus();
     /** Liquidity intelligence engine — dynamic liquidity scoring per tick. */
     private liquidityIntelligence: LiquidityIntelligence | null = null;
+    /** Execution pair resolver — centralized issuer resolution with caching. */
+    private readonly pairResolver: ExecutionPairResolver;
+    /** Availability scanner — periodic issuer/trustline/orderbook probes. */
+    private availabilityScanner: AvailabilityScanner | null = null;
     /** Per-tick performance tracer — lightweight phase timing + event-loop lag. */
     private perfTracer: PerfTracer | null = null;
     /** Event loop lag tracker — infra safety auto-pause. */
@@ -257,6 +263,16 @@ export class TradingRuntime {
 
         this.baseConfig = config ?? loadConfig();
         this.fsm = new RuntimeFSM();
+        this.pairResolver = new ExecutionPairResolver(loadExecutionPairResolverConfig());
+
+        // Wire resolver cache miss → observability bus
+        this.pairResolver.setOnCacheMiss((pairKey, reason) => {
+            this.observabilityBus.emitResolverCacheMiss({
+                pairKey,
+                runtimeState: this.fsm.getState(),
+                reason,
+            });
+        });
     }
 
     /**
@@ -348,6 +364,8 @@ export class TradingRuntime {
         this.exposureTracker.reset();
         // Reset liquidity intelligence for new pair
         this.liquidityIntelligence?.reset();
+        // Invalidate pair resolver cache to force re-resolution for new pair
+        this.pairResolver.invalidate();
     }
 
     async start(): Promise<void> {
@@ -552,6 +570,20 @@ export class TradingRuntime {
             const liqConfig = loadLiquidityConfig();
             this.liquidityIntelligence = new LiquidityIntelligence(liqConfig);
             logger.info('Liquidity intelligence engine initialized');
+
+            // Initialize availability scanner with all registered instruments
+            const scannerConfig = loadAvailabilityScannerConfig();
+            this.availabilityScanner = new AvailabilityScanner(scannerConfig);
+            this.availabilityScanner.setWalletAddress(this.walletAddress);
+            const instruments = getInstruments();
+            for (const inst of instruments) {
+                this.availabilityScanner.addPair(
+                    inst.key,
+                    { currency: inst.base.currency, issuer: inst.base.issuer },
+                    { currency: inst.quote.currency, issuer: inst.quote.issuer },
+                );
+            }
+            logger.info({ pairCount: instruments.length }, 'Availability scanner initialized');
 
             // Start adaptive learning scheduler
             const pairKey = `${config.tradingPair.baseCurrency}/${config.tradingPair.quoteCurrency}`;
@@ -911,6 +943,28 @@ export class TradingRuntime {
             const allTrades = this.tradeTape?.getAll() ?? [];
             this.liquidityIntelligence?.ingestTick(orderBookState, allTrades, nowMs);
 
+            // Run availability scanner if interval has elapsed (non-blocking, best-effort)
+            if (this.availabilityScanner?.needsScan() && this.xrpl?.isConnected()) {
+                const scanClient = this.xrpl.getClient();
+                const scanStartMs = Date.now();
+                this.availabilityScanner.scanAll(scanClient)
+                    .then(() => {
+                        const snapshot = this.availabilityScanner?.getSnapshot();
+                        if (snapshot) {
+                            this.observabilityBus.emitAvailabilityScanComplete({
+                                pairKey,
+                                runtimeState: this.fsm.getState(),
+                                pairsScanned: snapshot.pairs.length,
+                                pairsAvailable: snapshot.pairs.filter(p => p.verdict === 'AVAILABLE').length,
+                                durationMs: Date.now() - scanStartMs,
+                            });
+                        }
+                    })
+                    .catch((err) => {
+                        logger.warn({ err }, 'Availability scanner background scan failed');
+                    });
+            }
+
             // Update cache registry with full tick data
             this.updateCacheSnapshot(pairKey, gateResult, flowMetrics);
 
@@ -1234,6 +1288,27 @@ export class TradingRuntime {
      */
     getLiquiditySnapshot(): LiquiditySnapshot | null {
         return this.liquidityIntelligence?.getSnapshot() ?? null;
+    }
+
+    /**
+     * Get the execution pair resolver (for API routes / diagnostics).
+     */
+    getPairResolver(): ExecutionPairResolver {
+        return this.pairResolver;
+    }
+
+    /**
+     * Get the availability scanner snapshot (for API routes).
+     */
+    getAvailabilityScannerSnapshot(): AvailabilityScannerSnapshot | null {
+        return this.availabilityScanner?.getSnapshot() ?? null;
+    }
+
+    /**
+     * Get availability for a specific pair (for API routes).
+     */
+    getPairAvailability(pairKey: string): PairAvailability | null {
+        return this.availabilityScanner?.getPairAvailability(pairKey) ?? null;
     }
 
     /**
@@ -1614,7 +1689,7 @@ export class TradingRuntime {
             return { success: false, activePair: currentPairKey, pending: false, error: `Invalid pair key: ${pairKey}` };
         }
 
-        const target = TRADING_PAIRS.find((p) => p.key === pairKey);
+        const target = findInstrument(pairKey);
         if (!target) {
             return { success: false, activePair: currentPairKey, pending: false, error: `Pair not found: ${pairKey}` };
         }

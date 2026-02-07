@@ -46,6 +46,9 @@ export const OBSERVABILITY_EVENT_TYPES = [
     'DATA_INVALIDATED',
     'BALANCE_STALE',
     'BALANCE_REFRESHED',
+    'RESOLVER_CACHE_MISS',
+    'AVAILABILITY_SCAN_COMPLETE',
+    'TRUSTLINE_GOVERNANCE',
 ] as const;
 
 export type ObservabilityEventType = typeof OBSERVABILITY_EVENT_TYPES[number];
@@ -419,6 +422,75 @@ export class ObservabilityBus {
             pairKey: params.pairKey,
             runtimeState: params.runtimeState,
             detail: { reasons: params.reasons, sequence: params.sequence },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit RESOLVER_CACHE_MISS when the execution pair resolver
+     * cannot find a cached resolution and must re-resolve.
+     */
+    emitResolverCacheMiss(params: {
+        pairKey: string;
+        runtimeState: string;
+        reason: string;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'RESOLVER_CACHE_MISS',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: { reason: params.reason },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit AVAILABILITY_SCAN_COMPLETE when the availability scanner
+     * finishes a probe cycle.
+     */
+    emitAvailabilityScanComplete(params: {
+        pairKey: string;
+        runtimeState: string;
+        pairsScanned: number;
+        pairsAvailable: number;
+        durationMs: number;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'AVAILABILITY_SCAN_COMPLETE',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: {
+                pairsScanned: params.pairsScanned,
+                pairsAvailable: params.pairsAvailable,
+                durationMs: params.durationMs,
+            },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit TRUSTLINE_GOVERNANCE when a trustline governance decision
+     * is made (ALLOW, CREATE, BLOCK, SKIP).
+     */
+    emitTrustlineGovernance(params: {
+        pairKey: string;
+        runtimeState: string;
+        decision: string;
+        blockReasons: string[];
+        created: string[];
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'TRUSTLINE_GOVERNANCE',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: {
+                decision: params.decision,
+                blockReasons: params.blockReasons,
+                created: params.created,
+            },
             nowMs: params.nowMs,
         });
     }
