@@ -1,17 +1,34 @@
 /**
- * Trading Pairs - Single Source of Truth
- * 
- * This module defines ALL valid trading pairs for both backend and frontend.
- * Any changes to trading pairs should be made HERE ONLY.
- * 
+ * Trading Pairs — Backward-Compatible Delegation Layer
+ *
+ * This module now delegates to the Instrument Registry
+ * (src/market/instrumentRegistry/) for all pair data.
+ *
+ * All existing exports are preserved for backward compatibility.
+ * New code should import directly from the registry.
+ *
  * @module config/tradingPairs
+ * @see market/instrumentRegistry
  */
 
 import { z } from 'zod';
 import { isValidClassicAddress } from 'xrpl';
 
+// Import registry functions (used for delegation)
+import {
+    getInstruments,
+    findInstrument,
+    getInstrument,
+    isValidPairKey as registryIsValidPairKey,
+    listInstruments as registryListInstruments,
+    validateAllPairs as registryValidateAllPairs,
+    toLegacyPair as registryToLegacyPair,
+    fromLegacyPair as registryFromLegacyPair,
+    type Instrument,
+} from '../market/instrumentRegistry';
+
 // =============================================================================
-// Types
+// Types (kept for backward compatibility — same shapes as before)
 // =============================================================================
 
 export type Network = 'mainnet' | 'testnet';
@@ -40,11 +57,11 @@ export interface TradingPair {
 /** Legacy format for backward compatibility with existing bot code */
 export interface LegacyTradingPair {
     baseCurrency: string;
-    baseIssuer?: string;
+    baseIssuer?: string | undefined;
     quoteCurrency: string;
-    quoteIssuer?: string;
-    issuer?: string; // Legacy fallback
-    description?: string;
+    quoteIssuer?: string | undefined;
+    issuer?: string | undefined; // Legacy fallback
+    description?: string | undefined;
 }
 
 // =============================================================================
@@ -147,7 +164,7 @@ export const TRADING_PAIRS: readonly TradingPair[] = Object.freeze([
 ] as const);
 
 // =============================================================================
-// Helper Functions
+// Helper Functions — Delegate to Instrument Registry
 // =============================================================================
 
 /**
@@ -155,18 +172,17 @@ export const TRADING_PAIRS: readonly TradingPair[] = Object.freeze([
  * @throws Error if pair not found
  */
 export function getPair(key: string): TradingPair {
-    const pair = TRADING_PAIRS.find((p) => p.key === key);
-    if (!pair) {
-        throw new Error(`Unknown trading pair: ${key}`);
-    }
-    return pair;
+    const inst = getInstrument(key);
+    // Cast Instrument → TradingPair (they are structurally compatible)
+    return inst as unknown as TradingPair;
 }
 
 /**
  * Find a trading pair by key (returns undefined if not found).
  */
 export function findPair(key: string): TradingPair | undefined {
-    return TRADING_PAIRS.find((p) => p.key === key);
+    const inst = findInstrument(key);
+    return inst as unknown as TradingPair | undefined;
 }
 
 /**
@@ -174,21 +190,21 @@ export function findPair(key: string): TradingPair | undefined {
  */
 export function listPairs(options?: { network?: Network }): readonly TradingPair[] {
     if (!options?.network) {
-        return TRADING_PAIRS;
+        return getInstruments() as unknown as readonly TradingPair[];
     }
     // On mainnet, return only mainnet pairs
     // On testnet, return all pairs (they can be used but may have no liquidity)
     if (options.network === 'mainnet') {
-        return TRADING_PAIRS.filter((p) => p.network === 'mainnet');
+        return registryListInstruments({ network: 'mainnet', activeOnly: true }) as unknown as readonly TradingPair[];
     }
-    return TRADING_PAIRS; // All pairs available on testnet (for dev/testing)
+    return getInstruments() as unknown as readonly TradingPair[]; // All pairs available on testnet (for dev/testing)
 }
 
 /**
  * Check if a pair key is valid.
  */
 export function isValidPairKey(key: string): boolean {
-    return TRADING_PAIRS.some((p) => p.key === key);
+    return registryIsValidPairKey(key);
 }
 
 /**
@@ -208,36 +224,21 @@ export function assertValidPair(pair: unknown): asserts pair is TradingPair {
  * Call this once during application initialization.
  */
 export function validateAllPairs(): void {
+    // Validate the static TRADING_PAIRS array via Zod
     const result = tradingPairsArraySchema.safeParse(TRADING_PAIRS);
     if (!result.success) {
         const messages = result.error.errors.map((e) => `[${e.path.join('.')}] ${e.message}`).join('\n');
         throw new Error(`Trading pairs configuration invalid:\n${messages}`);
     }
+    // Also validate registry instruments structurally
+    registryValidateAllPairs();
 }
 
 /**
  * Convert a TradingPair to the legacy format used by the bot runtime.
  */
 export function toLegacyPair(pair: TradingPair): LegacyTradingPair {
-    const result: LegacyTradingPair = {
-        baseCurrency: pair.base.currency,
-        quoteCurrency: pair.quote.currency,
-        description: pair.description,
-    };
-
-    if (pair.base.issuer) {
-        result.baseIssuer = pair.base.issuer;
-    }
-    if (pair.quote.issuer) {
-        result.quoteIssuer = pair.quote.issuer;
-    }
-    // Legacy fallback: use quote issuer or base issuer
-    const legacyIssuer = pair.quote.issuer || pair.base.issuer;
-    if (legacyIssuer) {
-        result.issuer = legacyIssuer;
-    }
-
-    return result;
+    return registryToLegacyPair(pair as unknown as Instrument);
 }
 
 /**
@@ -245,28 +246,8 @@ export function toLegacyPair(pair: TradingPair): LegacyTradingPair {
  * Useful for deserializing stored pair configs.
  */
 export function fromLegacyPair(legacy: LegacyTradingPair): TradingPair {
-    const base: CurrencySide = { currency: legacy.baseCurrency };
-    if (legacy.baseIssuer) {
-        base.issuer = legacy.baseIssuer;
-    } else if (legacy.baseCurrency.toUpperCase() !== 'XRP' && legacy.issuer) {
-        base.issuer = legacy.issuer;
-    }
-
-    const quote: CurrencySide = { currency: legacy.quoteCurrency };
-    if (legacy.quoteIssuer) {
-        quote.issuer = legacy.quoteIssuer;
-    } else if (legacy.quoteCurrency.toUpperCase() !== 'XRP' && legacy.issuer) {
-        quote.issuer = legacy.issuer;
-    }
-
-    return {
-        key: `${legacy.baseCurrency}/${legacy.quoteCurrency}`,
-        base,
-        quote,
-        description: legacy.description || `${legacy.baseCurrency}/${legacy.quoteCurrency}`,
-        liquidity: 'medium', // Default for reconstructed pairs
-        network: 'mainnet',
-    };
+    const inst = registryFromLegacyPair(legacy);
+    return inst as unknown as TradingPair;
 }
 
 // =============================================================================
