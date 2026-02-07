@@ -34,6 +34,7 @@
 
 import type { Client } from 'xrpl';
 import { logger } from '../analytics/logger';
+import { toXrplCurrency } from '../xrpl/currency';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -431,28 +432,35 @@ export async function probeOrderBook(
             };
         }
 
+        // Use toXrplCurrency() to properly hex-encode non-standard codes (e.g., RLUSD → 40-char hex)
         const baseCurr = baseCurrency.toUpperCase() === 'XRP'
             ? { currency: 'XRP' }
-            : { currency: baseCurrency, issuer: baseIssuer };
+            : toXrplCurrency({ currency: baseCurrency, issuer: baseIssuer! });
         const quoteCurr = quoteCurrency.toUpperCase() === 'XRP'
             ? { currency: 'XRP' }
-            : { currency: quoteCurrency, issuer: quoteIssuer };
+            : toXrplCurrency({ currency: quoteCurrency, issuer: quoteIssuer! });
 
         const common = { ledger_index: 'validated' as const, limit: 20 };
 
-        // Bids: someone wants to buy base (TakerGets=base) by paying quote (TakerPays=quote)
+        // XRPL book_offers semantics:
+        //   taker_gets = what the taker receives = what the maker SELLS
+        //   taker_pays = what the taker pays     = what the maker BUYS
+        //
+        // Bids (buy base): makers sell quote, buy base
+        //   → taker_gets = quote, taker_pays = base
         const bidsRes = await client.request({
-            command: 'book_offers',
-            taker_gets: baseCurr as any,
-            taker_pays: quoteCurr as any,
-            ...common,
-        });
-
-        // Asks: someone wants to sell base (TakerPays=base) for quote (TakerGets=quote)
-        const asksRes = await client.request({
             command: 'book_offers',
             taker_gets: quoteCurr as any,
             taker_pays: baseCurr as any,
+            ...common,
+        });
+
+        // Asks (sell base): makers sell base, buy quote
+        //   → taker_gets = base, taker_pays = quote
+        const asksRes = await client.request({
+            command: 'book_offers',
+            taker_gets: baseCurr as any,
+            taker_pays: quoteCurr as any,
             ...common,
         });
 
@@ -466,27 +474,29 @@ export async function probeOrderBook(
             return 0;
         };
 
+        // Bids: TakerGets=quote, TakerPays=base → price = quote/base = TakerGets/TakerPays
         let bidDepthNotional = 0;
         let bestBidPrice = 0;
         for (const offer of bids) {
-            const gets = toAmount(offer.TakerGets); // base
-            const pays = toAmount(offer.TakerPays); // quote
+            const gets = toAmount(offer.TakerGets); // quote amount
+            const pays = toAmount(offer.TakerPays); // base amount
             if (gets > 0 && pays > 0) {
-                const price = pays / gets;
+                const price = gets / pays; // quote per base
                 if (bestBidPrice === 0) bestBidPrice = price;
-                bidDepthNotional += gets * price;
+                bidDepthNotional += pays * price; // base qty × price = notional
             }
         }
 
+        // Asks: TakerGets=base, TakerPays=quote → price = quote/base = TakerPays/TakerGets
         let askDepthNotional = 0;
         let bestAskPrice = 0;
         for (const offer of asks) {
-            const gets = toAmount(offer.TakerGets); // quote
-            const pays = toAmount(offer.TakerPays); // base
+            const gets = toAmount(offer.TakerGets); // base amount
+            const pays = toAmount(offer.TakerPays); // quote amount
             if (gets > 0 && pays > 0) {
-                const price = gets / pays;
+                const price = pays / gets; // quote per base
                 if (bestAskPrice === 0) bestAskPrice = price;
-                askDepthNotional += pays * price;
+                askDepthNotional += gets * price; // base qty × price = notional
             }
         }
 
@@ -612,8 +622,12 @@ export function computeAvailabilityVerdict(
     // ── Determine verdict ────────────────────────────────────────────────
 
     const hasBlocker = reasons.some(r => r === 'issuer-frozen');
+    // Note: issuer-blackholed is NOT critical on its own. Stablecoin issuers (RLUSD, USDC)
+    // intentionally blackhole their accounts as a security measure. A blackholed issuer
+    // that is funded with DefaultRipple enabled is perfectly healthy for trading.
+    // Only unfunded or empty-orderbook conditions are truly critical.
     const hasCritical = reasons.some(r =>
-        r === 'issuer-unfunded' || r === 'orderbook-empty' || r === 'issuer-blackholed',
+        r === 'issuer-unfunded' || r === 'orderbook-empty',
     );
     const hasDegraded = reasons.some(r =>
         r === 'trustline-missing' ||
