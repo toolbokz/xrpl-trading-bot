@@ -17,6 +17,7 @@ import { ExecutionGateResult } from '../execution/executionGate';
 import { OrderBookSnapshot, NormalizedTrade } from '../market/models';
 import { Trade } from '../market/tradeTape';
 import { RuntimeState } from './runtimeFsm';
+import type { LiquiditySnapshot as LiquidityIntelligenceSnapshot } from '../market/liquidityIntelligence';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Feed types (used as cache partition keys)
@@ -29,7 +30,8 @@ export type FeedType =
     | 'orderbook'
     | 'balance'
     | 'execution-quality'
-    | 'spread-regime';
+    | 'spread-regime'
+    | 'liquidity';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-feed snapshot types
@@ -87,6 +89,10 @@ export interface SpreadRegimeSnapshot {
     bestAsk: number;
 }
 
+export interface LiquidityCacheSnapshot {
+    snapshot: LiquidityIntelligenceSnapshot;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified cache entry
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,6 +122,7 @@ export interface RuntimeCacheSnapshot {
     balance: CacheEntry<BalanceSnapshot> | null;
     executionQuality: CacheEntry<ExecutionQualitySnapshot> | null;
     spreadRegime: CacheEntry<SpreadRegimeSnapshot> | null;
+    liquidity: CacheEntry<LiquidityCacheSnapshot> | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,6 +139,7 @@ export interface CacheUpdateInput {
     tape: { trades: Trade[]; tradeCount: number; lastTradeAtMs: number | null } | null;
     orderbook: OrderBookSnapshot | null;
     lastTrade: NormalizedTrade | null;
+    liquidity: LiquidityIntelligenceSnapshot | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,6 +160,7 @@ export class RuntimeCacheRegistry {
     private balance: CacheEntry<BalanceSnapshot> | null = null;
     private executionQuality: CacheEntry<ExecutionQualitySnapshot> | null = null;
     private spreadRegime: CacheEntry<SpreadRegimeSnapshot> | null = null;
+    private liquidity: CacheEntry<LiquidityCacheSnapshot> | null = null;
 
     // Execution quality counters (accumulated across ticks, reset on pair switch)
     private allowedTicks = 0;
@@ -229,6 +238,13 @@ export class RuntimeCacheRegistry {
                 bestAsk: input.flow.bestAsk,
             });
         }
+
+        // Liquidity intelligence
+        if (input.liquidity) {
+            this.liquidity = this.entry('liquidity', {
+                snapshot: input.liquidity,
+            });
+        }
     }
 
     /**
@@ -257,6 +273,7 @@ export class RuntimeCacheRegistry {
         this.balance = null;
         this.executionQuality = null;
         this.spreadRegime = null;
+        this.liquidity = null;
         this.allowedTicks = 0;
         this.blockedTicks = 0;
     }
@@ -279,6 +296,7 @@ export class RuntimeCacheRegistry {
             balance: this.balance,
             executionQuality: this.executionQuality,
             spreadRegime: this.spreadRegime,
+            liquidity: this.liquidity,
         };
     }
 
@@ -295,6 +313,7 @@ export class RuntimeCacheRegistry {
         K extends 'balance' ? BalanceSnapshot :
         K extends 'execution-quality' ? ExecutionQualitySnapshot :
         K extends 'spread-regime' ? SpreadRegimeSnapshot :
+        K extends 'liquidity' ? LiquidityCacheSnapshot :
         never
     > | null {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -306,6 +325,7 @@ export class RuntimeCacheRegistry {
             balance: this.balance,
             'execution-quality': this.executionQuality,
             'spread-regime': this.spreadRegime,
+            liquidity: this.liquidity,
         };
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return map[feedType] as any;

@@ -106,6 +106,7 @@ import { ExposureTracker, ExposureSnapshot } from '../risk/exposureTracker';
 import { ObservabilityBus } from '../observability/eventBus';
 import { EventLoopLagTracker, loadEventLoopLagConfig, type EventLoopLagState } from '../monitoring/eventLoopLag';
 import { enforceSafetyPolicy } from '../security/safetyPolicy';
+import { LiquidityIntelligence, LiquiditySnapshot, loadLiquidityConfig } from '../market/liquidityIntelligence';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -211,6 +212,8 @@ export class TradingRuntime {
     private readonly exposureTracker = new ExposureTracker();
     /** Observability event bus — structured event stream for forensic debugging. */
     private readonly observabilityBus = new ObservabilityBus();
+    /** Liquidity intelligence engine — dynamic liquidity scoring per tick. */
+    private liquidityIntelligence: LiquidityIntelligence | null = null;
     /** Per-tick performance tracer — lightweight phase timing + event-loop lag. */
     private perfTracer: PerfTracer | null = null;
     /** Event loop lag tracker — infra safety auto-pause. */
@@ -343,6 +346,8 @@ export class TradingRuntime {
         this.lastMarketDataHealth = null;
         this.lastExecutionGateResult = null;
         this.exposureTracker.reset();
+        // Reset liquidity intelligence for new pair
+        this.liquidityIntelligence?.reset();
     }
 
     async start(): Promise<void> {
@@ -542,6 +547,11 @@ export class TradingRuntime {
             const lagConfig = loadEventLoopLagConfig();
             this.eventLoopLagTracker = new EventLoopLagTracker(lagConfig);
             this.eventLoopLagTracker.start();
+
+            // Initialize liquidity intelligence engine
+            const liqConfig = loadLiquidityConfig();
+            this.liquidityIntelligence = new LiquidityIntelligence(liqConfig);
+            logger.info('Liquidity intelligence engine initialized');
 
             // Start adaptive learning scheduler
             const pairKey = `${config.tradingPair.baseCurrency}/${config.tradingPair.quoteCurrency}`;
@@ -897,6 +907,10 @@ export class TradingRuntime {
             this.currentFlowMetrics = flowMetrics;
             this.perfTracer?.phaseEnd(7); // flowMetrics
 
+            // Compute liquidity intelligence
+            const allTrades = this.tradeTape?.getAll() ?? [];
+            this.liquidityIntelligence?.ingestTick(orderBookState, allTrades, nowMs);
+
             // Update cache registry with full tick data
             this.updateCacheSnapshot(pairKey, gateResult, flowMetrics);
 
@@ -1216,6 +1230,13 @@ export class TradingRuntime {
     }
 
     /**
+     * Get the current liquidity intelligence snapshot (for API routes).
+     */
+    getLiquiditySnapshot(): LiquiditySnapshot | null {
+        return this.liquidityIntelligence?.getSnapshot() ?? null;
+    }
+
+    /**
      * Get the current pair key (e.g. "XRP/RLUSD").
      */
     getCurrentPairKey(): string {
@@ -1246,6 +1267,7 @@ export class TradingRuntime {
             tape: tapeData,
             orderbook: this.currentOrderBookSnapshot,
             lastTrade: this.currentNormalizedTrade,
+            liquidity: this.liquidityIntelligence?.getSnapshot() ?? null,
         });
     }
 
