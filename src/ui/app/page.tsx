@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { findPair, type Instrument } from '../lib/tradingPairs';
+import { findInstrument as findPair, type Instrument } from '../lib/instruments';
 
 // Layout components
 import { AppShell } from '../components/layout/AppShell';
