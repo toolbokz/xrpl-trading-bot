@@ -1,62 +1,100 @@
 /**
- * Trading Pairs - Frontend Re-export
- * 
- * This module re-exports from the shared trading pairs module for frontend use.
- * DO NOT add pairs here - use src/config/tradingPairs.ts instead.
- * 
+ * Trading Pairs — Frontend Interception Layer
+ *
+ * Delegates to the Instrument Registry for all pair data.
+ * All UI code should import from this module (never from config/tradingPairs).
+ *
+ * Exports match the legacy surface area for backward compatibility
+ * but are backed by the SQLite-based Instrument Registry.
+ *
  * @module lib/tradingPairs
  */
 
-// Re-export everything from the shared module
+// ── Re-export from Instrument Registry (single source of truth) ─────────────
 export {
-    TRADING_PAIRS,
-    type TradingPair,
+    getInstruments,
+    getActiveInstruments,
+    findInstrument,
+    getInstrument,
+    isValidPairKey,
+    listInstruments,
+    toLegacyPair,
+    fromLegacyPair,
+    validateAllPairs,
+    assertAllowedInstrument as assertValidPair,
+    type Instrument,
     type CurrencySide,
     type LiquidityLevel,
     type Network,
     type LegacyTradingPair,
-    getPair,
-    findPair,
-    listPairs,
-    isValidPairKey,
-    assertValidPair,
+} from '../../market/instrumentRegistry';
+
+import {
+    getInstruments,
+    findInstrument,
     toLegacyPair,
-    fromLegacyPair,
-} from '../../config/tradingPairs';
+    type Instrument,
+} from '../../market/instrumentRegistry';
 
-// Legacy compatibility - map to old types
-import { TRADING_PAIRS, TradingPair, toLegacyPair, findPair } from '../../config/tradingPairs';
+// ── Backward-compatible aliases ─────────────────────────────────────────────
 
-/**
- * @deprecated Use TradingPair from src/config/tradingPairs instead
- */
-export type TradingPairOption = TradingPair;
+/** @deprecated Use Instrument instead */
+export type TradingPair = Instrument;
 
-/**
- * @deprecated Use TRADING_PAIRS from src/config/tradingPairs instead
- */
-export const tradingPairs: readonly TradingPair[] = TRADING_PAIRS;
+/** @deprecated Use Instrument instead */
+export type TradingPairOption = Instrument;
 
 /**
- * @deprecated Use findPair from src/config/tradingPairs instead
+ * Get all instruments. Backward-compatible with TRADING_PAIRS static array.
+ * @deprecated Use getInstruments() instead of accessing TRADING_PAIRS directly.
  */
-export const findTradingPair = findPair;
+export const TRADING_PAIRS: readonly Instrument[] = getInstruments();
 
 /**
- * @deprecated Use LegacyTradingPair from src/config/tradingPairs instead
+ * @deprecated Use getInstruments() instead
  */
+export const tradingPairs: readonly Instrument[] = getInstruments();
+
+/**
+ * Get instrument by key. Backward-compatible with getPair().
+ */
+export const getPair = (key: string): Instrument => {
+    const inst = findInstrument(key);
+    if (!inst) throw new Error(`Pair not found: ${key}`);
+    return inst;
+};
+
+/**
+ * Find instrument by key. Backward-compatible with findPair().
+ */
+export const findPair = findInstrument;
+
+/**
+ * @deprecated Use findInstrument() instead
+ */
+export const findTradingPair = findInstrument;
+
+/**
+ * List instruments with optional network filter.
+ * Backward-compatible with listPairs().
+ */
+export const listPairs = (options?: { network?: 'mainnet' | 'testnet' }): readonly Instrument[] => {
+    const all = getInstruments();
+    if (!options?.network || options.network === 'testnet') return all;
+    return all.filter((i) => i.network === options.network);
+};
+
+/** @deprecated Use LegacyTradingPair from instrumentRegistry instead */
 export type BotTradingPair = {
     baseCurrency: string;
     baseIssuer?: string | undefined;
     quoteCurrency: string;
     quoteIssuer?: string | undefined;
-    issuer?: string | undefined; // legacy fallback
+    issuer?: string | undefined;
     description?: string | undefined;
 };
 
-/**
- * @deprecated Use toLegacyPair from src/config/tradingPairs instead
- */
-export const toBotTradingPair = (option: TradingPair): BotTradingPair => {
+/** @deprecated Use toLegacyPair() instead */
+export const toBotTradingPair = (option: Instrument): BotTradingPair => {
     return toLegacyPair(option);
 };

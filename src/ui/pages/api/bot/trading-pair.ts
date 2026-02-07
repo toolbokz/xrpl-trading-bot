@@ -1,7 +1,7 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest, logSensitiveAction } from '../../../lib/localApi';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
-import { findPair, isValidPairKey } from '../../../../config/tradingPairs';
+import { findInstrument, isValidPairKey } from '../../../../market/instrumentRegistry';
 import { validateBody, tradingPairSchema } from '../../../lib/validation/schemas';
 import { logger } from '../../../../analytics/logger';
 import { resetHealthTracking } from '../../api/market/health';
@@ -24,17 +24,17 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
 
     const { pairKey } = validation.data;
 
-    // Runtime guard: only allow pairs from TRADING_PAIRS
+    // Runtime guard: only allow pairs from Instrument Registry
     if (!isValidPairKey(pairKey)) {
         return res.status(400).json({
-            error: `Trading pair not allowed: ${pairKey}. Only predefined pairs are supported.`,
+            error: `Trading pair not allowed: ${pairKey}. Only registered instruments are supported.`,
             code: 'INVALID_PAIR',
             requestId: req.requestId,
         });
     }
 
-    const pair = findPair(pairKey);
-    if (!pair) {
+    const instrument = findInstrument(pairKey);
+    if (!instrument) {
         return res.status(400).json({
             error: 'Unknown trading pair',
             code: 'PAIR_NOT_FOUND',
@@ -44,6 +44,20 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
 
     try {
         const runtime = ensureRuntimeHooks();
+
+        // ── Availability Safety Check ────────────────────────────────────
+        // Reject pair switches to BLOCKED pairs (issuer frozen, etc.)
+        const avail = runtime.getPairAvailability(pairKey);
+        if (avail && avail.verdict === 'BLOCKED') {
+            return res.status(400).json({
+                error: `Pair ${pairKey} is blocked: ${avail.details.join('; ')}`,
+                code: 'PAIR_BLOCKED',
+                availability: avail.verdict,
+                reasons: avail.reasons,
+                requestId: req.requestId,
+            });
+        }
+
         const switchResult = runtime.setActivePair(pairKey);
         if (!switchResult.success) {
             return res.status(400).json({
@@ -66,13 +80,14 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
             pending: switchResult.pending,
             ...(switchResult.switchId ? { switchId: switchResult.switchId } : {}),
             pair: {
-                key: pair.key,
-                base: pair.base,
-                quote: pair.quote,
-                description: pair.description,
-                liquidity: pair.liquidity,
-                network: pair.network,
+                key: instrument.key,
+                base: instrument.base,
+                quote: instrument.quote,
+                description: instrument.description,
+                liquidity: instrument.liquidity,
+                network: instrument.network,
             },
+            availability: avail?.verdict ?? null,
             requestId: req.requestId,
         });
     } catch (err: unknown) {

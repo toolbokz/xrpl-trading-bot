@@ -37,7 +37,10 @@ vi.mock('../../../src/config', () => ({
 }));
 
 // Import after mocks
-import { TRADING_PAIRS } from '../../../config/tradingPairs';
+import { getInstruments as TRADING_PAIRS_FN } from '../../../market/instrumentRegistry';
+
+// Get instruments as array (matching old TRADING_PAIRS shape)
+const TRADING_PAIRS = TRADING_PAIRS_FN();
 
 describe('Pairs API - Unit Tests', () => {
     describe('Price Calculation', () => {

@@ -4,7 +4,7 @@
  */
 
 import { z } from 'zod';
-import { isValidPairKey } from '../../../config/tradingPairs';
+import { isValidPairKey } from '../../../market/instrumentRegistry';
 
 /**
  * /api/bot/position-size POST body

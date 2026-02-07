@@ -60,6 +60,8 @@ export class ApiError extends Error {
 // DTO Types - Pair Endpoints
 // =============================================================================
 
+export type AvailabilityVerdict = 'AVAILABLE' | 'DEGRADED' | 'UNAVAILABLE' | 'BLOCKED' | 'UNKNOWN';
+
 export interface PairListItem {
     key: string;
     description: string;
@@ -67,6 +69,12 @@ export interface PairListItem {
     network: 'mainnet' | 'testnet';
     baseCurrency: string;
     quoteCurrency: string;
+    /** Live availability verdict from scanner (null if not yet probed). */
+    availability: AvailabilityVerdict | null;
+    /** Human-readable availability detail messages. */
+    availabilityDetails: string[];
+    /** Whether this pair is the currently active trading pair. */
+    active: boolean;
 }
 
 export interface PairSummary {
@@ -118,6 +126,9 @@ export const pairListItemSchema = z.object({
     network: z.enum(['mainnet', 'testnet']),
     baseCurrency: z.string(),
     quoteCurrency: z.string(),
+    availability: z.enum(['AVAILABLE', 'DEGRADED', 'UNAVAILABLE', 'BLOCKED', 'UNKNOWN']).nullable(),
+    availabilityDetails: z.array(z.string()),
+    active: z.boolean(),
 });
 
 export const pairSummarySchema = z.object({

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { TRADING_PAIRS, TradingPair, findPair } from '../lib/tradingPairs';
+import { findPair, type Instrument } from '../lib/tradingPairs';
 
 // Layout components
 import { AppShell } from '../components/layout/AppShell';
@@ -20,6 +20,7 @@ import { AdaptivePanel } from '../components/AdaptivePanel';
 import { GovernancePanel } from '../components/GovernancePanel';
 import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
 import { MarketDataHealthPanel } from '../components/MarketDataHealthPanel';
+import { InstrumentSelector } from '../components/InstrumentSelector';
 
 // Mobile layout
 import { MobileDashboard, MobileSection } from '../components/layout/MobileDashboard';
@@ -209,7 +210,7 @@ export default function Page() {
         }
     }, []);
 
-    const fetchWalletInfo = useCallback(async (pair?: TradingPair) => {
+    const fetchWalletInfo = useCallback(async (pair?: Instrument) => {
         try {
             const params = new URLSearchParams();
             if (pair) {
@@ -372,16 +373,12 @@ export default function Page() {
     // ─────────────────────────────────────────────────────────────────────────
 
     const pairSelectorElement = (
-        <select
-            value={selectedPairKey}
-            onChange={(e) => applyTradingPair(e.target.value)}
-            className="w-full rounded-lg bg-slate-900 border border-white/10 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-sky-500"
-        >
-            <option value="" disabled>Select pair...</option>
-            {TRADING_PAIRS.map((pair) => (
-                <option key={pair.key} value={pair.key}>{pair.key}</option>
-            ))}
-        </select>
+        <InstrumentSelector
+            selectedPairKey={selectedPairKey}
+            onPairChange={applyTradingPair}
+            pollInterval={10_000}
+            disabled={actionLoading}
+        />
     );
 
     // ─────────────────────────────────────────────────────────────────────────

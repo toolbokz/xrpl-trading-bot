@@ -1,13 +1,19 @@
 /**
  * GET /api/pairs
- * 
- * Returns the list of available trading pairs.
- * Single source of truth from shared config.
+ *
+ * Returns the unified list of trading instruments with:
+ * - Static metadata (key, description, liquidity, network)
+ * - Live availability verdicts from AvailabilityScanner
+ * - Routing confidence from ExecutionPairResolver
+ *
+ * This is the single source of truth for the InstrumentSelector component.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { listPairs, Network } from '../../../lib/tradingPairs';
+import { getInstruments, type Instrument, type Network } from '../../../../market/instrumentRegistry';
 import { loadConfig } from '../../../../config';
+import { getRuntime } from '../../../../runtime/runtimeSingleton';
+import type { AvailabilityVerdict } from '../../../../market/availabilityScanner';
 
 export const config = {
     api: { bodyParser: false },
@@ -22,12 +28,20 @@ interface PairListItem {
     quoteCurrency: string;
     baseIssuer?: string | undefined;
     quoteIssuer?: string | undefined;
+    /** Live availability verdict from scanner (null if not yet probed). */
+    availability: AvailabilityVerdict | null;
+    /** Human-readable availability detail messages. */
+    availabilityDetails: string[];
+    /** Whether the pair is the currently active trading pair. */
+    active: boolean;
 }
 
 interface PairsResponse {
     pairs: PairListItem[];
     network: Network;
     total: number;
+    /** Whether availability data is populated (scanner has run at least once). */
+    availabilityReady: boolean;
 }
 
 export default function handler(
@@ -40,31 +54,52 @@ export default function handler(
     }
 
     try {
-        // Get current network from config
         const cfg = loadConfig();
         const currentNetwork = (cfg.xrpl.network as Network) || 'mainnet';
 
-        // Filter pairs by network if requested
+        // Get instruments from the registry
+        const instruments = getInstruments();
+
+        // Filter by network if requested
         const networkFilter = req.query.network as Network | undefined;
-        const pairs = listPairs({ network: networkFilter || currentNetwork });
+        const filtered = (networkFilter || currentNetwork) === 'mainnet'
+            ? instruments.filter((i) => i.network === 'mainnet')
+            : instruments; // testnet shows all
+
+        // Get availability data from runtime (if available)
+        const runtime = getRuntime();
+        const activePairKey = runtime?.getCurrentPairKey() ?? null;
+        let availabilityReady = false;
+
+        const pairs: PairListItem[] = filtered.map((inst: Instrument) => {
+            // Live availability from AvailabilityScanner
+            const avail = runtime?.getPairAvailability(inst.key) ?? null;
+            if (avail) availabilityReady = true;
+
+            return {
+                key: inst.key,
+                description: inst.description,
+                liquidity: inst.liquidity,
+                network: inst.network,
+                baseCurrency: inst.base.currency,
+                quoteCurrency: inst.quote.currency,
+                baseIssuer: inst.base.issuer,
+                quoteIssuer: inst.quote.issuer,
+                availability: avail?.verdict ?? null,
+                availabilityDetails: avail?.details ?? [],
+                active: inst.key === activePairKey,
+            };
+        });
 
         const response: PairsResponse = {
-            pairs: pairs.map((p: typeof pairs[number]) => ({
-                key: p.key,
-                description: p.description,
-                liquidity: p.liquidity,
-                network: p.network,
-                baseCurrency: p.base.currency,
-                quoteCurrency: p.quote.currency,
-                baseIssuer: p.base.issuer,
-                quoteIssuer: p.quote.issuer,
-            })),
+            pairs,
             network: currentNetwork,
             total: pairs.length,
+            availabilityReady,
         };
 
-        // Cache for 30 seconds (pairs don't change often)
-        res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=60');
+        // Cache for 5 seconds (availability data changes with scans)
+        res.setHeader('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=15');
         return res.status(200).json(response);
     } catch (err) {
         console.error('[API /pairs] Error:', err);

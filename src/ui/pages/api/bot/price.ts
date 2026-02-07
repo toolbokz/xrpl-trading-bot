@@ -1,7 +1,7 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { loadConfig } from '../../../../config';
-import { findPair, isValidPairKey } from '../../../../config/tradingPairs';
+import { findInstrument as findPair, isValidPairKey } from '../../../../market/instrumentRegistry';
 import { getSharedClient, getCachedPrice, setCachedPrice } from '../../../lib/xrplClient';
 import { logger } from '../../../../analytics/logger';
 
