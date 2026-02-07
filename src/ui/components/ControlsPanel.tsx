@@ -4,6 +4,7 @@ import { ReactNode } from 'react';
 import clsx from 'clsx';
 import { Settings, AlertTriangle } from 'lucide-react';
 import { Panel, PanelBadge } from './Panel';
+import { RadialGauge } from './charts/RadialGauge';
 
 interface ControlsPanelProps {
     /** Trading pair selector component */
@@ -102,23 +103,16 @@ export function ControlsPanel({
                 <ControlItem label="Liquidity" value={liquidity} />
                 <ControlItem label="Ledger" value={lastLedger.toLocaleString()} mono />
 
-                {/* Exposure meter */}
-                <div className="col-span-2 lg:col-span-1">
-                    <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Exposure</div>
-                    <div className="flex items-center gap-2">
-                        <div className="flex-1 h-2 rounded-full bg-slate-800 overflow-hidden">
-                            <div
-                                className={clsx(
-                                    'h-full rounded-full transition-all',
-                                    exposurePercent > 80 ? 'bg-red-500' : exposurePercent > 50 ? 'bg-amber-500' : 'bg-emerald-500'
-                                )}
-                                style={{ width: `${Math.min(exposurePercent, 100)}%` }}
-                            />
-                        </div>
-                        <span className="text-[10px] text-slate-400 font-mono w-10 text-right">
-                            {exposurePercent.toFixed(0)}%
-                        </span>
-                    </div>
+                {/* Exposure gauge */}
+                <div className="col-span-2 lg:col-span-1 flex justify-center">
+                    <RadialGauge
+                        value={currentExposure}
+                        max={maxExposure}
+                        label="Exposure"
+                        size={40}
+                        format={(v) => maxExposure > 0 ? `${((v / maxExposure) * 100).toFixed(0)}%` : '0%'}
+                        thresholds={{ warn: 50, danger: 80 }}
+                    />
                 </div>
             </div>
 

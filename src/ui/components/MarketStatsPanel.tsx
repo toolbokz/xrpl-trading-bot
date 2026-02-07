@@ -3,6 +3,7 @@
 import clsx from 'clsx';
 import { TrendingUp, TrendingDown, Wallet, Target, Shield } from 'lucide-react';
 import { Panel } from './Panel';
+import { Sparkline } from './charts/Sparkline';
 
 interface MarketStatsPanelProps {
     /** Total PnL in XRP */
@@ -21,6 +22,8 @@ interface MarketStatsPanelProps {
     quoteCurrency: string;
     /** XRP to USD rate (null if unavailable) */
     usdRate: number | null;
+    /** Historical XRP balance points for sparkline */
+    xrpBalanceHistory?: number[];
 }
 
 export function MarketStatsPanel({
@@ -32,6 +35,7 @@ export function MarketStatsPanel({
     quoteBalance,
     quoteCurrency,
     usdRate,
+    xrpBalanceHistory,
 }: MarketStatsPanelProps) {
     // Calculate USD value if rate is available
     // RLUSD is a USD stablecoin, so 1 RLUSD = 1 USD
@@ -112,6 +116,19 @@ export function MarketStatsPanel({
                         ) : (
                             <div className="text-[10px] text-slate-600 mt-1">
                                 USD value unavailable
+                            </div>
+                        )}
+                        {/* Balance sparkline */}
+                        {xrpBalanceHistory && xrpBalanceHistory.length >= 3 && (
+                            <div className="mt-2">
+                                <Sparkline
+                                    data={xrpBalanceHistory}
+                                    width={160}
+                                    height={20}
+                                    fill
+                                    strokeWidth={1}
+                                    className="w-full"
+                                />
                             </div>
                         )}
                     </div>

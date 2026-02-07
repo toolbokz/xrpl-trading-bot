@@ -104,6 +104,8 @@ import {
 } from '../risk/hardRiskGuard';
 import { ExposureTracker, ExposureSnapshot } from '../risk/exposureTracker';
 import { ObservabilityBus } from '../observability/eventBus';
+import { EventLoopLagTracker, loadEventLoopLagConfig, type EventLoopLagState } from '../monitoring/eventLoopLag';
+import { enforceSafetyPolicy } from '../security/safetyPolicy';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -211,6 +213,8 @@ export class TradingRuntime {
     private readonly observabilityBus = new ObservabilityBus();
     /** Per-tick performance tracer — lightweight phase timing + event-loop lag. */
     private perfTracer: PerfTracer | null = null;
+    /** Event loop lag tracker — infra safety auto-pause. */
+    private eventLoopLagTracker: EventLoopLagTracker | null = null;
     /** Whether the last snapshot passed structural validation. */
     private lastDataValid = true;
     /** Reasons the last snapshot failed validation (empty when valid). */
@@ -344,6 +348,9 @@ export class TradingRuntime {
     async start(): Promise<void> {
         // Security gate: re-check on start
         enforceLocalOnly('TradingRuntime.start');
+
+        // Safety policy enforcement — blocks dangerous configurations
+        enforceSafetyPolicy();
 
         if (this.started) return;
 
@@ -531,6 +538,11 @@ export class TradingRuntime {
                 logger.warn('CPU watchdog triggered - trading paused due to high CPU');
             });
 
+            // Start event loop lag tracker for infra safety auto-pause
+            const lagConfig = loadEventLoopLagConfig();
+            this.eventLoopLagTracker = new EventLoopLagTracker(lagConfig);
+            this.eventLoopLagTracker.start();
+
             // Start adaptive learning scheduler
             const pairKey = `${config.tradingPair.baseCurrency}/${config.tradingPair.quoteCurrency}`;
             this.executionQualityCollector.setPairKey(pairKey);
@@ -589,6 +601,12 @@ export class TradingRuntime {
         // CPU safety: skip tick if CPU is overloaded
         if (!isCpuHealthy()) {
             logger.debug('Skipping tick - CPU watchdog paused trading');
+            return;
+        }
+
+        // Event loop lag safety: skip tick if event loop is overloaded
+        if (this.eventLoopLagTracker?.isAutoPaused()) {
+            logger.debug('Skipping tick - event loop lag auto-pause active');
             return;
         }
 
@@ -1298,6 +1316,13 @@ export class TradingRuntime {
         return this.feedStallRecovery?.getState() ?? null;
     }
 
+    /**
+     * Get the event loop lag tracker state (for API/observability).
+     */
+    getEventLoopLagState(): EventLoopLagState | null {
+        return this.eventLoopLagTracker?.getState() ?? null;
+    }
+
     // ─── Runtime FSM Getters ─────────────────────────────────────────────
 
     /**
@@ -1408,6 +1433,14 @@ export class TradingRuntime {
 
         // Step 4: Close circuit breaker persistence store
         logStep('Closing persistence stores');
+
+        // Flush and close exposure tracker persistence
+        try {
+            await this.exposureTracker.closePersistence();
+        } catch (err) {
+            logger.warn({ err }, 'Failed to close exposure persistence');
+        }
+
         try {
             await closeBreakerStore();
         } catch (err) {
@@ -1902,6 +1935,12 @@ export class TradingRuntime {
         if (this.perfTracer) {
             stopPerfTracer();
             this.perfTracer = null;
+        }
+
+        // Stop event loop lag tracker
+        if (this.eventLoopLagTracker) {
+            this.eventLoopLagTracker.stop();
+            this.eventLoopLagTracker = null;
         }
 
         // Clear global trade tape reference

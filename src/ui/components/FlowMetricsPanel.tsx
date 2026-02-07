@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Activity, TrendingUp, TrendingDown, AlertTriangle, Pause, Waves, BarChart3 } from 'lucide-react';
 import clsx from 'clsx';
 import { FlowResponse } from '../pages/api/bot/flow';
+import { Sparkline } from './charts/Sparkline';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -69,6 +70,57 @@ const REGIME_CONFIG: Record<FlowRegime, RegimeConfig> = {
         borderColor: 'border-red-600/30',
         textColor: 'text-red-400',
     },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// History buffer for time-series mini charts
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MAX_HISTORY = 60; // ~60 data points at 2s polling = 2 min window
+
+interface FlowHistoryEntry {
+    ts: number;
+    regime: FlowRegime;
+    imbalance: number;
+    midPrice: number;
+    vwap: number | null;
+}
+
+/** Regime → color for the timeline strip */
+const REGIME_TIMELINE_COLORS: Record<FlowRegime, string> = {
+    quiet: '#64748b',      // slate-500
+    normal: '#22c55e',     // emerald
+    trendingUp: '#3b82f6', // blue
+    trendingDown: '#f59e0b', // amber
+    chaotic: '#ef4444',    // red
+    illiquid: '#dc2626',   // red-600
+};
+
+/**
+ * Regime Timeline Strip — colored blocks showing regime changes over time
+ */
+const RegimeTimeline = ({ history }: { history: FlowHistoryEntry[] }) => {
+    if (history.length < 2) return null;
+
+    return (
+        <div className="space-y-1">
+            <span className="text-[11px] text-slate-400 uppercase tracking-wider">Regime History</span>
+            <div className="flex h-3 rounded overflow-hidden gap-px">
+                {history.map((entry, i) => (
+                    <div
+                        key={i}
+                        className="flex-1 min-w-0 transition-colors"
+                        style={{ backgroundColor: REGIME_TIMELINE_COLORS[entry.regime] }}
+                        title={`${entry.regime} @ ${new Date(entry.ts).toLocaleTimeString()}`}
+                    />
+                ))}
+            </div>
+            <div className="flex justify-between text-[9px] text-slate-500">
+                <span>{new Date(history[0]!.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span>now</span>
+            </div>
+        </div>
+    );
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -271,6 +323,8 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
     const [data, setData] = useState<FlowResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const historyRef = useRef<FlowHistoryEntry[]>([]);
+    const [history, setHistory] = useState<FlowHistoryEntry[]>([]);
 
     const fetchFlow = useCallback(async () => {
         try {
@@ -279,6 +333,20 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
             const json: FlowResponse = await res.json();
             setData(json);
             setError(null);
+
+            // Accumulate history for time-series charts
+            if (json.hasMetrics && json.regime?.current) {
+                const entry: FlowHistoryEntry = {
+                    ts: Date.now(),
+                    regime: json.regime.current as FlowRegime,
+                    imbalance: json.signals?.imbalance ?? 0,
+                    midPrice: json.prices?.midPrice ?? 0,
+                    vwap: json.prices?.vwap ?? null,
+                };
+                const next = [...historyRef.current, entry].slice(-MAX_HISTORY);
+                historyRef.current = next;
+                setHistory(next);
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to fetch flow');
         } finally {
@@ -403,6 +471,48 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
                         <ImbalanceGauge value={data.signals.imbalance} label="Trade Flow" />
                         <ImbalanceGauge value={data.signals.depthImbalance} label="Depth Bias" />
                         <SignalStrengthMeter strength={data.signals.signalStrength} />
+                    </div>
+                )}
+
+                {/* Regime Timeline Strip */}
+                {history.length >= 3 && (
+                    <div className="pt-2 border-t border-white/5">
+                        <RegimeTimeline history={history} />
+                    </div>
+                )}
+
+                {/* VWAP vs Mid Price Sparkline */}
+                {history.length >= 3 && (
+                    <div className="pt-2 border-t border-white/5 space-y-1">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-slate-400 uppercase tracking-wider">VWAP / Mid</span>
+                            <div className="flex items-center gap-2 text-[9px]">
+                                <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-sky-400 inline-block rounded" /> Mid</span>
+                                <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-amber-400 inline-block rounded" /> VWAP</span>
+                            </div>
+                        </div>
+                        <div className="relative">
+                            <Sparkline
+                                data={history.map(h => h.midPrice).filter(v => v > 0)}
+                                width={200}
+                                height={28}
+                                color="#38bdf8"
+                                fill
+                                className="w-full"
+                            />
+                            {history.some(h => h.vwap !== null && h.vwap > 0) && (
+                                <div className="absolute inset-0">
+                                    <Sparkline
+                                        data={history.map(h => h.vwap ?? h.midPrice).filter(v => v > 0)}
+                                        width={200}
+                                        height={28}
+                                        color="#f59e0b"
+                                        strokeWidth={1}
+                                        className="w-full"
+                                    />
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
 

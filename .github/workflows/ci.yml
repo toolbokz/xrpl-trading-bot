@@ -52,6 +52,22 @@ jobs:
         run: npm test -- --run
         env:
           NODE_ENV: test
+          EXPOSURE_PERSISTENCE: 'false'
+          SAFETY_SKIP_MAINNET_ACK: 'true'
+
+      - name: Verify test count (regression gate)
+        run: |
+          RESULT=$(npm test -- --run 2>&1 | grep -oP '\d+ passed' | head -1)
+          COUNT=$(echo "$RESULT" | grep -oP '\d+')
+          echo "Tests passed: $COUNT"
+          if [ "$COUNT" -lt 890 ]; then
+            echo "::error::Test count regression detected. Expected ≥890, got $COUNT"
+            exit 1
+          fi
+        env:
+          NODE_ENV: test
+          EXPOSURE_PERSISTENCE: 'false'
+          SAFETY_SKIP_MAINNET_ACK: 'true'
 
   build:
     name: Build

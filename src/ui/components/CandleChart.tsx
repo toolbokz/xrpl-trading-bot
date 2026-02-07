@@ -2,18 +2,20 @@
 
 import { useEffect, useRef } from 'react';
 import { createChart, CandlestickData, IChartApi, ISeriesApi, LineStyle } from 'lightweight-charts';
-import { BINANCE_COLORS } from '../lib/chart/types';
+import { BINANCE_COLORS, VolumeData } from '../lib/chart/types';
 import { calculateDynamicBarSpacing, BINANCE_SPACING } from '../lib/chart/spacing';
 
 export type CandleChartProps = {
     data: CandlestickData[];
+    volumeData?: VolumeData[];
     height?: number | string;
 };
 
-export function CandleChart({ data, height = 320 }: CandleChartProps) {
+export function CandleChart({ data, volumeData, height = 320 }: CandleChartProps) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+    const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     const dataLengthRef = useRef(data.length);
     dataLengthRef.current = data.length;
 
@@ -87,8 +89,20 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
             },
         });
 
+        // Volume histogram (rendered on a separate price scale at the bottom)
+        const volumeSeries = chart.addHistogramSeries({
+            color: BINANCE_COLORS.volume.up,
+            priceFormat: { type: 'volume' },
+            priceScaleId: 'volume',
+        });
+        chart.priceScale('volume').applyOptions({
+            scaleMargins: { top: 0.82, bottom: 0 },
+            borderVisible: false,
+        });
+
         chartRef.current = chart;
         seriesRef.current = series;
+        volumeSeriesRef.current = volumeSeries;
 
         const handleResize = () => {
             if (containerRef.current && chartRef.current) {
@@ -121,6 +135,7 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
+            volumeSeriesRef.current = null;
         };
     }, [height]);
 
@@ -129,8 +144,14 @@ export function CandleChart({ data, height = 320 }: CandleChartProps) {
         if (!seriesRef.current || !chartRef.current) return;
 
         seriesRef.current.setData(data);
+
+        // Update volume histogram if data is available
+        if (volumeSeriesRef.current && volumeData && volumeData.length > 0) {
+            volumeSeriesRef.current.setData(volumeData as any);
+        }
+
         chartRef.current.timeScale().fitContent();
-    }, [data]);
+    }, [data, volumeData]);
 
     const style = typeof height === 'number'
         ? { width: '100%', height }

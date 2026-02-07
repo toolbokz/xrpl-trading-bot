@@ -13,3 +13,14 @@ export {
     type CpuWatchdogConfig,
     type CpuSample,
 } from './cpuWatchdog';
+
+export {
+    EventLoopLagTracker,
+    getEventLoopLagTracker,
+    stopEventLoopLagTracker,
+    shouldAutoPauseTrading,
+    recordInfraLagSample,
+    type EventLoopLagConfig,
+    type EventLoopLagState,
+    type InfraSafetyState,
+} from './eventLoopLag';

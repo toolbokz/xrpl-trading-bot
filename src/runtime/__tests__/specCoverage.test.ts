@@ -46,7 +46,9 @@ const healthyResult = (): MarketHealthResult => ({
 });
 
 const baseGateInput = (): ExecutionGateInput => ({
-    lastBalanceSnapshotMs: NOW - 5_000,
+    // Use real wall-clock time so the gate's Date.now()-based staleness
+    // checks don't spuriously fire (the gate compares against Date.now(), not NOW).
+    lastBalanceSnapshotMs: Date.now() - 5_000,
     runtimeState: 'READY',
     health: healthyResult(),
     isConnected: true,

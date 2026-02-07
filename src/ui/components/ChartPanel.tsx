@@ -4,9 +4,11 @@ import { Activity, Maximize2, Loader2, AlertCircle } from 'lucide-react';
 import { Panel, PanelAction, PanelBadge } from './Panel';
 import { CandleChart } from './CandleChart';
 import { CandlestickData } from 'lightweight-charts';
+import { VolumeData } from '../lib/chart/types';
 
 interface ChartPanelProps {
     data: CandlestickData[];
+    volumeData?: VolumeData[];
     pairKey: string;
     currentPrice: number;
     quoteCurrency: string;
@@ -18,6 +20,7 @@ interface ChartPanelProps {
 
 export function ChartPanel({
     data,
+    volumeData,
     pairKey,
     currentPrice,
     quoteCurrency,
@@ -104,7 +107,7 @@ export function ChartPanel({
                 )}
 
                 {/* Chart */}
-                <CandleChart data={data} height="100%" />
+                <CandleChart data={data} volumeData={volumeData ?? []} height="100%" />
             </div>
         </Panel>
     );

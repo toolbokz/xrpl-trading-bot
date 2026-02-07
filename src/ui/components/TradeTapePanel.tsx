@@ -2,8 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
-import { Activity, ArrowDown, ExternalLink } from 'lucide-react';
+import { Activity, ArrowDown, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { Panel, PanelAction, PanelBadge } from './Panel';
+import {
+    ResponsiveContainer,
+    ScatterChart,
+    Scatter,
+    XAxis,
+    YAxis,
+    ZAxis,
+    Tooltip as RechartsTooltip,
+    Cell,
+} from 'recharts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -44,6 +54,73 @@ const TIME_WINDOWS = [
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Trade Scatter Chart — price vs time, dot size by trade size
+// ─────────────────────────────────────────────────────────────────────────────
+
+function TradeScatterChart({ trades }: { trades: TapeTrade[] }) {
+    if (trades.length < 2) return null;
+
+    const scatterData = trades.map(t => ({
+        ts: t.ts,
+        price: t.price,
+        size: Math.max(t.sizeBase, 0.1),
+        side: t.side,
+    }));
+
+    const minPrice = Math.min(...scatterData.map(d => d.price));
+    const maxPrice = Math.max(...scatterData.map(d => d.price));
+    const pricePad = (maxPrice - minPrice) * 0.1 || 0.0001;
+
+    return (
+        <ResponsiveContainer width="100%" height={72}>
+            <ScatterChart margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
+                <XAxis
+                    dataKey="ts"
+                    type="number"
+                    domain={['dataMin', 'dataMax']}
+                    tick={false}
+                    axisLine={false}
+                />
+                <YAxis
+                    dataKey="price"
+                    type="number"
+                    domain={[minPrice - pricePad, maxPrice + pricePad]}
+                    tick={false}
+                    axisLine={false}
+                    width={0}
+                />
+                <ZAxis dataKey="size" range={[15, 80]} />
+                <RechartsTooltip
+                    content={({ active, payload }) => {
+                        if (!active || !payload?.[0]) return null;
+                        const d = payload[0].payload;
+                        return (
+                            <div className="bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px]">
+                                <div className={d.side === 'buy' ? 'text-emerald-400' : 'text-red-400'}>
+                                    {d.side.toUpperCase()} {d.size.toFixed(2)} @ {d.price.toFixed(6)}
+                                </div>
+                                <div className="text-slate-500">
+                                    {new Date(d.ts).toLocaleTimeString()}
+                                </div>
+                            </div>
+                        );
+                    }}
+                />
+                <Scatter data={scatterData} isAnimationActive={false}>
+                    {scatterData.map((entry, i) => (
+                        <Cell
+                            key={i}
+                            fill={entry.side === 'buy' ? '#22c55e' : '#ef4444'}
+                            fillOpacity={0.7}
+                        />
+                    ))}
+                </Scatter>
+            </ScatterChart>
+        </ResponsiveContainer>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -60,6 +137,7 @@ export function TradeTapePanel({ pairKey, maxRows = 100 }: TradeTapePanelProps) 
     const [autoScroll, setAutoScroll] = useState(true);
     const [connected, setConnected] = useState(false);
     const [newTradeIds, setNewTradeIds] = useState<Set<string>>(new Set());
+    const [showChart, setShowChart] = useState(true);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const eventSourceRef = useRef<EventSource | null>(null);
@@ -225,6 +303,11 @@ export function TradeTapePanel({ pairKey, maxRows = 100 }: TradeTapePanelProps) 
                         label="Auto-scroll"
                         active={autoScroll}
                     />
+                    <PanelAction
+                        icon={showChart ? ChevronUp : ChevronDown}
+                        onClick={() => setShowChart(!showChart)}
+                        label="Toggle chart"
+                    />
                 </>
             }
             bodyClassName="p-0 flex flex-col"
@@ -256,6 +339,13 @@ export function TradeTapePanel({ pairKey, maxRows = 100 }: TradeTapePanelProps) 
                 <div className="bg-emerald-500/80 transition-all" style={{ width: `${buyRatio}%` }} />
                 <div className="bg-red-500/80 transition-all" style={{ width: `${100 - buyRatio}%` }} />
             </div>
+
+            {/* Trade scatter plot (collapsible) */}
+            {showChart && trades.length >= 2 && (
+                <div className="px-3 pb-1 border-b border-white/5">
+                    <TradeScatterChart trades={trades} />
+                </div>
+            )}
 
             {/* Trade list header */}
             <div className="grid grid-cols-[50px_40px_1fr_1fr] gap-1 px-3 py-1 text-[9px] text-slate-500 uppercase tracking-wider">

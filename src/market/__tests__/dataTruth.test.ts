@@ -70,7 +70,9 @@ const buildGateInput = (
     dataInvalidReasons: string[] = [],
 ): ExecutionGateInput => ({
     runtimeState: 'READY',
-    lastBalanceSnapshotMs: NOW - 5_000,
+    // Use real wall-clock time so the gate's Date.now()-based balance-staleness
+    // check doesn't spuriously fire (the gate compares against Date.now(), not NOW).
+    lastBalanceSnapshotMs: Date.now() - 5_000,
     health,
     isConnected: true,
     isReconnecting: false,

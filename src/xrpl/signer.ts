@@ -16,6 +16,34 @@ export interface SignedTransaction {
     hash?: string;
 }
 
+/**
+ * Report from a signer about its operational readiness.
+ */
+export interface SignerReadinessReport {
+    type: string;
+    ready: boolean;
+    reason: string;
+    /** Whether credentials/config are present (even if SDK is missing). */
+    hasCredentials: boolean;
+}
+
+/**
+ * Thrown by non-implemented signers (KMS, Xumm, Ledger).
+ * Provides actionable error messages with installation instructions.
+ */
+export class SignerNotImplementedError extends Error {
+    constructor(
+        public readonly signerType: string,
+        public readonly installHint: string,
+    ) {
+        super(
+            `Signer "${signerType}" is not implemented. ${installHint} ` +
+            'See docs/security-key-rotation.md for integration guidance.'
+        );
+        this.name = 'SignerNotImplementedError';
+    }
+}
+
 export interface Signer {
     readonly type: 'seed' | 'xumm' | 'ledger' | 'kms';
 
@@ -34,6 +62,11 @@ export interface Signer {
      * Optional: Check if the signer is ready/connected.
      */
     isReady?(): Promise<boolean>;
+
+    /**
+     * Optional: Get a detailed readiness report.
+     */
+    getReadinessReport?(): SignerReadinessReport;
 }
 
 /**
@@ -93,30 +126,36 @@ export class SeedSigner implements Signer {
         console.warn('[SeedSigner] getWallet() is deprecated. Use signTx() instead.');
         return this.wallet;
     }
+
+    getReadinessReport(): SignerReadinessReport {
+        return {
+            type: 'seed',
+            ready: true,
+            reason: 'Seed signer ready (development/testnet only)',
+            hasCredentials: true,
+        };
+    }
 }
 
 /**
  * XummSigner - Uses Xumm wallet for signing.
  *
- * This is a scaffold implementation. Full implementation requires:
- * - Xumm SDK integration
- * - WebSocket for sign request/response
- * - User approval flow
- * 
- * @remarks These fields are intentionally unused until implementation.
+ * HARD FAILURE: This signer requires the xumm-sdk package which is not
+ * included as a dependency. Install it and implement the signing flow
+ * before using this signer in production.
+ *
+ * When implemented, the flow is:
+ * 1. Create a sign request via Xumm API
+ * 2. User approves on their Xumm mobile app
+ * 3. Signed tx_blob is returned via WebSocket/polling
  */
-// @ts-ignore - Scaffold: fields will be used when implemented
 export class XummSigner implements Signer {
     readonly type = 'xumm' as const;
-    // These fields are stored for future implementation
     private _apiKey: string;
     private _apiSecret: string;
-    private _userToken: string | undefined;
-
-    constructor(apiKey: string, apiSecret: string, userToken?: string) {
+    constructor(apiKey: string, apiSecret: string, _userToken?: string) {
         this._apiKey = apiKey;
         this._apiSecret = apiSecret;
-        this._userToken = userToken ?? undefined;
     }
 
     /** Get configuration for future implementation */
@@ -125,36 +164,50 @@ export class XummSigner implements Signer {
     }
 
     async getAddress(): Promise<string> {
-        // TODO: Implement Xumm SDK call to get linked account
-        throw new Error('XummSigner.getAddress() not implemented. Requires Xumm SDK.');
+        throw new SignerNotImplementedError(
+            'xumm',
+            'Install xumm-sdk and implement getAddress() to derive the linked account.',
+        );
     }
 
     async signTx(_tx: Transaction): Promise<SignedTransaction> {
-        // TODO: Implement Xumm sign request flow
-        // 1. Create sign request via Xumm API
-        // 2. Wait for user approval (WebSocket or polling)
-        // 3. Return signed tx_blob
-        throw new Error('XummSigner.signTx() not implemented. Requires Xumm SDK.');
+        throw new SignerNotImplementedError(
+            'xumm',
+            'Install xumm-sdk and implement the sign-request flow (create request → user approval → tx_blob).',
+        );
     }
 
     async isReady(): Promise<boolean> {
-        return !!this._userToken;
+        // Cannot be ready without the SDK
+        return false;
+    }
+
+    getReadinessReport(): SignerReadinessReport {
+        return {
+            type: 'xumm',
+            ready: false,
+            reason: 'Xumm SDK not installed. Run: npm install xumm-sdk',
+            hasCredentials: !!(this._apiKey && this._apiSecret),
+        };
     }
 }
 
 /**
- * LedgerSigner - Uses Ledger hardware wallet.
+ * LedgerSigner - Uses Ledger hardware wallet for signing.
  *
- * This is a scaffold implementation. Full implementation requires:
- * - @ledgerhq/hw-transport-node-hid or WebUSB transport
- * - XRP app communication protocol
- * 
- * @remarks These fields are intentionally unused until implementation.
+ * HARD FAILURE: This signer requires @ledgerhq/hw-transport-node-hid
+ * and the XRP app communication protocol. Install the transport library
+ * and implement the signing flow before using.
+ *
+ * When implemented, the flow is:
+ * 1. Connect to Ledger device via USB/HID
+ * 2. Open XRP app on device
+ * 3. Send serialized transaction to device
+ * 4. User confirms on device screen
+ * 5. Device returns signature
  */
-// @ts-ignore - Scaffold: fields will be used when implemented
 export class LedgerSigner implements Signer {
     readonly type = 'ledger' as const;
-    // Stored for future implementation
     private _derivationPath: string;
 
     constructor(derivationPath = "44'/144'/0'/0/0") {
@@ -167,38 +220,48 @@ export class LedgerSigner implements Signer {
     }
 
     async getAddress(): Promise<string> {
-        // TODO: Implement Ledger HID communication
-        throw new Error('LedgerSigner.getAddress() not implemented. Requires Ledger HW library.');
+        throw new SignerNotImplementedError(
+            'ledger',
+            'Install @ledgerhq/hw-transport-node-hid and implement Ledger XRP app communication.',
+        );
     }
 
     async signTx(_tx: Transaction): Promise<SignedTransaction> {
-        // TODO: Implement Ledger signing
-        // 1. Connect to Ledger device
-        // 2. Open XRP app
-        // 3. Send transaction for signing
-        // 4. Wait for user confirmation on device
-        // 5. Return signed tx_blob
-        throw new Error('LedgerSigner.signTx() not implemented. Requires Ledger HW library.');
+        throw new SignerNotImplementedError(
+            'ledger',
+            'Install @ledgerhq/hw-transport-node-hid and implement device signing flow.',
+        );
     }
 
     async isReady(): Promise<boolean> {
-        // TODO: Check if Ledger is connected and XRP app is open
         return false;
+    }
+
+    getReadinessReport(): SignerReadinessReport {
+        return {
+            type: 'ledger',
+            ready: false,
+            reason: 'Ledger HW library not installed. Run: npm install @ledgerhq/hw-transport-node-hid',
+            hasCredentials: true, // No credentials needed — hardware device
+        };
     }
 }
 
 /**
- * KmsSigner - Uses cloud Key Management Service.
+ * KmsSigner - Uses cloud Key Management Service (AWS KMS).
  *
- * This is a scaffold for AWS KMS. Similar patterns for GCP/Azure.
- * Requires the private key to be stored in KMS with sign permissions.
- * 
- * @remarks These fields are intentionally unused until implementation.
+ * HARD FAILURE: This signer requires @aws-sdk/client-kms.
+ * The XRPL private key must be stored as an asymmetric key in KMS
+ * with ECDSA_SHA_256 signing permissions (secp256k1).
+ *
+ * When implemented, the flow is:
+ * 1. Call KMS GetPublicKey to derive the XRPL r-address
+ * 2. Serialize transaction for signing (per XRPL spec)
+ * 3. Call KMS Sign with ECDSA_SHA_256
+ * 4. Construct the signed transaction blob with DER signature
  */
-// @ts-ignore - Scaffold: fields will be used when implemented
 export class KmsSigner implements Signer {
     readonly type = 'kms' as const;
-    // Stored for future implementation
     private _keyId: string;
     private _region: string;
 
@@ -213,23 +276,30 @@ export class KmsSigner implements Signer {
     }
 
     async getAddress(): Promise<string> {
-        // TODO: Implement - derive address from KMS public key
-        // 1. Call KMS GetPublicKey
-        // 2. Derive XRPL address from public key
-        throw new Error('KmsSigner.getAddress() not implemented. Requires AWS SDK.');
+        throw new SignerNotImplementedError(
+            'kms',
+            'Install @aws-sdk/client-kms and implement GetPublicKey → XRPL address derivation.',
+        );
     }
 
     async signTx(_tx: Transaction): Promise<SignedTransaction> {
-        // TODO: Implement KMS signing
-        // 1. Serialize transaction for signing
-        // 2. Call KMS Sign with ECDSA_SHA_256
-        // 3. Construct signed transaction blob
-        throw new Error('KmsSigner.signTx() not implemented. Requires AWS SDK.');
+        throw new SignerNotImplementedError(
+            'kms',
+            'Install @aws-sdk/client-kms and implement KMS Sign → XRPL tx_blob construction.',
+        );
     }
 
     async isReady(): Promise<boolean> {
-        // TODO: Check KMS key accessibility
         return false;
+    }
+
+    getReadinessReport(): SignerReadinessReport {
+        return {
+            type: 'kms',
+            ready: false,
+            reason: 'AWS KMS SDK not installed. Run: npm install @aws-sdk/client-kms',
+            hasCredentials: !!this._keyId,
+        };
     }
 }
 
@@ -299,25 +369,76 @@ export function createSignerFromEnv(): Signer {
 
 /**
  * Verify that a signer is operational before the bot starts trading.
- * Non-seed signers are scaffolds today — this will fail fast and surface
- * a clear error instead of crashing mid-trade.
+ * Performs a multi-step readiness check:
+ *   1. isReady() — basic connectivity/configuration check
+ *   2. getAddress() — confirms the signer can derive an address
+ *   3. (SeedSigner only) dry-run signing of a dummy Payment tx
  *
+ * Non-seed signers will fail fast with a clear error explaining
+ * which SDK needs to be installed.
+ *
+ * @throws SignerNotImplementedError if the signer backend is not available
  * @throws Error if the signer reports not-ready and skip is not set
  */
 export async function assertSignerReady(signer: Signer): Promise<void> {
     if (process.env.SIGNER_SKIP_READY_CHECK === 'true') {
         return;
     }
-    if (typeof signer.isReady !== 'function') {
-        return; // SeedSigner has no isReady — always OK
+
+    // Step 1: readiness report (if available)
+    if (typeof signer.getReadinessReport === 'function') {
+        const report = signer.getReadinessReport();
+        if (!report.ready) {
+            throw new SignerNotImplementedError(report.type, report.reason);
+        }
     }
-    const ready = await signer.isReady();
-    if (!ready) {
+
+    // Step 2: isReady check
+    if (typeof signer.isReady === 'function') {
+        const ready = await signer.isReady();
+        if (!ready) {
+            throw new Error(
+                `Signer type "${signer.type}" is not ready. ` +
+                'The selected signing backend is not operational. ' +
+                'Use a seed signer on testnet, or set SIGNER_SKIP_READY_CHECK=true to bypass.'
+            );
+        }
+    }
+
+    // Step 3: address derivation check
+    try {
+        const address = await signer.getAddress();
+        if (!address || typeof address !== 'string' || address.length < 25) {
+            throw new Error(`Signer returned invalid address: ${address}`);
+        }
+    } catch (err) {
+        if (err instanceof SignerNotImplementedError) throw err;
         throw new Error(
-            `Signer type "${signer.type}" is not ready. ` +
-            'The selected signing backend is not yet implemented. ' +
-            'Use a seed signer on testnet, or set SIGNER_SKIP_READY_CHECK=true to bypass.'
+            `Signer "${signer.type}" failed address derivation: ${err instanceof Error ? err.message : 'unknown'}`
         );
+    }
+
+    // Step 4: dry-run signing (SeedSigner only — non-seed signers may require
+    // hardware interaction or network calls, so we skip for them)
+    if (signer.type === 'seed') {
+        try {
+            const dummyTx: Transaction = {
+                TransactionType: 'Payment',
+                Account: await signer.getAddress(),
+                Destination: await signer.getAddress(), // self-payment
+                Amount: '1', // 1 drop
+                Fee: '12',
+                Sequence: 0,
+            };
+            const signed = await signer.signTx(dummyTx);
+            if (!signed.tx_blob || typeof signed.tx_blob !== 'string') {
+                throw new Error('Dry-run signing returned empty tx_blob');
+            }
+        } catch (err) {
+            throw new Error(
+                `Signer "${signer.type}" dry-run signing failed: ${err instanceof Error ? err.message : 'unknown'}`
+            );
+        }
     }
 }
 

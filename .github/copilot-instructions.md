@@ -35,4 +35,20 @@
 
 ## Persistence & ops
 - Path-arb breaker state persists via Redis or file storage (see [src/persistence/breakerStore.ts](../src/persistence/breakerStore.ts)); data files live under [data/](../data/).
-- Graceful shutdown cancels offers and disconnects XRPL; see shutdown flow in [src/index.ts](../src/index.ts) and [src/runtime/tradingRuntime.ts](../src/runtime/tradingRuntime.ts).
+- Exposure fills and aggregate state persist to SQLite via [src/persistence/exposureStore.ts](../src/persistence/exposureStore.ts). Rehydrated on pair change via `ExposureTracker.setPairKey()`. Disable with `EXPOSURE_PERSISTENCE=false`.
+- Graceful shutdown cancels offers, flushes exposure state, closes DBs, and disconnects XRPL; see shutdown flow in [src/index.ts](../src/index.ts) and [src/runtime/tradingRuntime.ts](../src/runtime/tradingRuntime.ts).
+
+## Execution quality & infra safety
+- Reprice policy in [src/execution/repricePolicy.ts](../src/execution/repricePolicy.ts): 7-step cascade (hard staleness→churn breaker→spread regime→queue→soft staleness→drift→keep). Churn breaker prevents excessive order replacement.
+- Event loop lag tracker in [src/monitoring/eventLoopLag.ts](../src/monitoring/eventLoopLag.ts): `EventLoopLagTracker` with auto-pause and recovery hysteresis. Wired into `tick()` — trading halts when P95 lag exceeds threshold.
+- Slippage attribution in [src/analytics/slippageAttribution.ts](../src/analytics/slippageAttribution.ts): decomposes fill cost into spread/impact/timing/fee/residual components.
+
+## Safety policy enforcement
+- [src/security/safetyPolicy.ts](../src/security/safetyPolicy.ts) blocks dangerous configs at startup: remote access in production, mainnet live trading without acknowledgement, missing `BOT_LOCAL_ONLY`.
+- Mainnet live trading requires either `MAINNET_LIVE_TRADING_ACK=true` env var or a lock file at `data/.mainnet-live-ack`.
+- Called as the first gate in `TradingRuntime.start()`.
+
+## Signing architecture
+- [src/xrpl/signer.ts](../src/xrpl/signer.ts) implements 4 signers: `SeedSigner` (production-ready), `XummSigner`/`LedgerSigner`/`KmsSigner` (not yet implemented — throw `SignerNotImplementedError` with SDK install instructions).
+- `assertSignerReady()` performs 4-step validation including dry-run signing.
+- Each signer exposes `getReadinessReport()` for pre-flight diagnostics.

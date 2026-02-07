@@ -7,9 +7,17 @@
 
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { BarChart3, TrendingUp, TrendingDown, AlertTriangle, Activity, Target, Percent } from 'lucide-react';
 import clsx from 'clsx';
+import {
+    ResponsiveContainer,
+    AreaChart,
+    Area,
+    XAxis,
+    YAxis,
+    Tooltip as RechartsTooltip,
+} from 'recharts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types (matching API response)
@@ -118,6 +126,69 @@ function ProgressBar({ value, max, color = 'bg-sky-500' }: { value: number; max:
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// History buffer for rolling charts
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MAX_ANALYTICS_HISTORY = 30;
+
+interface AnalyticsHistoryEntry {
+    ts: number;
+    winRate: number;
+    totalPnl: number;
+    profitFactor: number;
+}
+
+/**
+ * Mini equity / win-rate area chart (recharts)
+ */
+function MiniEquityChart({ history }: { history: AnalyticsHistoryEntry[] }) {
+    if (history.length < 3) return null;
+
+    const chartData = history.map((h, i) => ({
+        idx: i,
+        pnl: h.totalPnl,
+        wr: h.winRate * 100,
+    }));
+
+    const isPositive = chartData[chartData.length - 1]!.pnl >= 0;
+
+    return (
+        <div className="bg-white/5 rounded-lg p-2.5 border border-white/5">
+            <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider">Equity Curve</span>
+                <span className={clsx(
+                    'text-[10px] font-mono',
+                    isPositive ? 'text-emerald-400' : 'text-red-400',
+                )}>
+                    {isPositive ? '+' : ''}{chartData[chartData.length - 1]!.pnl.toFixed(4)}
+                </span>
+            </div>
+            <ResponsiveContainer width="100%" height={48}>
+                <AreaChart data={chartData} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+                    <defs>
+                        <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor={isPositive ? '#22c55e' : '#ef4444'} stopOpacity={0.3} />
+                            <stop offset="95%" stopColor={isPositive ? '#22c55e' : '#ef4444'} stopOpacity={0} />
+                        </linearGradient>
+                    </defs>
+                    <Area
+                        type="monotone"
+                        dataKey="pnl"
+                        stroke={isPositive ? '#22c55e' : '#ef4444'}
+                        strokeWidth={1.5}
+                        fill="url(#equityGrad)"
+                        dot={false}
+                        isAnimationActive={false}
+                    />
+                    <XAxis hide dataKey="idx" />
+                    <YAxis hide domain={['dataMin', 'dataMax']} />
+                </AreaChart>
+            </ResponsiveContainer>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main Component
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -132,6 +203,8 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
     const [data, setData] = useState<AnalyticsApiResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const analyticsHistoryRef = useRef<AnalyticsHistoryEntry[]>([]);
+    const [analyticsHistory, setAnalyticsHistory] = useState<AnalyticsHistoryEntry[]>([]);
 
     const fetchAnalytics = useCallback(async () => {
         try {
@@ -148,6 +221,19 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
             const json: AnalyticsApiResponse = await res.json();
             setData(json);
             setError(null);
+
+            // Accumulate history for equity curve
+            if (json.summary.trades > 0) {
+                const entry: AnalyticsHistoryEntry = {
+                    ts: Date.now(),
+                    winRate: json.summary.winRate,
+                    totalPnl: json.summary.totalPnlApprox,
+                    profitFactor: json.summary.profitFactor,
+                };
+                const next = [...analyticsHistoryRef.current, entry].slice(-MAX_ANALYTICS_HISTORY);
+                analyticsHistoryRef.current = next;
+                setAnalyticsHistory(next);
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to fetch analytics');
         } finally {
@@ -278,6 +364,9 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
                         color={summary.maxDrawdown > 0.1 ? 'bg-red-500' : 'bg-slate-400'}
                     />
                 </div>
+
+                {/* Equity Curve (rolling) */}
+                <MiniEquityChart history={analyticsHistory} />
 
                 {/* Regime Matrix */}
                 <div>

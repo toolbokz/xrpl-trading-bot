@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TRADING_PAIRS, TradingPair, findPair } from '../lib/tradingPairs';
 
 // Layout components
@@ -116,6 +116,7 @@ export default function Page() {
     const [positionSizeMessage, setPositionSizeMessage] = useState<string>('');
     const [selectedPairKey, setSelectedPairKey] = useState<string>('');
     const [connected, setConnected] = useState<boolean>(false);
+    const [xrpBalanceHistory, setXrpBalanceHistory] = useState<number[]>([]);
 
     const currentPair = useMemo(() => findPair(selectedPairKey), [selectedPairKey]);
 
@@ -137,6 +138,7 @@ export default function Page() {
     // Candles from real trade data via /api/pairs/[key]/candles
     const {
         candles: candleData,
+        volumeData,
         loading: candlesLoading,
         error: candlesError,
     } = useCandles(selectedPairKey, {
@@ -232,6 +234,12 @@ export default function Page() {
                     baseBalance: data.baseBalance ?? data.balance ?? 0,
                     quoteBalance: data.quoteBalance ?? 0,
                 }));
+
+                // Accumulate balance history for sparkline (max 30 points)
+                const bal = data.balance ?? 0;
+                if (bal > 0) {
+                    setXrpBalanceHistory(prev => [...prev, bal].slice(-30));
+                }
             }
         } catch (err) {
             console.error('Failed to fetch wallet info:', err);
@@ -417,6 +425,7 @@ export default function Page() {
                     <MobileSection>
                         <ChartPanel
                             data={candleData}
+                            volumeData={volumeData}
                             pairKey={currentPair?.key || 'Select Pair'}
                             currentPrice={currentPrice}
                             quoteCurrency={bot.quoteCurrency}
@@ -433,6 +442,7 @@ export default function Page() {
                             quoteBalance={bot.quoteBalance}
                             quoteCurrency={bot.quoteCurrency}
                             usdRate={bot.usdRate}
+                            xrpBalanceHistory={xrpBalanceHistory}
                         />
                         <MarketDataHealthPanel />
                     </MobileSection>
@@ -512,6 +522,7 @@ export default function Page() {
                             quoteBalance={bot.quoteBalance}
                             quoteCurrency={bot.quoteCurrency}
                             usdRate={bot.usdRate}
+                            xrpBalanceHistory={xrpBalanceHistory}
                         />
                     </div>
                     <div className="shrink-0">
@@ -543,6 +554,7 @@ export default function Page() {
                 <div className="min-h-0 overflow-hidden">
                     <ChartPanel
                         data={candleData}
+                        volumeData={volumeData}
                         pairKey={currentPair?.key || 'Select Pair'}
                         currentPrice={currentPrice}
                         quoteCurrency={bot.quoteCurrency}

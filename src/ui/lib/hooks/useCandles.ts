@@ -7,8 +7,10 @@
  * Supports incremental updates for live chart updates.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { CandlestickData, UTCTimestamp } from 'lightweight-charts';
+import { VolumeData } from '../chart/types';
+import { BINANCE_COLORS } from '../chart/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -25,6 +27,7 @@ export interface Candle {
 
 export interface UseCandlesState {
     candles: CandlestickData<UTCTimestamp>[];
+    volumeData: VolumeData[];
     loading: boolean;
     error: string | null;
     isEmpty: boolean;
@@ -49,13 +52,14 @@ export interface UseCandlesOptions {
 /**
  * Convert API candle to lightweight-charts format
  */
-function toChartCandle(candle: Candle): CandlestickData<UTCTimestamp> {
+function toChartCandle(candle: Candle): CandlestickData<UTCTimestamp> & { volume?: number } {
     return {
         time: candle.time as UTCTimestamp,
         open: candle.open,
         high: candle.high,
         low: candle.low,
         close: candle.close,
+        ...(candle.volume !== undefined ? { volume: candle.volume } : {}),
     };
 }
 
@@ -233,8 +237,22 @@ export function useCandles(
 
     const isEmpty = candles.length === 0;
 
+    // Derive volume histogram data from candles
+    const volumeData: VolumeData[] = useMemo(() => {
+        return candles
+            .filter((c: any) => typeof c.volume === 'number' && c.volume > 0)
+            .map((c: any) => ({
+                time: c.time as UTCTimestamp,
+                value: c.volume as number,
+                color: c.close >= c.open
+                    ? BINANCE_COLORS.volume.up
+                    : BINANCE_COLORS.volume.down,
+            }));
+    }, [candles]);
+
     return {
         candles,
+        volumeData,
         loading,
         error,
         isEmpty,

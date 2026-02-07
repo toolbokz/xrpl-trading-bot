@@ -1,9 +1,8 @@
 /**
- * Exposure Tracker — Lightweight Open Position Tracking
+ * Exposure Tracker — Durable Open Position Tracking
  *
  * Tracks notional exposure and inventory skew from executed fills.
- * Designed to feed the HardRiskGuard with real data instead of the
- * placeholder `inventorySkewPct: 0` / `currentExposure: 0`.
+ * Designed to feed the HardRiskGuard with real data.
  *
  * Model:
  *   - Net position = sum of fill sizes (buys positive, sells negative)
@@ -11,16 +10,22 @@
  *   - Inventory skew pct = netPosition / maxPosition × 100
  *     (clamped −100..+100, where +100 = fully long, −100 = fully short)
  *
- * Limitations (documented, not hidden):
- *   - In-memory only; resets on restart. Acceptable because the bot
- *     cancels all open offers on shutdown.
- *   - Ignores fills from other accounts or out-of-band transactions.
+ * Persistence:
+ *   - Fills and aggregate state are persisted to SQLite via exposureStore.
+ *   - On startup, rehydrate() loads the last-known state from disk.
  *   - Paper-mode fills are tracked identically to real fills.
  *
  * @module risk/exposureTracker
  */
 
 import { riskLog as logger } from '../analytics/logger';
+import {
+    persistFillAndState,
+    loadExposureState,
+    saveExposureState,
+    closeExposureDb,
+    type ExposureStateRecord,
+} from '../persistence/exposureStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -69,20 +74,34 @@ export class ExposureTracker {
     private lastFillMs = 0;
     private pairKey = '';
     private readonly config: ExposureTrackerConfig;
+    /** Whether persistence is enabled (disabled in tests or when DB unavailable). */
+    private persistenceEnabled: boolean;
 
     constructor(config: Partial<ExposureTrackerConfig> = {}) {
         this.config = { ...DEFAULT_CONFIG, ...config };
+        this.persistenceEnabled = process.env.EXPOSURE_PERSISTENCE !== 'false'
+            && process.env.NODE_ENV !== 'test';
+    }
+
+    /**
+     * Enable or disable persistence (for testing).
+     */
+    setPersistence(enabled: boolean): void {
+        this.persistenceEnabled = enabled;
     }
 
     // ─── Mutation ────────────────────────────────────────────────────────
 
     /**
-     * Set the active pair key. Resets tracking on pair change.
+     * Set the active pair key. Resets tracking on pair change,
+     * then rehydrates from durable storage.
      */
     setPairKey(pairKey: string): void {
         if (pairKey !== this.pairKey) {
             this.reset();
             this.pairKey = pairKey;
+            // Rehydrate from disk if available
+            this.rehydrate();
         }
     }
 
@@ -111,8 +130,10 @@ export class ExposureTracker {
      * @param side  'buy' or 'sell'
      * @param sizeBase  Filled quantity in base currency
      * @param pairKey  Pair this fill belongs to (cross-pair guard)
+     * @param price  Fill price (for persistence)
+     * @param correlationId  Optional trace correlation ID
      */
-    recordFill(side: 'buy' | 'sell', sizeBase: number, pairKey: string): void {
+    recordFill(side: 'buy' | 'sell', sizeBase: number, pairKey: string, price?: number, correlationId?: string): void {
         // Cross-pair guard
         if (pairKey !== this.pairKey) {
             return;
@@ -138,6 +159,28 @@ export class ExposureTracker {
             netPositionBase: this.netPositionBase,
             fillCount: this.fillCount,
         }, 'ExposureTracker: fill recorded');
+
+        // Persist to SQLite
+        if (this.persistenceEnabled) {
+            try {
+                const fillId = `${this.lastFillMs}-${this.fillCount}-${Math.random().toString(36).slice(2, 8)}`;
+                persistFillAndState(
+                    {
+                        id: fillId,
+                        ts: this.lastFillMs,
+                        pairKey: this.pairKey,
+                        side,
+                        sizeBase,
+                        price: price ?? this.lastMidPrice,
+                        netPositionAfter: this.netPositionBase,
+                        correlationId: correlationId ?? null,
+                    },
+                    this.toStateRecord(),
+                );
+            } catch (err) {
+                logger.warn({ err }, 'ExposureTracker: failed to persist fill');
+            }
+        }
     }
 
     // ─── Queries ─────────────────────────────────────────────────────────
@@ -182,6 +225,116 @@ export class ExposureTracker {
         if (maxPos <= 0) return 0;
         const raw = (this.netPositionBase / maxPos) * 100;
         return Math.max(-100, Math.min(100, raw));
+    }
+
+    // ─── Persistence helpers ────────────────────────────────────────────
+
+    /**
+     * Build a persistence state record from current in-memory state.
+     */
+    private toStateRecord(): ExposureStateRecord {
+        return {
+            pairKey: this.pairKey,
+            netPositionBase: this.netPositionBase,
+            totalBought: this.totalBought,
+            totalSold: this.totalSold,
+            fillCount: this.fillCount,
+            lastFillMs: this.lastFillMs,
+            lastMidPrice: this.lastMidPrice,
+            updatedAt: Date.now(),
+        };
+    }
+
+    /**
+     * Rehydrate in-memory state from durable storage.
+     * Called automatically when pair key changes.
+     * Safe to call multiple times (idempotent).
+     */
+    private rehydrate(): void {
+        if (!this.persistenceEnabled || !this.pairKey) return;
+
+        try {
+            const state = loadExposureState(this.pairKey);
+            if (!state) {
+                logger.debug({ pairKey: this.pairKey }, 'ExposureTracker: no persisted state found, starting fresh');
+                return;
+            }
+            this.netPositionBase = state.netPositionBase;
+            this.totalBought = state.totalBought;
+            this.totalSold = state.totalSold;
+            this.fillCount = state.fillCount;
+            this.lastFillMs = state.lastFillMs;
+            this.lastMidPrice = state.lastMidPrice;
+            logger.info({
+                pairKey: this.pairKey,
+                netPositionBase: this.netPositionBase,
+                fillCount: this.fillCount,
+                lastFillMs: this.lastFillMs,
+            }, 'ExposureTracker: rehydrated from persistent storage');
+        } catch (err) {
+            logger.warn({ err, pairKey: this.pairKey }, 'ExposureTracker: rehydration failed, starting fresh');
+        }
+    }
+
+    /**
+     * Reconcile in-memory position with an externally observed balance.
+     * If a discrepancy is detected, the net position is corrected and
+     * a warning is logged.  This is a "trust-but-verify" last-resort
+     * correction — the normal fill path should keep things in sync.
+     *
+     * @param observedNetPosition  Net position as computed from on-ledger balances.
+     * @param toleranceBase        Allowed discrepancy before correction (default 0.001).
+     * @returns Whether a correction was applied.
+     */
+    reconcile(observedNetPosition: number, toleranceBase = 0.001): boolean {
+        const delta = observedNetPosition - this.netPositionBase;
+        if (Math.abs(delta) <= toleranceBase) return false;
+
+        logger.warn({
+            pairKey: this.pairKey,
+            tracked: this.netPositionBase,
+            observed: observedNetPosition,
+            delta,
+        }, 'ExposureTracker: reconciliation correction applied');
+
+        this.netPositionBase = observedNetPosition;
+
+        // Persist the corrected state
+        if (this.persistenceEnabled) {
+            try {
+                saveExposureState(this.toStateRecord());
+            } catch (err) {
+                logger.warn({ err }, 'ExposureTracker: failed to persist reconciliation');
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Flush current in-memory state to persistent storage.
+     * Called on clean shutdown to avoid data loss.
+     */
+    flush(): void {
+        if (!this.persistenceEnabled || !this.pairKey) return;
+        try {
+            saveExposureState(this.toStateRecord());
+            logger.debug({ pairKey: this.pairKey }, 'ExposureTracker: flushed to disk');
+        } catch (err) {
+            logger.warn({ err }, 'ExposureTracker: flush failed');
+        }
+    }
+
+    /**
+     * Close the persistence store (call on process shutdown).
+     */
+    async closePersistence(): Promise<void> {
+        this.flush();
+        try {
+            closeExposureDb();
+        } catch (err) {
+            logger.warn({ err }, 'ExposureTracker: failed to close exposure DB');
+        }
     }
 
     /**
