@@ -79,8 +79,8 @@ export default function handler(
             return {
                 key: inst.key,
                 description: inst.description,
-                liquidity: inst.liquidity,
-                network: inst.network,
+                liquidity: inst.liquidity === 'unknown' ? 'low' : inst.liquidity,
+                network: inst.network === 'devnet' ? 'testnet' : inst.network,
                 baseCurrency: inst.base.currency,
                 quoteCurrency: inst.quote.currency,
                 baseIssuer: inst.base.issuer,

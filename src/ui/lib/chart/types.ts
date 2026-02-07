@@ -3,7 +3,7 @@
  * Type definitions for the adaptive chart scaling system
  */
 
-import { CandlestickData, UTCTimestamp } from 'lightweight-charts';
+import { UTCTimestamp } from 'lightweight-charts';
 
 /** OHLC data with required fields */
 export interface OHLCData {

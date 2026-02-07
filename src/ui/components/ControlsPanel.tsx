@@ -50,8 +50,6 @@ export function ControlsPanel({
     loading,
     message,
 }: ControlsPanelProps) {
-    const exposurePercent = maxExposure > 0 ? (currentExposure / maxExposure) * 100 : 0;
-
     return (
         <Panel
             title="Strategy & Risk"

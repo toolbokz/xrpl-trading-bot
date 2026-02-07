@@ -31,7 +31,7 @@ function startBotStateSync(): void {
     }
 }
 
-function handler(req: LocalRequest, res: NextApiResponse): void {
+function handler(_req: LocalRequest, res: NextApiResponse): void {
     // Start bot state sync if not already running
     startBotStateSync();
 

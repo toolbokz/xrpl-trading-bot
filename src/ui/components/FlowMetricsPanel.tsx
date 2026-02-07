@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Activity, TrendingUp, TrendingDown, AlertTriangle, Pause, Waves, BarChart3 } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, AlertTriangle, Pause, Waves } from 'lucide-react';
 import clsx from 'clsx';
 import { FlowResponse } from '../pages/api/bot/flow';
 import { Sparkline } from './charts/Sparkline';
@@ -274,7 +274,7 @@ const SignalStrengthMeter = ({ strength }: { strength: number }) => {
 const PriceDisplay = ({
     bestBid,
     bestAsk,
-    midPrice,
+    midPrice: _midPrice,
     spreadBps,
     vwap,
     vwapDeviationBps

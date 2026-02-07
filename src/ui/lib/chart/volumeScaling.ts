@@ -3,7 +3,7 @@
  * Handles volume bar scaling synchronized with candle spacing
  */
 
-import { VolumeData, OHLCData, SpacingConfig, BINANCE_COLORS } from './types';
+import { VolumeData, OHLCData, BINANCE_COLORS } from './types';
 
 /**
  * Volume scaling configuration
@@ -50,7 +50,7 @@ export function calculateVolumeBarWidth(
  */
 export function normalizeVolumeData(
     volumeData: VolumeData[],
-    windowSize: number = 50
+    _windowSize: number = 50
 ): VolumeData[] {
     if (!volumeData || volumeData.length === 0) {
         return [];

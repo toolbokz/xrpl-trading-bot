@@ -63,9 +63,8 @@ export default async function handler(
     }
 
     // Extract pair key from dynamic route
-    const { key, limit: limitParam } = req.query;
+    const { key } = req.query;
     const pairKey = Array.isArray(key) ? key[0] : key;
-    const limit = Math.min(Math.max(parseInt(String(limitParam || '20'), 10) || 20, 1), 100);
 
     if (!pairKey || !isValidPairKey(pairKey)) {
         return res.status(400).json({

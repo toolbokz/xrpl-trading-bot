@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { Activity, ArrowDown, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
-import { Panel, PanelAction, PanelBadge } from './Panel';
+import { Panel, PanelAction } from './Panel';
 import {
     ResponsiveContainer,
     ScatterChart,

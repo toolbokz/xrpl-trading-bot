@@ -7,7 +7,6 @@ import {
     OHLCData,
     HeikinAshiData,
     VolumeData,
-    ScalingConfig,
     ChartStateSnapshot,
     AdaptiveScalingOptions,
     DEFAULT_SCALING_OPTIONS,
@@ -19,18 +18,14 @@ import {
     detectDatasetPrecision,
     detectStreamingPrecision,
     createPrecisionConfig,
-    shouldUpdatePrecision,
 } from './precision';
 import {
     createSpacingConfig,
-    calculateSpacingWithMicroAdjustment,
 } from './spacing';
 import {
     determineScaleMode,
-    isScaleTransitionSafe,
 } from './logScale';
 import {
-    PrecisionCache,
     getGlobalPrecisionCache,
 } from './precisionCache';
 import {
@@ -38,7 +33,6 @@ import {
     isHeikinAshiData,
 } from './heikinAshi';
 import {
-    calculateVolumeBarWidth,
     normalizeVolumeData,
 } from './volumeScaling';
 
@@ -355,7 +349,7 @@ export function restoreChartState(
  */
 export function calculateSynchronizedVolumeScaling(
     volumeData: VolumeData[],
-    scalingState: ScalingState
+    _scalingState: ScalingState
 ): VolumeData[] {
     // Normalize volume data to prevent clipping
     const normalized = normalizeVolumeData(volumeData);

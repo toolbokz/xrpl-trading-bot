@@ -4,8 +4,7 @@
  */
 
 import { OHLCData, HeikinAshiData } from './types';
-import { detectDatasetPrecision, detectOHLCPrecision } from './precision';
-import { UTCTimestamp } from 'lightweight-charts';
+import { detectOHLCPrecision } from './precision';
 
 /**
  * Calculate a single Heikin-Ashi candle from OHLC data

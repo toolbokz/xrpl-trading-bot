@@ -52,10 +52,6 @@ interface CacheEntry {
 const tradeCache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 60_000; // 1 minute cache
 
-// Track pairs that returned 404 to avoid repeated failures
-const unavailablePairs = new Set<string>();
-const UNAVAILABLE_CACHE_TTL_MS = 5 * 60_000; // 5 minutes before retrying
-
 // =============================================================================
 // XRPL Currency Formatting
 // =============================================================================

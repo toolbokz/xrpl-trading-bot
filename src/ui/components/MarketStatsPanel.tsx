@@ -1,7 +1,7 @@
 'use client';
 
 import clsx from 'clsx';
-import { TrendingUp, TrendingDown, Wallet, Target, Shield } from 'lucide-react';
+import { TrendingUp, Wallet, Target, Shield } from 'lucide-react';
 import { Panel } from './Panel';
 import { Sparkline } from './charts/Sparkline';
 

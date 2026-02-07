@@ -141,46 +141,6 @@ function aggregateTradesToCandles(
 }
 
 /**
- * Fill gaps in candle data with synthetic candles (using previous close).
- */
-function fillCandleGaps(
-    candles: Candle[],
-    intervalMs: number,
-    _limit: number
-): Candle[] {
-    if (candles.length < 2) return candles;
-
-    const filled: Candle[] = [];
-    const intervalSec = intervalMs / 1000;
-
-    for (let i = 0; i < candles.length; i++) {
-        const current = candles[i]!;
-        filled.push(current);
-
-        // Check for gap to next candle
-        if (i < candles.length - 1) {
-            const next = candles[i + 1]!;
-            let expectedTime = current.time + intervalSec;
-
-            // Fill gaps with synthetic candles
-            while (expectedTime < next.time) {
-                filled.push({
-                    time: expectedTime,
-                    open: current.close,
-                    high: current.close,
-                    low: current.close,
-                    close: current.close,
-                    volume: 0,
-                });
-                expectedTime += intervalSec;
-            }
-        }
-    }
-
-    return filled;
-}
-
-/**
  * Get trades from TradeTape (live trades).
  * In single-process mode, uses runtimeBridge to get tape from TradingRuntime.
  * In dual-process mode, uses globalTradeTape directly.

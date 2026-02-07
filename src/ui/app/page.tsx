@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { findPair, type Instrument } from '../lib/tradingPairs';
 
 // Layout components
@@ -29,8 +29,7 @@ import { MobileDashboard, MobileSection } from '../components/layout/MobileDashb
 import { useOrderBook } from '../lib/hooks/useOrderBook';
 import { useCandles } from '../lib/hooks/useCandles';
 
-// Mock data warning
-import { MockDataBanner } from '../components/MockDataBanner';
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -64,12 +63,6 @@ interface BotState {
         dailyLossLimit: number;
         killSwitch: boolean;
     };
-}
-
-interface OrderBookEntry {
-    price: number;
-    size: number;
-    total: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

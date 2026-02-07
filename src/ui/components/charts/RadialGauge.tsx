@@ -1,7 +1,5 @@
 'use client';
 
-import clsx from 'clsx';
-
 /**
  * SVG radial gauge — draws a 240° arc from value 0→max.
  * Reused across risk dashboard, exposure, and health panels.

@@ -7,7 +7,7 @@
 
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
-import { getCacheSnapshot, getRuntimeInstance, isSingleProcessMode } from '../../../lib/runtimeBridge';
+import { getCacheSnapshot, isSingleProcessMode } from '../../../lib/runtimeBridge';
 import { buildPairPayload, PairPayload } from '../../../lib/types/pairPayload';
 
 export interface BalanceData {

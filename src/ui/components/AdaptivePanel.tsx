@@ -8,7 +8,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Brain, Power, RefreshCw, AlertTriangle, Check, X, Settings } from 'lucide-react';
+import { Brain, Power, RefreshCw, AlertTriangle } from 'lucide-react';
 import clsx from 'clsx';
 
 // ─────────────────────────────────────────────────────────────────────────────

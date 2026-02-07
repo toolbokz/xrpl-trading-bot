@@ -32,6 +32,9 @@ jobs:
       - name: Type check frontend
         run: npx tsc --noEmit -p tsconfig.web.json
 
+      - name: Type check frontend (unused imports gate)
+        run: npx tsc --noEmit -p tsconfig.web.json --noUnusedLocals --noUnusedParameters
+
   test:
     name: Test
     runs-on: ubuntu-latest

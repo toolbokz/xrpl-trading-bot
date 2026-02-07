@@ -8,7 +8,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { BarChart3, TrendingUp, TrendingDown, AlertTriangle, Activity, Target, Percent } from 'lucide-react';
+import { BarChart3, TrendingUp, AlertTriangle, Activity, Target, Percent } from 'lucide-react';
 import clsx from 'clsx';
 import {
     ResponsiveContainer,
@@ -16,7 +16,6 @@ import {
     Area,
     XAxis,
     YAxis,
-    Tooltip as RechartsTooltip,
 } from 'recharts';
 
 // ─────────────────────────────────────────────────────────────────────────────

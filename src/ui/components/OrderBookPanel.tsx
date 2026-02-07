@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo } from 'react';
-import clsx from 'clsx';
 import { BookOpen, RefreshCw, Loader2, AlertCircle } from 'lucide-react';
 import { Panel, PanelAction, PanelBadge } from './Panel';
 

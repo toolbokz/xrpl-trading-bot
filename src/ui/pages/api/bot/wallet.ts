@@ -9,7 +9,6 @@ import { decryptFromBase64 } from '../../../../security/secretBox';
 import {
     isSingleProcessMode,
     getWalletFromRuntime,
-    isRuntimeWarmingUp,
     initRuntimeBridge,
     getRuntimeInstance,
 } from '../../../lib/runtimeBridge';

@@ -13,7 +13,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { DollarSign, TrendingUp, TrendingDown, Activity, AlertTriangle, Percent, Layers } from 'lucide-react';
+import { DollarSign, TrendingUp, Activity, AlertTriangle, Percent, Layers } from 'lucide-react';
 import clsx from 'clsx';
 
 // ─────────────────────────────────────────────────────────────────────────────

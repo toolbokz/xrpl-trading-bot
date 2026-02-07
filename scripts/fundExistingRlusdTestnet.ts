@@ -26,20 +26,6 @@ function isRlusd(currency: string): boolean {
     return false;
 }
 
-function requireSeed(): string {
-    // Prefer secret numbers if available (usa wallet), then fall back to seed
-    const secretNums = process.env.XRPL_SECRET_NUMBERS_TESTNET || process.env.XRPL_SECRET_NUMBERS;
-    if (secretNums) {
-        return secretNums; // Return as marker to use secret numbers
-    }
-    const seed = process.env.TESTNET_SEED || process.env.XRPL_SEED_TESTNET;
-    if (!seed) {
-        console.error('[env] TESTNET_SEED, XRPL_SEED_TESTNET, or XRPL_SECRET_NUMBERS is missing.');
-        process.exit(1);
-    }
-    return seed;
-}
-
 function getWallet(): Wallet {
     // For testnet, prefer the dedicated testnet seed over secret numbers (which may be mainnet)
     const seed = process.env.TESTNET_SEED || process.env.XRPL_SEED_TESTNET;

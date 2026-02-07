@@ -159,7 +159,7 @@ export function calculateCandleGap(candleWidth: number): number {
 export function adjustSpacingForZoom(
     baseSpacing: number,
     zoomLevel: number,
-    options: AdaptiveScalingOptions = DEFAULT_SCALING_OPTIONS
+    _options: AdaptiveScalingOptions = DEFAULT_SCALING_OPTIONS
 ): number {
     // zoomLevel: 1 = default, >1 = zoomed in, <1 = zoomed out
     const adjusted = baseSpacing * zoomLevel;
