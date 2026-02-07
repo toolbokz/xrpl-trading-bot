@@ -21,8 +21,8 @@ import {
 } from '../tradingPairs';
 
 describe('TRADING_PAIRS', () => {
-    it('should have exactly 5 pairs', () => {
-        expect(TRADING_PAIRS).toHaveLength(5);
+    it('should have exactly 6 pairs', () => {
+        expect(TRADING_PAIRS).toHaveLength(6);
     });
 
     it('should have unique keys', () => {
@@ -38,6 +38,7 @@ describe('TRADING_PAIRS', () => {
             'XRP/EUR',
             'XRP/BTC',
             'XRP/ETH',
+            'XRP/USDT',
         ];
         expectedKeys.forEach((key) => {
             expect(TRADING_PAIRS.some((p) => p.key === key)).toBe(true);
