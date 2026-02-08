@@ -24,7 +24,7 @@ This bot signs and submits transactions to the XRP Ledger. On mainnet, every `Of
 
 | Quality | Implementation |
 |---|---|
-| **Deterministic execution** | Every order placement passes through `ExecutionGate` → `HardRiskGuard` → `CapitalProtectionEngine` → `QualityGate` before reaching the ledger. All gates produce structured, auditable verdicts. |
+| **Deterministic execution** | Order placement is gated by `ExecutionGate` → `HardRiskGuard` → `CapitalProtectionEngine` before reaching the ledger. `QualityGate`/`RepricePolicy` logic exists but is **not implemented in live trading behavior** (not wired into the execution path). |
 | **Fail-safe by default** | If any data feed stalls, health score drops, or risk limit is breached, execution is blocked automatically. The system must be explicitly healthy to trade. |
 | **Localhost-only security** | The bot binds to `127.0.0.1`, rejects proxy headers, blocks cloud platforms at startup, and requires `BOT_LOCAL_ONLY=true` in production. |
 | **Observable** | Structured event bus (`ObservabilityBus`), per-tick performance tracing (`PerfTracer`), event loop lag monitoring, and a full-featured Next.js dashboard. |
@@ -37,157 +37,50 @@ This bot signs and submits transactions to the XRP Ledger. On mainnet, every `Of
 
 ### Mermaid
 
+GitHub renders large Mermaid diagrams too small; diagrams are split for readability.
+
+Full diagram source: `docs/architecture-full.mmd` (export to SVG with `npx mmdc -i docs/architecture-full.mmd -o docs/architecture-full.svg`).
+
+#### Runtime + Market Flow
+
 ```mermaid
-graph TB
-    subgraph UI ["UI Layer (Next.js)"]
-        Dashboard["Dashboard<br/>web/app/page.tsx"]
-        APIRoutes["API Routes<br/>web/pages/api/**"]
-        LocalApi["withLocalApi Middleware<br/>web/lib/localApi/"]
-    end
+flowchart LR
+    Dashboard["Dashboard<br/>src/ui/app/page.tsx"] --> APIRoutes["API Routes<br/>src/ui/pages/api/**"]
+    APIRoutes --> LocalApi["withLocalApi<br/>src/ui/lib/localApi/withLocalApi.ts"]
+    LocalApi --> RuntimeBridge["runtimeBridge.ts"]
+    RuntimeBridge --> RuntimeSingleton["runtimeSingleton.ts"]
+    RuntimeSingleton --> TradingRuntime["TradingRuntime<br/>src/runtime/tradingRuntime.ts"]
+    TradingRuntime --> RuntimeFSM["RuntimeFSM<br/>src/runtime/runtimeFsm.ts"]
+    TradingRuntime --> PairSwitchFSM["PairSwitchFSM<br/>src/runtime/pairSwitchFsm.ts"]
+    TradingRuntime --> OrderBook["OrderBookTracker<br/>src/market/orderBookTracker.ts"]
+    TradingRuntime --> TradeTape["TradeTape<br/>src/market/tradeTape.ts"]
+    TradingRuntime --> FlowMetrics["FlowMetrics<br/>src/market/flowMetrics.ts"]
+    TradingRuntime --> MarketHealth["MarketDataHealth<br/>src/market/marketDataHealth.ts"]
+    TradingRuntime --> FeedStall["FeedStallRecovery<br/>src/market/feedStallRecovery.ts"]
+    TradingRuntime --> CacheRegistry["RuntimeCacheRegistry<br/>src/runtime/runtimeCacheRegistry.ts"]
+    TradingRuntime --> Strategies["Strategies<br/>src/strategies/**"]
+```
 
-    subgraph Bridge ["Runtime Bridge"]
-        RuntimeHooks["runtimeHooks.ts"]
-        RuntimeBridge["runtimeBridge.ts"]
-        BotController["botController.ts"]
-        RuntimeSingleton["runtimeSingleton.ts"]
-    end
+#### Execution + Risk Pipeline
 
-    subgraph Runtime ["Runtime Core (src/runtime/)"]
-        TradingRuntime["TradingRuntime<br/>tradingRuntime.ts"]
-        RuntimeFSM["RuntimeFSM (8-state)<br/>runtimeFsm.ts"]
-        PairSwitchFSM["PairSwitchFSM (12-state)<br/>pairSwitchFsm.ts"]
-        PairOrchestrator["PairSwitchOrchestrator<br/>pairSwitchOrchestrator.ts"]
-        CacheRegistry["RuntimeCacheRegistry<br/>runtimeCacheRegistry.ts"]
-    end
+```mermaid
+flowchart LR
+    ExecutionGate["ExecutionGate<br/>src/execution/executionGate.ts"] --> HardRisk["HardRiskGuard<br/>src/risk/hardRiskGuard.ts"]
+    HardRisk --> CapitalProtection["CapitalProtection<br/>src/risk/capitalProtection.ts"]
+    CapitalProtection --> QualityGate["QualityGate (logic only)<br/>src/execution/qualityGate.ts"]
+    QualityGate --> OfferBuilder["OfferBuilder<br/>src/execution/offerBuilder.ts"]
+    OfferBuilder --> OfferExecutor["OfferExecutor<br/>src/execution/offerExecutor.ts"]
+    OfferExecutor --> ExposureTracker["ExposureTracker<br/>src/risk/exposureTracker.ts"]
+```
 
-    subgraph Market ["Market Layer (src/market/)"]
-        InstrumentRegistry["Instrument Registry (SQLite)<br/>instrumentRegistry/"]
-        IssuerRouter["Issuer Router<br/>issuerRouter.ts"]
-        PairResolver["Execution Pair Resolver<br/>executionPairResolver.ts"]
-        AvailScanner["Availability Scanner<br/>availabilityScanner.ts"]
-        TrustGov["Trustline Governance<br/>trustlineGovernance.ts"]
-        LiqIntel["Liquidity Intelligence<br/>liquidityIntelligence.ts"]
-        OrderBook["OrderBookTracker<br/>orderBookTracker.ts"]
-        TradeTape["TradeTape + Service<br/>tradeTape.ts"]
-        FlowMetrics["Flow Metrics<br/>flowMetrics.ts"]
-        FeedStall["Feed Stall Recovery<br/>feedStallRecovery.ts"]
-        DataHealth["Market Data Health<br/>marketDataHealth.ts"]
-    end
+#### XRPL + Signing
 
-    subgraph Execution ["Execution Layer (src/execution/)"]
-        ExecGate["Execution Gate<br/>executionGate.ts"]
-        QualGate["Quality Gate<br/>qualityGate.ts"]
-        RepricePolicy["Reprice Policy<br/>repricePolicy.ts"]
-        OfferExec["Offer Executor<br/>offerExecutor.ts"]
-        OfferBuild["Offer Builder<br/>offerBuilder.ts"]
-        ExecTrace["Execution Trace<br/>executionTrace.ts"]
-    end
-
-    subgraph Risk ["Risk Layer (src/risk/)"]
-        HardRisk["Hard Risk Guard<br/>hardRiskGuard.ts"]
-        RiskEngine["Risk Engine<br/>riskEngine.ts"]
-        CapProt["Capital Protection<br/>capitalProtection.ts"]
-        ExposureTracker["Exposure Tracker<br/>exposureTracker.ts"]
-    end
-
-    subgraph XRPL ["XRPL Layer (src/xrpl/)"]
-        XRPLClient["XRPLWebSocket<br/>client.ts"]
-        SharedClient["Shared Client<br/>sharedClient.ts"]
-        Signer["Signer (Seed/Xumm/Ledger/KMS)<br/>signer.ts"]
-        TxEngine["Transaction Engine<br/>transactionEngine.ts"]
-        Trustlines["Trustline Manager<br/>trustlines.ts"]
-        Wallet["Wallet<br/>wallet.ts"]
-    end
-
-    subgraph Observability ["Observability & Monitoring"]
-        EventBus["ObservabilityBus<br/>src/observability/eventBus.ts"]
-        PerfTracer["PerfTracer<br/>src/monitoring/perfTracer.ts"]
-        ELLag["EventLoopLagTracker<br/>src/monitoring/eventLoopLag.ts"]
-        CPUDog["CPU Watchdog<br/>src/monitoring/cpuWatchdog.ts"]
-    end
-
-    subgraph Analytics ["Analytics (src/analytics/)"]
-        ExecQuality["Execution Quality<br/>executionQuality.ts"]
-        SlipAttrib["Slippage Attribution<br/>slippageAttribution.ts"]
-        AdaptLearner["Adaptive Learner<br/>adaptiveLearner.ts"]
-        FeedbackEng["Feedback Engine<br/>feedbackEngine.ts"]
-        RegimePolicy["Regime Policy<br/>regimePolicy.ts"]
-    end
-
-    subgraph Persistence ["Persistence"]
-        SQLiteRegistry[("Instrument Registry DB<br/>data/instruments.sqlite")]
-        SQLiteExposure[("Exposure DB<br/>data/exposure.sqlite")]
-        SQLiteFeedback[("Feedback DB<br/>data/feedback.sqlite")]
-        BreakerStore["Circuit Breaker Store<br/>src/persistence/breakerStore.ts"]
-    end
-
-    subgraph Strategies ["Strategies (src/strategies/)"]
-        Scalper["Scalper"]
-        AMMArb["AMM Arbitrage"]
-        PathArb["Path Arbitrage"]
-    end
-
-    Dashboard --> APIRoutes
-    APIRoutes --> LocalApi
-    LocalApi --> RuntimeBridge
-    RuntimeBridge --> RuntimeSingleton
-    RuntimeHooks --> BotController
-    BotController --> TradingRuntime
-    RuntimeSingleton --> TradingRuntime
-
-    TradingRuntime --> RuntimeFSM
-    TradingRuntime --> PairSwitchFSM
-    TradingRuntime --> PairOrchestrator
-    TradingRuntime --> CacheRegistry
-
-    TradingRuntime --> Strategies
-    Strategies --> OfferExec
-    TradingRuntime --> OrderBook
-    TradingRuntime --> TradeTape
-    TradingRuntime --> FlowMetrics
-    TradingRuntime --> FeedStall
-    TradingRuntime --> DataHealth
-    TradingRuntime --> LiqIntel
-
-    TradingRuntime --> ExecGate
-    ExecGate --> DataHealth
-    OfferExec --> QualGate
-    OfferExec --> RepricePolicy
-    OfferExec --> OfferBuild
-    OfferExec --> ExecTrace
-    OfferBuild --> PairResolver
-    PairResolver --> IssuerRouter
-    IssuerRouter --> InstrumentRegistry
-
-    TradingRuntime --> HardRisk
-    TradingRuntime --> RiskEngine
-    TradingRuntime --> CapProt
-    TradingRuntime --> ExposureTracker
-    OfferExec --> ExposureTracker
-
-    TradingRuntime --> XRPLClient
-    XRPLClient --> SharedClient
-    OfferExec --> TxEngine
-    TxEngine --> Signer
-    TrustGov --> Trustlines
-    AvailScanner --> SharedClient
-
-    TradingRuntime --> EventBus
-    TradingRuntime --> PerfTracer
-    TradingRuntime --> ELLag
-    TradingRuntime --> CPUDog
-
-    TradingRuntime --> ExecQuality
-    OfferExec --> ExecQuality
-    ExecQuality --> SlipAttrib
-    TradingRuntime --> AdaptLearner
-    TradingRuntime --> FeedbackEng
-    TradingRuntime --> RegimePolicy
-
-    InstrumentRegistry --> SQLiteRegistry
-    ExposureTracker --> SQLiteExposure
-    FeedbackEng --> SQLiteFeedback
-    PathArb --> BreakerStore
+```mermaid
+flowchart LR
+    XRPLClient["XRPLWebSocket<br/>src/xrpl/client.ts"] --> TxEngine["TransactionEngine<br/>src/xrpl/transactionEngine.ts"]
+    TxEngine --> Signer["Signer<br/>src/xrpl/signer.ts"]
+    Signer --> Trustlines["Trustlines<br/>src/xrpl/trustlines.ts"]
+    Signer --> Wallet["Wallet<br/>src/xrpl/wallet.ts"]
 ```
 
 ### ASCII Fallback
@@ -242,7 +135,7 @@ graph TB
 | Area | Path | Responsibility |
 |---|---|---|
 | **Entry point** | `src/index.ts` | Legacy CLI entry — prints deprecation warning and exits. Use `npm run dev` or `npm run start`. |
-| **Server** | `web/server.js` | Custom Next.js HTTP server bound to `127.0.0.1`. Cloud-platform detection and localhost-only binding. |
+| **Server** | `server.js` | Custom Next.js HTTP server bound to `127.0.0.1`. Cloud-platform detection and localhost-only binding. |
 | **Runtime core** | `src/runtime/tradingRuntime.ts` | Owns the tick loop, wires all subsystems, manages lifecycle. Central orchestrator. |
 | **Runtime FSM** | `src/runtime/runtimeFsm.ts` | 8-state lifecycle FSM: `BOOTING` → `SYNCING_LEDGER` → `SUBSCRIBING_FEEDS` → `WARMING_MARKET_CACHE` → `READY` ↔ `DEGRADED` ↔ `RECOVERING` → `HALTED`. Only `READY` allows execution. |
 | **Pair switch** | `src/runtime/pairSwitchFsm.ts`, `src/runtime/pairSwitchOrchestrator.ts` | 12-state pair-switch FSM ensuring zero cross-pair data mixing during live pair changes. |
@@ -262,8 +155,8 @@ graph TB
 | **Market data health** | `src/market/marketDataHealth.ts` | Multi-signal health quorum (tape, book, ledger, balance). Produces a composite score (0–100). |
 | **Snapshot validator** | `src/market/snapshotValidator.ts` | Structural validation: sequence gaps, timestamp regressions, NaN detection. |
 | **Execution gate** | `src/execution/executionGate.ts` | ALLOW/BLOCK verdict integrating runtime FSM state, health score, connectivity, pair-switch phase, and risk shutdown. |
-| **Quality gate** | `src/execution/qualityGate.ts` | Per-order ALLOW/DEFER/REPRICE/SKIP decision based on spread, volatility, staleness, depth, and edge. |
-| **Reprice policy** | `src/execution/repricePolicy.ts` | 7-step cascade: hard staleness → churn breaker → spread regime → queue deterioration → soft staleness → drift → keep. |
+| **Quality gate** | `src/execution/qualityGate.ts` | Decision logic for ALLOW/DEFER/REPRICE/SKIP. **Not implemented in live trading behavior** (logic exists but not wired into strategy execution). |
+| **Reprice policy** | `src/execution/repricePolicy.ts` | Reprice decision cascade logic. **Not implemented in live trading behavior** (helper is not invoked from runtime execution). |
 | **Offer executor** | `src/execution/offerExecutor.ts` | Submits `OfferCreate`/`OfferCancel` transactions. Integrates governance size multiplier, adaptive overrides, and execution quality tracing. |
 | **Offer builder** | `src/execution/offerBuilder.ts` | Constructs XRPL-formatted offer parameters from resolved pairs. |
 | **Execution trace** | `src/execution/executionTrace.ts` | Per-trade correlation IDs and phase timestamps (decision → build → submit → ledgerAccepted → fill). |
@@ -275,7 +168,7 @@ graph TB
 | **Exposure store** | `src/persistence/exposureStore.ts` | SQLite-backed durable position tracking: `exposure_fills` audit trail + `exposure_state` aggregate per pair. |
 | **XRPL client** | `src/xrpl/client.ts` | `XRPLWebSocket` EventEmitter wrapping the xrpl.js `Client`. Manages subscriptions, reconnection with backoff, and order-book polling. |
 | **Shared client** | `src/xrpl/sharedClient.ts` | Process-global `Client` singleton to prevent duplicate WebSocket connections. |
-| **Signer** | `src/xrpl/signer.ts` | 4 signer implementations: `SeedSigner` (testnet only), `XummSigner`, `LedgerSigner`, `KmsSigner`. `assertSignerReady()` performs 4-step validation. |
+| **Signer** | `src/xrpl/signer.ts` | `SeedSigner` (testnet/dev only) plus Xumm/Ledger/KMS scaffolds that throw `SignerNotImplementedError`. Non-seed signers are **not implemented in live trading behavior** until SDKs are integrated. |
 | **Transaction engine** | `src/xrpl/transactionEngine.ts` | Submits `OfferCreate`, `OfferCancel`, `TrustSet`, `Payment`, and `AccountSet` with retry and sequence caching. |
 | **Trustline manager** | `src/xrpl/trustlines.ts` | Creates and verifies trustlines with blacklist enforcement. |
 | **Wallet** | `src/xrpl/wallet.ts` | Wallet initialization — supports seed, secret numbers, and encrypted mainnet credentials. |
@@ -294,11 +187,36 @@ graph TB
 | **Security: local-only** | `src/security/localOnly.ts` | Cloud platform detection, container detection, localhost address validation. |
 | **Security: safety policy** | `src/security/safetyPolicy.ts` | Startup enforcement: blocks remote access in production, requires mainnet live-trading acknowledgement, validates risk config. |
 | **Security: secret box** | `src/security/secretBox.ts` | Encrypted mainnet secret storage (encrypt at rest, decrypt with passphrase). |
-| **UI dashboard** | `web/app/page.tsx` | Main React dashboard with panels for order book, trade tape, flow metrics, analytics, governance, and controls. |
-| **UI components** | `web/components/` | `OrderBookPanel`, `TradeTapePanel`, `FlowMetricsPanel`, `GovernancePanel`, `MarketDataHealthPanel`, `InstrumentSelector`, `ControlsPanel`, `AdaptivePanel`, `CostRealismPanel`, `RegimeHeatmapPanel`, etc. |
-| **UI hooks** | `web/lib/hooks/` | `useOrderBook`, `useTradeTape`, `useCandles`, `useFlowMetrics`, `useMarketHealth`, `useBalances`. |
-| **UI API middleware** | `web/lib/localApi/withLocalApi.ts` | Localhost-only + `requestId` injection + optional `LOCAL_API_TOKEN` validation + audit logging. |
-| **Audit logging** | `web/lib/localApi/audit.ts` | JSONL audit trail to `data/audit.log` with sensitive field redaction. |
+| **UI dashboard** | `src/ui/app/page.tsx` | Main React dashboard with panels for order book, trade tape, flow metrics, analytics, governance, and controls. |
+| **UI components** | `src/ui/components/` | `OrderBookPanel`, `TradeTapePanel`, `FlowMetricsPanel`, `GovernancePanel`, `MarketDataHealthPanel`, `InstrumentSelector`, `ControlsPanel`, `AdaptivePanel`, `CostRealismPanel`, `RegimeHeatmapPanel`, etc. |
+| **UI hooks** | `src/ui/lib/hooks/` | `useOrderBook`, `useTradeTape`, `useCandles`, `useFlowMetrics`, `useMarketHealth`, `useBalances`. |
+| **UI API middleware** | `src/ui/lib/localApi/withLocalApi.ts` | Localhost-only + `requestId` injection + optional `LOCAL_API_TOKEN` validation + audit logging. |
+| **Audit logging** | `src/ui/lib/localApi/audit.ts` | JSONL audit trail to `data/audit.log` with sensitive field redaction. |
+
+---
+
+## Documentation Coverage Audit
+
+Docs coverage for required subsystems (based on live code paths):
+
+| Subsystem | Primary entry files | What it does | Documented in README? | Insert heading if missing |
+|---|---|---|---|---|
+| Runtime lifecycle + FSM + pair switch FSM | `src/runtime/tradingRuntime.ts`, `src/runtime/runtimeFsm.ts`, `src/runtime/pairSwitchFsm.ts`, `src/runtime/pairSwitchOrchestrator.ts` | Manages lifecycle transitions, READY gating, and 12‑state pair isolation during pair changes. | YES | — |
+| Execution pipeline (gate/quality/reprice/executor/builder) | `src/execution/executionGate.ts`, `src/execution/qualityGate.ts`, `src/execution/repricePolicy.ts`, `src/execution/offerExecutor.ts`, `src/execution/offerBuilder.ts` | Execution allow/block gating plus order build/submit helpers; quality/reprice logic exists but is not wired into live execution. | YES | — |
+| Risk pipeline (hard guard / risk engine / capital protection / exposure) | `src/risk/hardRiskGuard.ts`, `src/risk/riskEngine.ts`, `src/risk/capitalProtection.ts`, `src/risk/exposureTracker.ts` | Deterministic capital safety gates, emergency shutdown, throttling, and exposure tracking with persistence. | YES | — |
+| XRPL client + signer + tx engine + trustlines | `src/xrpl/client.ts`, `src/xrpl/signer.ts`, `src/xrpl/transactionEngine.ts`, `src/xrpl/trustlines.ts`, `src/xrpl/wallet.ts` | WebSocket connectivity, transaction submission, signing abstraction, and trustline management. | YES | — |
+| Observability & monitoring | `src/observability/eventBus.ts`, `src/monitoring/perfTracer.ts`, `src/monitoring/eventLoopLag.ts`, `src/monitoring/cpuWatchdog.ts` | Structured event bus, perf tracing, lag and CPU watchdogs that can auto‑pause ticks. | YES | — |
+| Persistence stores | `src/market/instrumentRegistry/db.ts`, `src/persistence/exposureStore.ts`, `src/persistence/breakerStore.ts`, `src/analytics/adaptiveLearner.ts`, `src/analytics/regimePolicy.ts` | SQLite registries/exposure DB, breaker store, and JSON state for adaptive/regime policy. | YES | — |
+| UI + API routes + local-only middleware | `src/ui/app/page.tsx`, `src/ui/pages/api/**`, `src/ui/lib/localApi/withLocalApi.ts`, `src/ui/lib/security/localOnly.ts` | Dashboard UI, API routes, localhost enforcement, request IDs, audit logging, and optional token checks. | YES | — |
+| Config/env validation + safety policy | `src/config/index.ts`, `src/security/safetyPolicy.ts`, `src/security/localOnly.ts` | Typed config loading, safety policy enforcement, and local-only gating. | YES | — |
+
+### README Mismatches (fixed in this update)
+
+- UI paths under `web/` no longer exist; the UI lives under `src/ui/` and the custom server is `server.js`.
+- `.env.example` is referenced but not present in the repo; configuration references now point to code-backed defaults.
+- HMAC/RBAC API auth was described but is not wired in the codebase; only localhost checks + optional `LOCAL_API_TOKEN` exist.
+- `qualityGate.ts` and `repricePolicy.ts` contain logic but are not called from the runtime execution path (**Not implemented in live trading behavior**).
+- Non-seed signers (Xumm/Ledger/KMS) throw `SignerNotImplementedError` until their SDKs are integrated (**Not implemented in live trading behavior**).
 
 ---
 
@@ -494,9 +412,9 @@ See `src/xrpl/signer.ts` for the full implementation.
 | Signer | Status | Context |
 |---|---|---|
 | `SeedSigner` | **Production-ready (testnet)** | Blocked on mainnet/production — throws at construction. |
-| `XummSigner` | Scaffold | Throws `SignerNotImplementedError` with install instructions for `xumm-sdk`. |
-| `LedgerSigner` | Scaffold | Throws `SignerNotImplementedError` with install instructions for `@ledgerhq/hw-transport-node-hid`. |
-| `KmsSigner` | Scaffold | Throws `SignerNotImplementedError` with install instructions for `@aws-sdk/client-kms`. |
+| `XummSigner` | Scaffold | Throws `SignerNotImplementedError` with install instructions for `xumm-sdk`. **Not implemented in live trading behavior.** |
+| `LedgerSigner` | Scaffold | Throws `SignerNotImplementedError` with install instructions for `@ledgerhq/hw-transport-node-hid`. **Not implemented in live trading behavior.** |
+| `KmsSigner` | Scaffold | Throws `SignerNotImplementedError` with install instructions for `@aws-sdk/client-kms`. **Not implemented in live trading behavior.** |
 
 ### Signer Readiness Check (`assertSignerReady()`)
 
@@ -643,7 +561,7 @@ Tick phases: `riskReset`, `reserveCheck`, `bookRefresh`, `snapshot`, `feedStall`
 
 ## API Reference
 
-All API routes are wrapped with `withLocalApi` middleware (`web/lib/localApi/withLocalApi.ts`):
+All API routes are wrapped with `withLocalApi` middleware (`src/ui/lib/localApi/withLocalApi.ts`):
 
 - Rejects non-localhost requests (403)
 - Rejects proxied requests (`X-Forwarded-For`, `X-Real-IP`)
@@ -651,7 +569,7 @@ All API routes are wrapped with `withLocalApi` middleware (`web/lib/localApi/wit
 - Attaches `X-Request-ID` (UUID) to every response
 - Audit logs to `data/audit.log` (JSONL)
 
-### Bot Control (`web/pages/api/bot/`)
+### Bot Control (`src/ui/pages/api/bot/`)
 
 | Route | Method | Behavior |
 |---|---|---|
@@ -669,7 +587,7 @@ All API routes are wrapped with `withLocalApi` middleware (`web/lib/localApi/wit
 | `/api/bot/logs` | GET | Recent log buffer entries. |
 | `/api/bot/position-size` | POST | Update position size at runtime. |
 
-### Pair Data (`web/pages/api/pairs/`)
+### Pair Data (`src/ui/pages/api/pairs/`)
 
 | Route | Method | Behavior |
 |---|---|---|
@@ -679,7 +597,7 @@ All API routes are wrapped with `withLocalApi` middleware (`web/lib/localApi/wit
 | `/api/pairs/[key]/trades` | GET | Recent trades for a pair from trade tape. |
 | `/api/pairs/[key]/candles` | GET | OHLCV candle data for charting. |
 
-### Analytics (`web/pages/api/analytics/`)
+### Analytics (`src/ui/pages/api/analytics/`)
 
 | Route | Method | Behavior |
 |---|---|---|
@@ -695,7 +613,7 @@ All API routes are wrapped with `withLocalApi` middleware (`web/lib/localApi/wit
 | `/api/analytics/adaptive/recompute` | POST | Force adaptive recomputation. |
 | `/api/analytics/adaptive/explain` | GET | Human-readable explanation of current tuning decisions. |
 
-### Runtime & Monitoring (`web/pages/api/runtime/`, `web/pages/api/metrics/`)
+### Runtime & Monitoring (`src/ui/pages/api/runtime/`, `src/ui/pages/api/metrics/`)
 
 | Route | Method | Behavior |
 |---|---|---|
@@ -705,14 +623,14 @@ All API routes are wrapped with `withLocalApi` middleware (`web/lib/localApi/wit
 | `/api/metrics` | GET | Aggregated performance metrics. |
 | `/api/metrics/runtime` | GET | Full `RuntimeTelemetry` (FSM, feeds, ledger, balance, health, gate). |
 
-### Trade Stream (`web/pages/api/trades/`)
+### Trade Stream (`src/ui/pages/api/trades/`)
 
 | Route | Method | Behavior |
 |---|---|---|
 | `/api/trades/tape` | GET | Full trade tape contents. |
 | `/api/trades/stream` | GET | Streaming trade updates (SSE or polling). |
 
-### Health (`web/pages/api/`)
+### Health (`src/ui/pages/api/`)
 
 | Route | Method | Behavior |
 |---|---|---|
@@ -723,7 +641,7 @@ All API routes are wrapped with `withLocalApi` middleware (`web/lib/localApi/wit
 
 ## Configuration & Environment Variables
 
-Configuration is loaded in `src/config/index.ts` from `.env` files (project root and CWD). See `.env.example` for a commented reference of all supported variables.
+Configuration is loaded in `src/config/index.ts` from `.env` files (project root and CWD). This repo does not include a `.env.example`, so the tables below and the module config loaders are the authoritative source of defaults.
 
 Safety validation is enforced by `src/security/safetyPolicy.ts` at startup. Signer selection is enforced by `src/xrpl/signer.ts`.
 
@@ -733,9 +651,17 @@ Safety validation is enforced by `src/security/safetyPolicy.ts` at startup. Sign
 |---|---|---|
 | `XRPL_NETWORK` | `mainnet` | `mainnet` or `testnet` |
 | `XRPL_WSS_URL` | `wss://s1.ripple.com` | XRPL WebSocket endpoint |
+| `XRPL_ENDPOINT` | — | Legacy/fallback XRPL endpoint (used if `XRPL_WSS_URL` unset) |
+| `XRPL_WSS_URLS` | `wss://xrplcluster.com,wss://s1.ripple.com,wss://s2.ripple.com` | Comma-separated endpoint pool for the shared client |
 | `XRPL_MAX_RECONNECTS` | `10` | Max reconnection attempts |
 | `XRPL_RECONNECT_DELAY_MS` | `1000` | Initial reconnect backoff |
 | `XRPL_RECONNECT_MAX_DELAY_MS` | `30000` | Max reconnect backoff |
+| `XRPL_429_COOLDOWN_MS` | `600000` | Cooldown for 429 rate-limited endpoints |
+| `XRPL_CONNECT_TIMEOUT_MS` | `10000` | WebSocket connection timeout |
+| `XRPL_MAX_RECONNECT_DELAY_MS` | `30000` | Shared-client max reconnect delay |
+| `XRPL_INITIAL_RECONNECT_DELAY_MS` | `500` | Shared-client initial reconnect delay |
+| `XRPL_BACKOFF_429_MULTIPLIER` | `3` | Backoff multiplier for 429 responses |
+| `XRPL_MIN_CONNECT_INTERVAL_MS` | `1000` | Minimum delay between connection attempts |
 
 ### Wallet & Signing
 
@@ -744,9 +670,16 @@ Safety validation is enforced by `src/security/safetyPolicy.ts` at startup. Sign
 | `XRPL_SEED` | — | Base58 seed (testnet only) |
 | `XRPL_SEED_TESTNET` / `XRPL_SEED_MAINNET` | — | Network-specific seeds |
 | `XRPL_SECRET_NUMBERS` | — | 8 comma-separated secret numbers |
+| `XRPL_SECRET_NUMBERS_TESTNET` / `XRPL_SECRET_NUMBERS_MAINNET` | — | Network-specific secret numbers |
+| `XRPL_SECRET_NUMBERS_MAINNET_ENC` | — | Encrypted mainnet secret numbers (used by `secretBox`) |
+| `XRPL_SECRET_PASSPHRASE` | — | Passphrase for decrypting encrypted secrets |
+| `WALLET_SEED` | — | Legacy wallet seed fallback |
 | `LEDGER_ENABLED` | `false` | Enable Ledger hardware wallet |
+| `LEDGER_DERIVATION_PATH` | `44'/144'/0'/0/0` | Ledger derivation path override |
 | `KMS_KEY_ID` | — | AWS KMS key ID for production signing |
+| `AWS_REGION` | `us-east-1` | AWS region for KMS signer |
 | `XUMM_API_KEY` / `XUMM_API_SECRET` | — | Xumm wallet API credentials |
+| `XUMM_USER_TOKEN` | — | Optional Xumm user token |
 | `SIGNER_SKIP_READY_CHECK` | `false` | Skip signer validation (dangerous) |
 
 ### Trading Pair
@@ -768,20 +701,27 @@ Safety validation is enforced by `src/security/safetyPolicy.ts` at startup. Sign
 | `MAX_TRADE_SIZE` | `1000` | Maximum single trade size |
 | `MAX_DAILY_LOSS_XRP` | `500` | Daily loss limit before halt |
 | `RESERVE_FLOOR_XRP` | `25` | Minimum XRP reserve to maintain |
+| `RESERVE_BUFFER_BPS` | `0` | Extra reserve buffer in bps (dynamic reserve checks) |
+| `RESERVE_BUFFER_XRP` | `0` | Extra reserve buffer in XRP |
 | `MAX_SLIPPAGE_BPS` | `50` | Maximum acceptable slippage |
 | `CONSECUTIVE_FAILURE_KILL_SWITCH` | `5` | Failures before emergency shutdown |
 | `ISSUER_BLACKLIST` | — | Comma-separated blacklisted issuer addresses |
+| `MAX_EXPOSURE_PER_ISSUER` | `5000` | Max exposure per issuer (notional) |
+| `ENABLE_TESTNET_FAUCET` | `false` | Enable testnet faucet funding helper |
 
 ### Security
 
 | Variable | Default | Description |
 |---|---|---|
-| `BOT_LOCAL_ONLY` | `true` | Enforce localhost-only execution |
+| `BOT_LOCAL_ONLY` | — | Enforce localhost-only execution (required in production) |
 | `BOT_ALLOW_REMOTE` | `false` | **DANGEROUS**: Override localhost restriction |
 | `BOT_API_DEV_MODE` | `false` | Skip proxy header checks in development |
 | `MAINNET_LIVE_TRADING_ACK` | — | Required `true` for mainnet live trading |
 | `LOCAL_API_TOKEN` | — | Optional API token for request validation |
 | `SAFETY_LOCK_FILE` | `data/.mainnet-live-ack` | Lock file path for mainnet acknowledgement |
+| `SAFETY_SKIP_MAINNET_ACK` | `false` | Skip mainnet live-trading acknowledgement (tests only) |
+| `SAFETY_SKIP_REMOTE_POLICY` | `false` | Skip remote access policy checks (tests only) |
+| `SINGLE_PROCESS_MODE` | `false` | Enforce single-process XRPL client guard |
 
 ### Monitoring
 
@@ -792,19 +732,37 @@ Safety validation is enforced by `src/security/safetyPolicy.ts` at startup. Sign
 | `CPU_MAX_PERCENT` | `50` | CPU threshold before pausing |
 | `CPU_MAX_DURATION_MS` | `5000` | Sustained CPU duration before pause |
 | `BOT_LOOP_MIN_DELAY_MS` | `50` | Minimum delay between tick iterations |
+| `STRATEGY_MAX_TPS` | `10` | Max strategy ticks per second (rate limiter) |
+| `PERF_SUMMARY_INTERVAL_MS` | `30000` | Perf tracer summary log interval |
+| `LOG_MAX_PER_SEC` | `10` | Max logs per key per second (throttled logger) |
 
 ### Flow & Strategy
 
 | Variable | Default | Description |
 |---|---|---|
 | `FLOW_WINDOW_MS` | `60000` | Trade flow analysis window |
+| `FLOW_AGGRESSION_WINDOW_MS` | `10000` | Short-term aggression window |
+| `FLOW_DEPTH_LEVELS` | `10` | Order book levels for depth |
 | `FLOW_TRENDING_THRESHOLD` | `0.3` | Imbalance threshold for trending regime |
 | `FLOW_CHAOTIC_SPREAD_BPS` | `200` | Spread threshold for chaotic regime |
+| `FLOW_MIN_TRADES_LIQUIDITY` | `3` | Minimum trades for non-illiquid |
+| `FLOW_MIN_DEPTH_LIQUIDITY` | `100` | Minimum depth for non-illiquid |
+| `FLOW_QUIET_THRESHOLD` | `0.1` | Quiet regime threshold |
+| `FLOW_ENABLE_REGIME_FILTER` | `true` | Enable regime-based strategy filtering |
+| `FLOW_ENABLE_ADVERSE_SELECTION_PROTECTION` | `true` | Enable adverse selection protection |
+| `FLOW_MAX_QUOTE_SKEW_BPS` | `10` | Maximum quote skew bps |
 | `MIN_SPREAD_BPS` | `10` | Minimum spread for scalper |
+| `STOP_LOSS_BPS` | `50` | Stop loss threshold (bps) |
 | `COOLDOWN_MS` | `60000` | Cooldown between strategy executions |
 | `AMM_ARB_MIN_PROFIT_BPS` | `15` | Minimum profit for AMM arbitrage |
 | `PATH_ARB_MIN_PROFIT_BPS` | `20` | Minimum profit for path arbitrage |
 | `ADAPTIVE_LEARNING_ENABLED` | `true` | Enable adaptive parameter tuning |
+| `ORDERBOOK_STALE_MS` | `5000` | Order book staleness threshold |
+| `PATH_ARB_ENABLED` | `false` | Enable path arbitrage strategy |
+| `PATH_ARB_DRY_RUN` | `true` | Run path arb in dry-run mode |
+| `PATH_ARB_CIRCUIT_BREAKER_MAX_LOSS_BPS` | `500` | Path arb breaker max loss |
+| `PATH_ARB_CIRCUIT_BREAKER_WINDOW_MS` | `300000` | Path arb breaker window |
+| `PATH_ARB_CIRCUIT_BREAKER_COOLDOWN_MS` | `600000` | Path arb breaker cooldown |
 
 ### Persistence
 
@@ -814,8 +772,117 @@ Safety validation is enforced by `src/security/safetyPolicy.ts` at startup. Sign
 | `EXPOSURE_DB_PATH` | `data/exposure.sqlite` | Exposure database path |
 | `REDIS_URL` | — | Redis URL for circuit breaker store |
 | `PATH_ARB_BREAKER_STORE` | `auto` | `auto`, `redis`, or `file` |
+| `INSTRUMENT_DB_PATH` | `data/instruments.sqlite` | Instrument registry database path |
+| `FEEDBACK_DB_PATH` | `data/feedback.sqlite` | Feedback/analytics database path |
+| `FEEDBACK_RETENTION_DAYS` | `30` | Retention window for feedback DB |
+| `FEEDBACK_DB_VERBOSE` | `false` | Enable verbose feedback DB logging |
 
-For the full list with comments, see `.env.example`. For authoritative validation logic, see `src/config/index.ts`, `src/security/safetyPolicy.ts`, and `src/xrpl/signer.ts`.
+### Market Data & Availability
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRADE_TAPE_ENABLED` | `true` | Enable trade tape ingestion |
+| `AVAILABILITY_SCAN_INTERVAL_MS` | `60000` | Availability scanner interval |
+| `AVAILABILITY_REQUEST_TIMEOUT_MS` | `5000` | Availability probe timeout |
+| `AVAILABILITY_PROBE_TRUSTLINES` | `true` | Probe trustlines during scans |
+| `AVAILABILITY_PROBE_ORDERBOOKS` | `true` | Probe order books during scans |
+| `AVAILABILITY_MIN_DEPTH_NOTIONAL` | `0` | Minimum notional depth for availability |
+| `LIQUIDITY_SPREAD_WINDOW_SIZE` | `120` | Liquidity spread window size |
+| `LIQUIDITY_FLOW_WINDOW_MS` | `60000` | Liquidity flow window |
+| `TRUSTLINE_AUTO_ENSURE` | `true` | Auto-create missing trustlines |
+| `TRUSTLINE_REQUIRE_REGISTERED` | `false` | Require issuers to be registered |
+| `TRUSTLINE_DEFAULT_LIMIT` | `1000000` | Default trustline limit |
+
+### Execution & Risk Extensions
+
+| Variable | Default | Description |
+|---|---|---|
+| `HARD_RISK_MAX_EXPOSURE` | `5000` | Hard risk max notional exposure |
+| `HARD_RISK_MAX_SKEW_PCT` | `80` | Hard risk max inventory skew |
+| `HARD_RISK_MAX_DRAWDOWN_PCT` | `7` | Hard risk max drawdown |
+| `HARD_RISK_MAX_BALANCE_STALE_MS` | `120000` | Hard risk max balance staleness |
+| `HARD_RISK_MIN_FEED_HEALTH` | `40` | Hard risk min feed health |
+| `CAPITAL_PROTECTION_ENABLED` | `true` | Enable capital protection engine |
+| `CP_LOOKBACK_TRADES` | `200` | Capital protection lookback trades |
+| `CP_MIN_TRADES` | `50` | Capital protection min trades |
+| `CP_MAX_ROLLING_DRAWDOWN_PCT` | `7` | Capital protection drawdown limit |
+| `CP_MIN_PROFIT_FACTOR` | `1.10` | Capital protection profit factor floor |
+| `CP_MIN_EXPECTANCY_BPS` | `-2` | Capital protection expectancy floor |
+| `CP_MAX_AVG_SLIPPAGE_BPS` | `30` | Capital protection slippage limit |
+| `CP_MAX_PARTIAL_FILL_RATE` | `0.35` | Capital protection partial fill rate |
+| `CP_CONSEC_FAIL_SHUTDOWN` | `8` | Capital protection shutdown failures |
+| `CP_THROTTLE_COOLDOWN_MS` | `15000` | Capital protection throttle cooldown |
+| `CP_PAUSE_COOLDOWN_MS` | `600000` | Capital protection pause cooldown |
+| `CP_SIZE_THROTTLE_MULT` | `0.5` | Capital protection throttle size mult |
+| `CP_SIZE_PAUSE_MULT` | `0.0` | Capital protection pause size mult |
+| `REPRICE_DRIFT_THRESHOLD_BPS` | `5` | Reprice drift threshold (**Not implemented in live trading behavior**) |
+| `REPRICE_HARD_STALENESS_MS` | `10000` | Reprice hard staleness (**Not implemented in live trading behavior**) |
+| `REPRICE_CHURN_LIMIT_PER_MIN` | `8` | Reprice churn limit (**Not implemented in live trading behavior**) |
+
+### Instrument Resolution
+
+| Variable | Default | Description |
+|---|---|---|
+| `PAIR_RESOLVER_CACHE_TTL_MS` | `30000` | Pair resolver cache TTL |
+| `PAIR_RESOLVER_FAIL_ON_UNRESOLVABLE` | `true` | Fail on unresolvable pairs |
+| `ISSUER_ROUTER_USE_REGISTRY` | `true` | Use instrument registry issuers |
+| `ISSUER_ROUTER_ALLOW_LEGACY` | `true` | Allow legacy `TRADE_ISSUER` |
+| `ISSUER_ROUTER_MIN_TIER` | `untrusted` | Minimum issuer tier to allow |
+
+### Analytics & Learning
+
+| Variable | Default | Description |
+|---|---|---|
+| `ADAPTIVE_LOOKBACK_HOURS` | `24` | Adaptive learner lookback |
+| `ADAPTIVE_MIN_SAMPLES` | `25` | Adaptive learner min samples |
+| `ADAPTIVE_ALPHA` | `0.2` | Adaptive learner smoothing |
+| `ADAPTIVE_MAX_SIZE_STEP` | `0.1` | Adaptive size step |
+| `ADAPTIVE_MAX_SLIPPAGE_STEP` | `10` | Adaptive slippage step |
+| `ADAPTIVE_STATE_PATH` | `data/adaptive-state.json` | Adaptive state JSON path |
+| `ADAPTIVE_UPDATE_INTERVAL_MIN` | `15` | Adaptive scheduler interval |
+| `REGIME_POLICY_ENABLED` | `true` | Regime policy engine enable |
+| `REGIME_POLICY_LOOKBACK_HOURS` | `24` | Regime policy lookback |
+| `REGIME_POLICY_MIN_TRADES` | `30` | Regime policy min trades |
+| `REGIME_POLICY_ALPHA` | `0.2` | Regime policy smoothing |
+| `REGIME_DISABLE_SCORE_BPS` | `-5` | Regime disable score |
+| `REGIME_ENABLE_SCORE_BPS` | `2` | Regime enable score |
+| `REGIME_MIN_SIZE` | `0.2` | Regime min size multiplier |
+| `REGIME_MAX_SIZE` | `1.2` | Regime max size multiplier |
+| `REGIME_SIZE_STEP` | `0.1` | Regime size step |
+| `SNAPSHOT_FLUSH_INTERVAL` | `5` | Feedback snapshot flush interval |
+| `LOG_LEVEL` | `info` | Analytics/logging verbosity |
+| `CSV_EXPORT_PATH` | `pnl.csv` | CSV export path for analytics |
+
+### UI & Local API
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3000` | Dashboard HTTP port (custom server) |
+| `NEXT_PUBLIC_UI_USE_MOCK_DATA` | `false` | UI mock data toggle |
+| `BOT_API_ALLOWED_ORIGINS` | — | CORS allowlist (helper exists but not wired; **Not implemented in live trading behavior**) |
+
+For authoritative validation logic, see `src/config/index.ts`, `src/security/safetyPolicy.ts`, `src/xrpl/signer.ts`, and the module config loaders in `src/**`.
+
+---
+
+## Production Readiness Checklist (Code-Backed)
+
+- **Safety policy gates pass**: `enforceSafetyPolicy()` runs before runtime initialization and blocks unsafe mainnet configs.  
+- **Local-only enforcement confirmed**: server binds to `127.0.0.1`, `BOT_LOCAL_ONLY` is set for production, and `withLocalApi` rejects non-localhost/proxied requests.  
+- **Config validation succeeds**: `validateTradingPair()` and `assertAllowedPair()` run on startup and on pair switches.  
+- **Observability live**: `ObservabilityBus`, `PerfTracer`, `EventLoopLagTracker`, and `CpuWatchdog` are active for runtime telemetry and infra auto-pause.  
+- **Persistence verified**: instrument registry, exposure store, breaker store, and analytics JSON state paths are writable (`data/` dir).  
+- **Runbooks staged**: operators have tested `/api/bot/run`, `/api/bot/pause`, `/api/bot/kill`, and SIGTERM graceful shutdown procedures.  
+
+---
+
+## Failure Modes + Automatic Responses
+
+- **Feed stall / stale data** → `FeedStallRecovery` escalates (soft reconnect → hard resubscribe → full client rebuild) and `ExecutionGate` blocks execution during recovery; `RuntimeFSM` can move into `RECOVERING`.  
+- **Execution blocked** → `ExecutionGate` returns `BLOCK` when runtime is not READY, feeds are disconnected, pair switching is active, recovery is in progress, risk shutdown is active, snapshots are invalid, balances/ledger are stale, or health is below threshold.  
+- **Hard risk breach** → `HardRiskGuard` blocks when exposure/skew/drawdown/balance staleness/feed health exceed limits and emits risk-block events.  
+- **Capital protection trip** → `CapitalProtectionEngine` can THROTTLE (size + cooldown), PAUSE (skip strategies), or SHUTDOWN (sets emergency shutdown flag).  
+- **Infra overload** → CPU watchdog and event loop lag tracker auto-pause by skipping ticks until recovery.  
 
 ---
 
@@ -834,9 +901,13 @@ For the full list with comments, see `.env.example`. For authoritative validatio
 git clone <repo-url> && cd xrpl-trading-bot
 npm install
 
-# Copy and configure environment
-cp .env.example .env
-# Edit .env: set XRPL_NETWORK=testnet, PAPER_TRADING=true
+# Create and configure environment
+cat <<'EOF' > .env
+XRPL_NETWORK=testnet
+XRPL_WSS_URL=wss://s.altnet.rippletest.net:51233
+PAPER_TRADING=true
+BOT_LOCAL_ONLY=true
+EOF
 
 # Create a testnet wallet (optional — funded by faucet)
 npm run faucet
@@ -846,16 +917,15 @@ npm run dev
 # Dashboard available at http://localhost:3000
 ```
 
-### Safe Defaults
+### Defaults When `.env` Is Absent
 
-The development configuration starts with maximum safety:
+The code defaults (from `src/config/index.ts`) if no `.env` is present:
 
 - `PAPER_TRADING=true` — no real transactions
-- `XRPL_NETWORK=testnet` — testnet by default
-- `BOT_LOCAL_ONLY=true` — localhost only
-- `BOT_API_DEV_MODE=true` — skip proxy header checks (Next.js dev server adds `X-Forwarded-For`)
-- `POSITION_SIZE_XRP=2` — minimal position size
-- `MAX_DAILY_LOSS_XRP=100` — conservative daily loss limit
+- `XRPL_NETWORK=mainnet` — mainnet data (paper trading still enabled)
+- `TRADE_BASE_CURRENCY=XRP` / `TRADE_QUOTE_CURRENCY=NZD`
+- `POSITION_SIZE_XRP=5`
+- `MAX_DAILY_LOSS_XRP=500`
 
 ### Build & Verify
 
@@ -954,12 +1024,20 @@ Every item must be completed and verified before enabling live trading on mainne
 - [ ] **Monitoring**: Dashboard accessible at `http://127.0.0.1:3000`, `/api/health` returning `ok: true`
 - [ ] **Alerting**: External health check polling `/api/health` (returns 503 when disconnected)
 - [ ] **Build passes**: `npm run build` completes with zero errors
-- [ ] **Tests pass**: `npm test -- --run` — all 1257+ tests green
+- [ ] **Tests pass**: `npm test -- --run`
 - [ ] **Type checks pass**: Both `tsconfig.json` and `tsconfig.web.json`
 
 ---
 
-## Incident Runbooks
+## Operational Runbooks
+
+### Start Trading
+
+```
+POST http://127.0.0.1:3000/api/bot/run
+```
+
+Effect: Starts the runtime tick loop (idempotent if already running).
 
 ### Pause Trading (Non-Emergency)
 
@@ -993,7 +1071,7 @@ kill -SIGTERM <pid>
 3. If using seed signer on testnet, ensure `XRPL_NETWORK=testnet` (seed is blocked on mainnet)
 4. As last resort: `SIGNER_SKIP_READY_CHECK=true` (dangerous — signer will fail at sign time)
 
-### RPC Outage / WebSocket Disconnection
+### WebSocket Outage / RPC Disconnection
 
 **Symptom**: XRPL WebSocket disconnects. Dashboard shows `XRPL_DISCONNECTED` events.
 
@@ -1055,10 +1133,10 @@ Enforced at four independent levels:
 
 | Layer | Module | Enforcement |
 |---|---|---|
-| Server binding | `web/server.js` | HTTP server binds to `127.0.0.1` only |
+| Server binding | `server.js` | HTTP server binds to `127.0.0.1` only |
 | CLI startup | `src/security/localOnly.ts` | Cloud platform detection, `BOT_LOCAL_ONLY` check |
 | Runtime construction | `src/runtime/tradingRuntime.ts` | `enforceLocalOnly('TradingRuntime')` in constructor |
-| API middleware | `web/lib/localApi/withLocalApi.ts` | Rejects non-localhost socket addresses, rejects proxy headers |
+| API middleware | `src/ui/lib/localApi/withLocalApi.ts` | Rejects non-localhost socket addresses, rejects proxy headers |
 
 Cloud platform detection checks for: Vercel, AWS, Google Cloud, Azure, Heroku, Railway, Render, Fly.io, DigitalOcean, Netlify, Kubernetes.
 
@@ -1078,13 +1156,12 @@ Evaluated at `TradingRuntime.start()` before any component initialization:
 
 - All API routes wrapped with `withLocalApi` — localhost socket check + proxy header rejection
 - Optional `LOCAL_API_TOKEN` header validation (set via `LOCAL_API_TOKEN` env var)
-- HMAC-based API key support for production (`BOT_API_KEYS` env var — JSON array with `id`, `secret`, `role`)
-- RBAC roles: `admin` (full access), `operator` (order management), `readonly` (read-only endpoints)
-- Request replay protection via nonce + timestamp validation
+- CORS allowlist helper exists in `src/ui/lib/http/cors.ts` but is not wired to API routes (**Not implemented in live trading behavior**)
+- No HMAC/RBAC API key layer is wired beyond `LOCAL_API_TOKEN` (**Not implemented in live trading behavior**)
 
 ### Audit Logging
 
-- `web/lib/localApi/audit.ts` writes JSONL to `data/audit.log`
+- `src/ui/lib/localApi/audit.ts` writes JSONL to `data/audit.log`
 - Every API request logged with: `timestamp`, `requestId`, `method`, `path`, `ip`
 - Sensitive fields automatically redacted (`secret`, `password`, `token`, `apiKey`, `seed`, `privateKey`, `mnemonic`)
 
@@ -1101,7 +1178,7 @@ Evaluated at `TradingRuntime.start()` before any component initialization:
 ### Running Tests
 
 ```bash
-# Run all tests (1257+ tests across 50+ test files)
+# Run all tests
 npm test -- --run
 
 # Run tests in watch mode
@@ -1167,15 +1244,15 @@ Before opening a PR:
 - [ ] No secrets in code (use `.env` and `src/security/secretBox.ts`)
 - [ ] Risk-affecting changes include test coverage
 - [ ] New strategies registered in `TradingRuntime.start()` and conform to `Strategy` interface (`src/strategies/types.ts`)
-- [ ] New env vars documented in `.env.example` with defaults and description
+- [ ] New env vars documented in README config tables and module config loaders
 - [ ] New API routes wrapped with `withLocalApi` middleware
-- [ ] Client-side components do NOT import from `src/market/instrumentRegistry/` (use `web/lib/instruments.ts` instead — avoids `better-sqlite3` in webpack bundle)
+- [ ] Client-side components do NOT import from `src/market/instrumentRegistry/` (use `src/ui/lib/instruments.ts` instead — avoids `better-sqlite3` in webpack bundle)
 
 ### Code Conventions
 
 - Backend: CommonJS (`tsconfig.json`), target ES2020
 - Frontend: ESNext/bundler (`tsconfig.web.json`), React 18, Next.js 14
-- Styling: Tailwind CSS, content scanned from `./web/`
+- Styling: Tailwind CSS, content scanned from `./src/ui/`
 - Logging: Pino with child loggers (`runtimeLog`, `riskLog`, `xrplLog`, `marketLog`)
 - Rate limiting: `src/utils/rateLimiter.ts` — throttle strategy execution to prevent CPU spikes
 - Error handling: Prefer structured errors with actionable messages; never swallow errors in risk-critical paths
