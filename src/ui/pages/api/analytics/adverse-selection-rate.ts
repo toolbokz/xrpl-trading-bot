@@ -1,37 +1,42 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
-import { feedbackEngine, AdverseSelectionRateResult } from '../../../../analytics/feedbackEngine';
+import { computeAdverseSelectionRate } from '../../../../analytics/feedbackEngine';
+import { querySnapshots } from '../../../../analytics/feedbackDb';
 
 export const config = {
     api: { bodyParser: false },
 };
 
 /**
- * Adverse selection rate API response shape
+ * Adverse selection rate response shape
  */
-export interface AdverseSelectionRateApiResponse {
+export interface AdverseSelectionRateResponse {
     requestId: string;
     timestamp: string;
     filters: {
         pairKey: string | null;
-        windowMs: number | null;
+        windowMs: number;
     };
-    rate: AdverseSelectionRateResult;
+    sampleCount: number;
+    adverseCount: number;
+    adverseRate: number;
 }
+
+/** Default lookback window: 1 hour */
+const DEFAULT_WINDOW_MS = 60 * 60 * 1000;
 
 /**
  * GET /api/analytics/adverse-selection-rate
  *
- * Returns the rolling adverse selection rate computed from persisted
- * market snapshot flags.
+ * Returns rolling adverse selection rate computed from market snapshots.
  *
  * Query params:
  * - pairKey: Filter by trading pair (e.g., "XRP/RLUSD")
- * - windowMs: Rolling lookback window in milliseconds (e.g., 3600000 for 1 h)
+ * - windowMs: Lookback window in milliseconds (default: 3600000 = 1 hour)
  */
 function handler(
     req: LocalRequest,
-    res: NextApiResponse<AdverseSelectionRateApiResponse | { error: string }>,
+    res: NextApiResponse<AdverseSelectionRateResponse | { error: string }>,
 ) {
     if (req.method !== 'GET') {
         return res.status(405).json({ error: 'Method not allowed' });
@@ -40,29 +45,41 @@ function handler(
     try {
         const { pairKey, windowMs } = req.query;
 
-        const params: { pairKey?: string; windowMs?: number } = {};
-
+        let parsedPairKey: string | undefined;
         if (typeof pairKey === 'string' && pairKey.trim()) {
-            params.pairKey = pairKey.trim();
+            parsedPairKey = pairKey.trim();
         }
 
+        let parsedWindowMs = DEFAULT_WINDOW_MS;
         if (typeof windowMs === 'string') {
             const parsed = parseInt(windowMs, 10);
             if (!isNaN(parsed) && parsed > 0) {
-                params.windowMs = parsed;
+                parsedWindowMs = parsed;
             }
         }
 
-        const rate = feedbackEngine.getAdverseSelectionRate(params);
+        const sinceMs = Date.now() - parsedWindowMs;
 
-        const response: AdverseSelectionRateApiResponse = {
+        const filters: { pairKey?: string; sinceMs?: number } = { sinceMs };
+        if (parsedPairKey) {
+            filters.pairKey = parsedPairKey;
+        }
+
+        const snapshots = querySnapshots(filters);
+
+        const { sampleCount, adverseCount, adverseRate } =
+            computeAdverseSelectionRate(snapshots);
+
+        const response: AdverseSelectionRateResponse = {
             requestId: req.requestId,
             timestamp: new Date().toISOString(),
             filters: {
-                pairKey: params.pairKey ?? null,
-                windowMs: params.windowMs ?? null,
+                pairKey: parsedPairKey ?? null,
+                windowMs: parsedWindowMs,
             },
-            rate,
+            sampleCount,
+            adverseCount,
+            adverseRate,
         };
 
         return res.status(200).json(response);
@@ -72,4 +89,4 @@ function handler(
     }
 }
 
-export default withLocalApi(handler);
+export default withLocalApi(handler, { methods: ['GET'] });

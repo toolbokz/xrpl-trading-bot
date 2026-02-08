@@ -1,43 +1,13 @@
 /**
- * Regime PnL unit tests
- *
- * Verifies that totalPnl and pnlPerTrade are correctly computed
- * in both getRegimeHeatmap() and getRegimeMatrix() (via getAnalytics).
+ * Regime PnL unit tests (PR2)
+ * Verifies that getRegimeMatrix returns totalPnl and pnlPerTrade fields.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 
-// Types
-interface TradeEventRecord {
-    id: string;
-    ts: number;
-    pairKey: string;
-    strategy: string;
-    action: 'fill' | 'offer_create' | 'offer_cancel' | 'error' | 'reject';
-    side: 'buy' | 'sell' | null;
-    intentPrice: number | null;
-    fillPrice: number | null;
-    intentSizeBase: number | null;
-    fillSizeBase: number | null;
-    fillSizeQuote: number | null;
-    slippageBpsVsIntent: number | null;
-    isPartial: number | null;
-    isBotTrade: number | null;
-    midPriceAtDecision: number | null;
-    [key: string]: unknown;
-}
-
-interface MarketSnapshotRecord {
-    id: string;
-    ts: number;
-    pairKey: string;
-    flowRegime: string | null;
-    spreadBps: number | null;
-    [key: string]: unknown;
-}
-
 type FlowRegime = 'quiet' | 'normal' | 'trendingUp' | 'trendingDown' | 'chaotic' | 'illiquid';
 
+// Mock better-sqlite3 database
 let mockDb: Database.Database | null = null;
 
 vi.mock('../feedbackDb', async () => {
@@ -75,6 +45,7 @@ vi.mock('../feedbackDb', async () => {
                         fillRatio REAL,
                         isPartial INTEGER
                     );
+                    
                     CREATE TABLE IF NOT EXISTS market_snapshots (
                         id TEXT PRIMARY KEY,
                         ts INTEGER NOT NULL,
@@ -94,8 +65,10 @@ vi.mock('../feedbackDb', async () => {
                         vwap REAL,
                         vwapDeviationBps REAL,
                         tradeCount INTEGER,
-                        volumeVelocity REAL
+                        volumeVelocity REAL,
+                        adverseSelectionRisk INTEGER
                     );
+                    
                     CREATE INDEX IF NOT EXISTS idx_trade_events_ts ON trade_events(ts);
                     CREATE INDEX IF NOT EXISTS idx_market_snapshots_ts ON market_snapshots(ts);
                     CREATE INDEX IF NOT EXISTS idx_market_snapshots_pairKey ON market_snapshots(pairKey);
@@ -103,9 +76,9 @@ vi.mock('../feedbackDb', async () => {
             }
             return mockDb;
         },
-        insertTradeEvent: (event: TradeEventRecord) => {
+        insertTradeEvent: (event: any) => {
             const db = mockDb!;
-            db.prepare(`
+            const stmt = db.prepare(`
                 INSERT INTO trade_events (
                     id, ts, pairKey, strategy, action, side,
                     intentPrice, intentSizeBase, intentSizeQuote,
@@ -116,52 +89,82 @@ vi.mock('../feedbackDb', async () => {
                     edgeBpsVsMid, netEdgeBpsVsMid, txFeeXrp, ammFeeBps,
                     fillRatio, isPartial
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-                event.id, event.ts, event.pairKey, event.strategy, event.action, event.side ?? null,
-                event.intentPrice ?? null, event.intentSizeBase ?? null, event.intentSizeQuote ?? null,
-                event.fillPrice ?? null, event.fillSizeBase ?? null, event.fillSizeQuote ?? null,
-                null, null, null, null,
-                event.isBotTrade ?? null, event.midPriceAtDecision ?? null,
-                event.slippageBpsVsIntent ?? null, null, null,
-                null, null, null, null, null, event.isPartial ?? null,
+            `);
+            stmt.run(
+                event.id ?? `test-${Date.now()}-${Math.random()}`,
+                event.ts, event.pairKey, event.strategy, event.action,
+                event.side ?? null, event.intentPrice ?? null,
+                event.intentSizeBase ?? null, event.intentSizeQuote ?? null,
+                event.fillPrice ?? null, event.fillSizeBase ?? null,
+                event.fillSizeQuote ?? null, event.txHash ?? null,
+                event.ledgerIndex ?? null, event.resultCode ?? null,
+                event.error ?? null, event.isBotTrade ?? null,
+                event.midPriceAtDecision ?? null,
+                event.slippageBpsVsIntent ?? null, event.slippageBpsVsMid ?? null,
+                event.spreadPaidBps ?? null, event.edgeBpsVsMid ?? null,
+                event.netEdgeBpsVsMid ?? null, event.txFeeXrp ?? null,
+                event.ammFeeBps ?? null, event.fillRatio ?? null,
+                event.isPartial ?? null,
             );
         },
-        insertMarketSnapshot: (snapshot: MarketSnapshotRecord) => {
+        insertMarketSnapshot: (snapshot: any) => {
             const db = mockDb!;
-            db.prepare(`
+            const stmt = db.prepare(`
                 INSERT INTO market_snapshots (
                     id, ts, pairKey, ledgerIndex, midPrice, spreadBps,
                     bestBid, bestAsk, bidDepthBase, askDepthBase,
                     flowRegime, flowImbalance, flowDepthImbalance,
                     flowCombined, flowStrength, vwap, vwapDeviationBps,
-                    tradeCount, volumeVelocity
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-                snapshot.id, snapshot.ts, snapshot.pairKey,
-                null, null, snapshot.spreadBps ?? null,
-                null, null, null, null,
-                snapshot.flowRegime ?? null, null, null,
-                null, null, null, null, null, null,
+                    tradeCount, volumeVelocity, adverseSelectionRisk
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+            stmt.run(
+                snapshot.id ?? `snap-${Date.now()}-${Math.random()}`,
+                snapshot.ts, snapshot.pairKey, snapshot.ledgerIndex ?? null,
+                snapshot.midPrice ?? null, snapshot.spreadBps ?? null,
+                snapshot.bestBid ?? null, snapshot.bestAsk ?? null,
+                snapshot.bidDepthBase ?? null, snapshot.askDepthBase ?? null,
+                snapshot.flowRegime ?? null, snapshot.flowImbalance ?? null,
+                snapshot.flowDepthImbalance ?? null, snapshot.flowCombined ?? null,
+                snapshot.flowStrength ?? null, snapshot.vwap ?? null,
+                snapshot.vwapDeviationBps ?? null, snapshot.tradeCount ?? null,
+                snapshot.volumeVelocity ?? null, snapshot.adverseSelectionRisk ?? null,
             );
         },
-        queryTradeEvents: (filters: { pairKey?: string; sinceMs?: number } = {}) => {
+        queryTradeEvents: (filters: any = {}) => {
             const db = mockDb!;
-            const conds: string[] = [];
-            const params: (string | number)[] = [];
-            if (filters.pairKey) { conds.push('pairKey = ?'); params.push(filters.pairKey); }
-            if (filters.sinceMs !== undefined) { conds.push('ts >= ?'); params.push(filters.sinceMs); }
-            const where = conds.length > 0 ? `WHERE ${conds.join(' AND ')}` : '';
-            return db.prepare(`SELECT * FROM trade_events ${where} ORDER BY ts DESC`).all(...params) as TradeEventRecord[];
+            const conditions: string[] = [];
+            const params: any[] = [];
+            if (filters.sinceMs !== undefined) {
+                conditions.push('ts >= ?');
+                params.push(filters.sinceMs);
+            }
+            if (filters.untilMs !== undefined) {
+                conditions.push('ts <= ?');
+                params.push(filters.untilMs);
+            }
+            const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+            return db.prepare(`SELECT * FROM trade_events ${where} ORDER BY ts DESC`).all(...params);
         },
         getSnapshotNear: (pairKey: string, ts: number, toleranceMs: number = 5000) => {
             const db = mockDb!;
             return db.prepare(`
-                SELECT * FROM market_snapshots
+                SELECT * FROM market_snapshots 
                 WHERE pairKey = ? AND ts BETWEEN ? AND ?
                 ORDER BY ABS(ts - ?) LIMIT 1
-            `).get(pairKey, ts - toleranceMs, ts + toleranceMs, ts) as MarketSnapshotRecord | null;
+            `).get(pairKey, ts - toleranceMs, ts + toleranceMs, ts) ?? null;
+        },
+        querySnapshots: (filters: any = {}) => {
+            const db = mockDb!;
+            let sql = 'SELECT * FROM market_snapshots WHERE 1=1';
+            const params: any[] = [];
+            if (filters.pairKey) { sql += ' AND pairKey = ?'; params.push(filters.pairKey); }
+            if (filters.sinceMs) { sql += ' AND ts >= ?'; params.push(filters.sinceMs); }
+            sql += ' ORDER BY ts DESC';
+            return db.prepare(sql).all(...params);
         },
         pruneOldData: () => ({ deletedEvents: 0, deletedSnapshots: 0 }),
+        closeFeedbackDb: () => { },
         generateId: () => `test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     };
 });
@@ -170,44 +173,39 @@ import { feedbackEngine } from '../feedbackEngine';
 import { insertTradeEvent, insertMarketSnapshot, getFeedbackDb } from '../feedbackDb';
 
 /**
- * Helper: insert a bot fill with a matching snapshot in a given regime.
- * fillPrice vs midPriceAtDecision determines PnL direction via edge-based calc:
- *   pnl ≈ (edgeBps / 10000) * fillPrice * fillSizeBase
- *   for buys: edgeBps = (midPrice - fillPrice) / midPrice * 10000
- *     → buying below mid = positive edge = profit
+ * Insert a fill with a matching snapshot so getRegimeMatrix can link them.
  */
-function insertFill(
+function insertFillWithSnapshot(
     ts: number,
+    strategy: string,
     regime: FlowRegime,
     opts: {
-        fillPrice: number;
-        midPrice: number;
+        fillPrice?: number;
+        midPriceAtDecision?: number;
         fillSizeBase?: number;
-        strategy?: string;
         pairKey?: string;
-    },
+        side?: 'buy' | 'sell';
+    } = {},
 ) {
     const pairKey = opts.pairKey ?? 'XRP/USD';
     const id = `fill-${ts}-${Math.random().toString(36).slice(2)}`;
 
-    (insertTradeEvent as (e: unknown) => void)({
+    (insertTradeEvent as any)({
         id,
         ts,
         pairKey,
-        strategy: opts.strategy ?? 'scalper',
+        strategy,
         action: 'fill',
-        side: 'buy',
+        side: opts.side ?? 'buy',
         isBotTrade: 1,
-        fillPrice: opts.fillPrice,
+        fillPrice: opts.fillPrice ?? 0.50,
         fillSizeBase: opts.fillSizeBase ?? 100,
-        intentPrice: opts.midPrice,
-        midPriceAtDecision: opts.midPrice,
-        slippageBpsVsIntent: 0,
-        isPartial: 0,
+        intentPrice: opts.midPriceAtDecision ?? (opts.fillPrice ?? 0.50),
+        midPriceAtDecision: opts.midPriceAtDecision ?? (opts.fillPrice ?? 0.50),
     });
 
-    (insertMarketSnapshot as (s: unknown) => void)({
-        id: `snap-${ts}-${Math.random().toString(36).slice(2)}`,
+    (insertMarketSnapshot as any)({
+        id: `snap-${ts}`,
         ts,
         pairKey,
         flowRegime: regime,
@@ -215,7 +213,7 @@ function insertFill(
     });
 }
 
-describe('Regime PnL fields', () => {
+describe('FeedbackEngine - Regime PnL (PR2)', () => {
     beforeEach(() => {
         getFeedbackDb();
         mockDb!.exec('DELETE FROM trade_events');
@@ -226,76 +224,59 @@ describe('Regime PnL fields', () => {
         vi.clearAllMocks();
     });
 
-    describe('getRegimeHeatmap — totalPnl + pnlPerTrade', () => {
-        it('should compute correct totalPnl and pnlPerTrade per regime cell', () => {
-            const now = Date.now();
-
-            // 6 winning trades in 'normal' regime — bought at 0.49 with mid 0.50
-            // edgeBps = (0.50 - 0.49) / 0.50 * 10000 = 200 bps
-            // pnl per trade = (200 / 10000) * 0.49 * 100 = 0.98
-            for (let i = 0; i < 6; i++) {
-                insertFill(now - i * 1000, 'normal', {
-                    fillPrice: 0.49,
-                    midPrice: 0.50,
-                    fillSizeBase: 100,
-                });
-            }
-
-            const result = feedbackEngine.getRegimeHeatmap({ minTrades: 5, lookbackHours: 1 });
-            const normalCell = result.global.normal;
-
-            expect(normalCell.trades).toBe(6);
-            expect(normalCell.totalPnl).toBeGreaterThan(0);
-            // pnlPerTrade ≈ 0.98
-            expect(normalCell.pnlPerTrade).toBeCloseTo(normalCell.totalPnl / 6, 6);
-        });
-
-        it('should return 0 totalPnl for empty regime cells', () => {
-            const result = feedbackEngine.getRegimeHeatmap();
-            expect(result.global.chaotic.totalPnl).toBe(0);
-            expect(result.global.chaotic.pnlPerTrade).toBe(0);
-        });
+    it('should return totalPnl and pnlPerTrade = 0 for regimes with no trades', () => {
+        const matrix = feedbackEngine.getRegimeMatrix();
+        for (const rs of matrix) {
+            expect(rs).toHaveProperty('totalPnl');
+            expect(rs).toHaveProperty('pnlPerTrade');
+            expect(rs.totalPnl).toBe(0);
+            expect(rs.pnlPerTrade).toBe(0);
+        }
     });
 
-    describe('getAnalytics().byRegime — totalPnl + pnlPerTrade', () => {
-        it('should include totalPnl and pnlPerTrade in regime stats', () => {
-            const now = Date.now();
+    it('should compute totalPnl and pnlPerTrade for a regime with trades', () => {
+        const now = Date.now();
 
-            // Insert fills in 'normal' regime — profitable buys below mid
-            for (let i = 0; i < 4; i++) {
-                insertFill(now - i * 1000, 'normal', {
-                    fillPrice: 0.49,
-                    midPrice: 0.50,
-                    fillSizeBase: 100,
-                });
-            }
+        // 5 winning trades in 'normal': buy at 0.49 with mid 0.50 → positive edge
+        for (let i = 0; i < 5; i++) {
+            insertFillWithSnapshot(now - i * 1000, 'scalper', 'normal', {
+                fillPrice: 0.49,
+                midPriceAtDecision: 0.50,
+                fillSizeBase: 100,
+                side: 'buy',
+            });
+        }
 
-            // Insert fills in 'chaotic' regime — unprofitable buys above mid
-            for (let i = 0; i < 3; i++) {
-                insertFill(now - (10 + i) * 1000, 'chaotic', {
-                    fillPrice: 0.51,
-                    midPrice: 0.50,
-                    fillSizeBase: 100,
-                });
-            }
+        const matrix = feedbackEngine.getRegimeMatrix();
+        const normal = matrix.find(r => r.regime === 'normal');
 
-            const analytics = feedbackEngine.getAnalytics();
-            const normalRegime = analytics.byRegime.find(r => r.regime === 'normal');
-            const chaoticRegime = analytics.byRegime.find(r => r.regime === 'chaotic');
+        expect(normal).toBeDefined();
+        expect(normal!.trades).toBe(5);
+        // All trades have positive edge → totalPnl > 0
+        expect(normal!.totalPnl).toBeGreaterThan(0);
+        expect(normal!.pnlPerTrade).toBeCloseTo(normal!.totalPnl / 5, 8);
+    });
 
-            expect(normalRegime).toBeDefined();
-            expect(normalRegime!.totalPnl).toBeGreaterThan(0);
-            expect(normalRegime!.pnlPerTrade).toBeCloseTo(normalRegime!.totalPnl / normalRegime!.trades, 6);
+    it('should set pnlPerTrade = totalPnl / trades accurately', () => {
+        const now = Date.now();
 
-            expect(chaoticRegime).toBeDefined();
-            expect(chaoticRegime!.totalPnl).toBeLessThan(0);
-            expect(chaoticRegime!.pnlPerTrade).toBeCloseTo(chaoticRegime!.totalPnl / chaoticRegime!.trades, 6);
+        // 3 wins, 2 losses
+        for (let i = 0; i < 3; i++) {
+            insertFillWithSnapshot(now - i * 1000, 'scalper', 'quiet', {
+                fillPrice: 0.49, midPriceAtDecision: 0.50, fillSizeBase: 100, side: 'buy',
+            });
+        }
+        for (let i = 0; i < 2; i++) {
+            insertFillWithSnapshot(now - (10 + i) * 1000, 'scalper', 'quiet', {
+                fillPrice: 0.51, midPriceAtDecision: 0.50, fillSizeBase: 100, side: 'buy',
+            });
+        }
 
-            // Regimes with no trades should have 0 PnL
-            const quietRegime = analytics.byRegime.find(r => r.regime === 'quiet');
-            expect(quietRegime).toBeDefined();
-            expect(quietRegime!.totalPnl).toBe(0);
-            expect(quietRegime!.pnlPerTrade).toBe(0);
-        });
+        const matrix = feedbackEngine.getRegimeMatrix();
+        const quiet = matrix.find(r => r.regime === 'quiet');
+
+        expect(quiet).toBeDefined();
+        expect(quiet!.trades).toBe(5);
+        expect(quiet!.pnlPerTrade).toBeCloseTo(quiet!.totalPnl / quiet!.trades, 8);
     });
 });

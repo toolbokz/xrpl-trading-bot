@@ -1,0 +1,15 @@
+[
+  {
+    "pair": "XRP/RLUSD",
+    "side": "BUY",
+    "price": 1.4482899326028127,
+    "amount": 2.5,
+    "filled": 2.5,
+    "fee": 0,
+    "pnl": 0,
+    "paper": true,
+    "status": "FILLED",
+    "id": "1770552527795-s8kvcwz",
+    "timestamp": 1770552527795
+  }
+]

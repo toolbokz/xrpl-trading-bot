@@ -30,8 +30,7 @@ import {
     QueryFilters,
     getFeedbackDb,
 } from './feedbackDb';
-import { FlowMetrics, FlowRegime } from '../market/flowMetrics';
-import { hasAdverseSelectionRisk } from '../market/flowMetrics';
+import { FlowMetrics, FlowRegime, hasAdverseSelectionRisk } from '../market/flowMetrics';
 import { OrderBookState } from '../utils/types';
 import { logger } from './logger';
 
@@ -109,7 +108,9 @@ export interface RegimeStats {
     expectancy: number;
     profitFactor: number;
     avgSlippageBps: number;
+    /** Total PnL (approximate) for this regime */
     totalPnl: number;
+    /** Average PnL per trade (totalPnl / trades, 0 if no trades) */
     pnlPerTrade: number;
 }
 
@@ -164,10 +165,6 @@ export interface RegimeHeatmapCell {
     partialFillRate: number;
     /** Composite score: expectancyBps - 0.5*avgSlippageBps - 0.25*avgSpreadBps - 20*partialFillRate */
     score: number;
-    /** Total approximate PnL for trades in this regime cell */
-    totalPnl: number;
-    /** Average PnL per trade (totalPnl / trades, 0 if no trades) */
-    pnlPerTrade: number;
 }
 
 /**
@@ -200,25 +197,11 @@ export interface RegimeHeatmapResponse {
 }
 
 /**
- * A single data point in the rolling profit factor series
+ * Rolling profit factor data point
  */
 export interface ProfitFactorPoint {
-    /** Bucket timestamp (ms) */
     ts: number;
-    /** Cumulative profit factor up to this bucket */
     profitFactor: number;
-}
-
-/**
- * Result of adverse selection rate computation
- */
-export interface AdverseSelectionRateResult {
-    /** Total snapshots with non-null adverseSelectionRisk */
-    sampleCount: number;
-    /** Number of snapshots where adverseSelectionRisk === 1 */
-    adverseCount: number;
-    /** adverseCount / sampleCount (0 if sampleCount === 0) */
-    adverseRate: number;
 }
 
 /**
@@ -229,7 +212,7 @@ export interface AnalyticsResponse {
     byRegime: RegimeStats[];
     byStrategy: StrategyStats[];
     drawdown: DrawdownPoint[];
-    /** Rate of drawdown increase — max(Δdrawdown / Δt) across consecutive buckets (per hour) */
+    /** Max rate of drawdown increase across consecutive buckets (per hour) */
     drawdownVelocity: number;
     /** Rolling cumulative profit factor series aligned with drawdown buckets */
     profitFactorSeries: ProfitFactorPoint[];
@@ -307,7 +290,9 @@ class FeedbackEngine {
                 vwapDeviationBps: input.flow?.vwapDeviationBps ?? null,
                 tradeCount: input.flow?.tradeCount ?? null,
                 volumeVelocity: input.flow?.volumeVelocity ?? null,
-                adverseSelectionRisk: input.flow ? (hasAdverseSelectionRisk(input.flow) ? 1 : 0) : null,
+                adverseSelectionRisk: input.flow
+                    ? (hasAdverseSelectionRisk(input.flow) ? 1 : 0)
+                    : null,
             };
 
             this.snapshotBuffer.push(snapshot);
@@ -450,7 +435,9 @@ class FeedbackEngine {
                     vwapDeviationBps: snapshot.flow?.vwapDeviationBps ?? null,
                     tradeCount: snapshot.flow?.tradeCount ?? null,
                     volumeVelocity: snapshot.flow?.volumeVelocity ?? null,
-                    adverseSelectionRisk: snapshot.flow ? (hasAdverseSelectionRisk(snapshot.flow) ? 1 : 0) : null,
+                    adverseSelectionRisk: snapshot.flow
+                        ? (hasAdverseSelectionRisk(snapshot.flow) ? 1 : 0)
+                        : null,
                 };
             }
 
@@ -727,11 +714,9 @@ class FeedbackEngine {
             let spreadCount = 0;
             let partialCount = 0;
             let totalTradeSize = 0;
-            let cellTotalPnl = 0;
 
             for (const { event, spreadBps } of regimeEvents) {
                 const pnl = this.computeEventPnl(event);
-                cellTotalPnl += pnl;
                 const edge = this.computeEdgeBps(event);
                 const slippage = event.slippageBpsVsIntent ?? this.computeSlippageBps(event);
 
@@ -800,8 +785,6 @@ class FeedbackEngine {
                 avgSpreadBps,
                 partialFillRate,
                 score,
-                totalPnl: cellTotalPnl,
-                pnlPerTrade: trades > 0 ? cellTotalPnl / trades : 0,
             };
         }
 
@@ -823,8 +806,6 @@ class FeedbackEngine {
             avgSpreadBps: 0,
             partialFillRate: 0,
             score: 0,
-            totalPnl: 0,
-            pnlPerTrade: 0,
         };
     }
 
@@ -1291,138 +1272,6 @@ class FeedbackEngine {
     }
 
     /**
-     * Compute drawdown velocity: max rate of drawdown increase across consecutive
-     * drawdown points, expressed as drawdown-fraction per hour.
-     * Returns 0 when fewer than 2 drawdown points exist.
-     */
-    private computeDrawdownVelocity(drawdownPoints: DrawdownPoint[]): number {
-        if (drawdownPoints.length < 2) return 0;
-
-        let maxVelocity = 0;
-
-        for (let i = 1; i < drawdownPoints.length; i++) {
-            const prev = drawdownPoints[i - 1]!;
-            const curr = drawdownPoints[i]!;
-            const deltaDrawdown = curr.drawdown - prev.drawdown;
-            const deltaMs = curr.ts - prev.ts;
-
-            // Only care about drawdown *increasing* (positive delta)
-            if (deltaDrawdown > 0 && deltaMs > 0) {
-                const velocityPerHour = deltaDrawdown / (deltaMs / 3_600_000);
-                if (velocityPerHour > maxVelocity) {
-                    maxVelocity = velocityPerHour;
-                }
-            }
-        }
-
-        return maxVelocity;
-    }
-
-    /**
-     * Compute a rolling cumulative profit factor series aligned with the
-     * same bucketing as getRollingDrawdown (default 1 h buckets).
-     * Each point shows the cumulative profit factor up to (and including) that bucket.
-     */
-    private computeProfitFactorSeries(filters: QueryFilters = {}, bucketMs: number = 3_600_000): ProfitFactorPoint[] {
-        if (!this.ensureInitialized()) return [];
-
-        try {
-            const events = queryTradeEvents(filters);
-            if (events.length === 0) return [];
-
-            const sorted = [...events].sort((a, b) => a.ts - b.ts);
-            const firstEvent = sorted[0];
-            if (!firstEvent) return [];
-
-            let cumulativeGain = 0;
-            let cumulativeLoss = 0;
-            const points: ProfitFactorPoint[] = [];
-            let currentBucket = Math.floor(firstEvent.ts / bucketMs) * bucketMs;
-
-            const emitPoint = (ts: number) => {
-                const pf = cumulativeLoss > 0
-                    ? cumulativeGain / cumulativeLoss
-                    : (cumulativeGain > 0 ? 10 : 1);
-                points.push({
-                    ts,
-                    profitFactor: Number.isFinite(pf) ? pf : 10,
-                });
-            };
-
-            for (const event of sorted) {
-                const eventBucket = Math.floor(event.ts / bucketMs) * bucketMs;
-
-                while (eventBucket > currentBucket) {
-                    emitPoint(currentBucket);
-                    currentBucket += bucketMs;
-                }
-
-                const pnl = this.computeEventPnl(event);
-                if (pnl > 0) {
-                    cumulativeGain += pnl;
-                } else {
-                    cumulativeLoss += Math.abs(pnl);
-                }
-            }
-
-            // Emit final bucket
-            emitPoint(currentBucket);
-
-            return points;
-        } catch (err) {
-            logger.warn({ err }, 'Failed to compute profit factor series');
-            return [];
-        }
-    }
-
-    /**
-     * Compute adverse selection rate from snapshot records.
-     * Ignores snapshots where adverseSelectionRisk is null (no flow data).
-     */
-    getAdverseSelectionRate(params: { pairKey?: string; windowMs?: number } = {}): AdverseSelectionRateResult {
-        if (!this.ensureInitialized()) {
-            return { sampleCount: 0, adverseCount: 0, adverseRate: 0 };
-        }
-
-        try {
-            const db = getFeedbackDb();
-            const conditions: string[] = ['adverseSelectionRisk IS NOT NULL'];
-            const sqlParams: (string | number)[] = [];
-
-            if (params.pairKey) {
-                conditions.push('pairKey = ?');
-                sqlParams.push(params.pairKey);
-            }
-
-            if (params.windowMs) {
-                conditions.push('ts >= ?');
-                sqlParams.push(Date.now() - params.windowMs);
-            }
-
-            const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-            const row = db.prepare(`
-                SELECT
-                    COUNT(*) as sampleCount,
-                    SUM(CASE WHEN adverseSelectionRisk = 1 THEN 1 ELSE 0 END) as adverseCount
-                FROM market_snapshots ${where}
-            `).get(...sqlParams) as { sampleCount: number; adverseCount: number } | undefined;
-
-            const sampleCount = row?.sampleCount ?? 0;
-            const adverseCount = row?.adverseCount ?? 0;
-
-            return {
-                sampleCount,
-                adverseCount,
-                adverseRate: sampleCount > 0 ? adverseCount / sampleCount : 0,
-            };
-        } catch (err) {
-            logger.warn({ err }, 'Failed to get adverse selection rate');
-            return { sampleCount: 0, adverseCount: 0, adverseRate: 0 };
-        }
-    }
-
-    /**
      * Compute approximate PnL for an event
      * Uses edge relative to mid-price as a proxy when actual PnL unavailable
      */
@@ -1522,6 +1371,102 @@ class FeedbackEngine {
             avgFillRatio: null,
         };
     }
+
+    /**
+     * Compute drawdown velocity: maximum rate of drawdown increase across
+     * consecutive drawdown buckets, expressed per hour.
+     * Returns 0 when fewer than 2 drawdown points exist.
+     */
+    private computeDrawdownVelocity(drawdown: DrawdownPoint[]): number {
+        if (drawdown.length < 2) return 0;
+
+        let maxVelocity = 0;
+
+        for (let i = 1; i < drawdown.length; i++) {
+            const prev = drawdown[i - 1]!;
+            const curr = drawdown[i]!;
+            const dtMs = curr.ts - prev.ts;
+            if (dtMs <= 0) continue;
+
+            const ddDelta = curr.drawdown - prev.drawdown;
+            if (ddDelta <= 0) continue; // Only care about increasing drawdown
+
+            const dtHours = dtMs / (60 * 60 * 1000);
+            const velocity = ddDelta / dtHours;
+            if (velocity > maxVelocity) {
+                maxVelocity = velocity;
+            }
+        }
+
+        return maxVelocity;
+    }
+
+    /**
+     * Compute rolling cumulative profit factor series aligned with
+     * drawdown time buckets.
+     */
+    private computeProfitFactorSeries(
+        filters: QueryFilters = {},
+        bucketMs: number = 3600000,
+    ): ProfitFactorPoint[] {
+        if (!this.ensureInitialized()) return [];
+
+        try {
+            const events = queryTradeEvents(filters);
+            if (events.length === 0) return [];
+
+            const sorted = [...events].sort((a, b) => a.ts - b.ts);
+            const firstEvent = sorted[0];
+            if (!firstEvent) return [];
+
+            let cumulativeGain = 0;
+            let cumulativeLoss = 0;
+            const points: ProfitFactorPoint[] = [];
+
+            let currentBucket = Math.floor(firstEvent.ts / bucketMs) * bucketMs;
+            let bucketGain = 0;
+            let bucketLoss = 0;
+
+            for (const event of sorted) {
+                const pnl = this.computeEventPnl(event);
+                const eventBucket = Math.floor(event.ts / bucketMs) * bucketMs;
+
+                if (eventBucket > currentBucket) {
+                    // Emit point for completed bucket
+                    cumulativeGain += bucketGain;
+                    cumulativeLoss += bucketLoss;
+                    const pf = cumulativeLoss > 0
+                        ? cumulativeGain / cumulativeLoss
+                        : (cumulativeGain > 0 ? 10 : 1);
+                    points.push({ ts: currentBucket, profitFactor: pf });
+
+                    // Start new bucket
+                    currentBucket = eventBucket;
+                    bucketGain = pnl > 0 ? pnl : 0;
+                    bucketLoss = pnl <= 0 ? Math.abs(pnl) : 0;
+                } else {
+                    if (pnl > 0) {
+                        bucketGain += pnl;
+                    } else {
+                        bucketLoss += Math.abs(pnl);
+                    }
+                }
+            }
+
+            // Emit final bucket
+            cumulativeGain += bucketGain;
+            cumulativeLoss += bucketLoss;
+            const pf = cumulativeLoss > 0
+                ? cumulativeGain / cumulativeLoss
+                : (cumulativeGain > 0 ? 10 : 1);
+            points.push({ ts: currentBucket, profitFactor: pf });
+
+            return points;
+        } catch (err) {
+            logger.warn({ err }, 'Failed to compute profit factor series');
+            return [];
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1529,6 +1474,37 @@ class FeedbackEngine {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const feedbackEngine = new FeedbackEngine();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Adverse Selection Rate Helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Compute rolling adverse selection rate from market snapshots.
+ * Ignores snapshots where adverseSelectionRisk is null (unknown).
+ */
+export function computeAdverseSelectionRate(
+    snapshots: MarketSnapshotRecord[],
+): { sampleCount: number; adverseCount: number; adverseRate: number } {
+    let sampleCount = 0;
+    let adverseCount = 0;
+
+    for (const snap of snapshots) {
+        if (snap.adverseSelectionRisk === null || snap.adverseSelectionRisk === undefined) {
+            continue; // Ignore unknown values
+        }
+        sampleCount++;
+        if (snap.adverseSelectionRisk === 1) {
+            adverseCount++;
+        }
+    }
+
+    return {
+        sampleCount,
+        adverseCount,
+        adverseRate: sampleCount > 0 ? adverseCount / sampleCount : 0,
+    };
+}
 
 // Convenience re-exports
 export type {

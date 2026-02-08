@@ -485,29 +485,12 @@ export default function Page() {
                     />
                 </div>
 
-                {/* ROWS 2-3: Order Book (left) + Center panels + Trade Tape (right) */}
-                <div className="grid grid-cols-1 xl:grid-cols-[280px_1fr_280px] gap-2 lg:h-[728px]">
-                    {/* Left column: Order Book spanning rows 2-3 */}
-                    <div className="min-h-0 h-full overflow-hidden">
-                        <OrderBookPanel
-                            bids={orderBookBids}
-                            asks={orderBookAsks}
-                            midPrice={midPrice}
-                            spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
-                            loading={orderBookLoading}
-                            error={orderBookError}
-                        />
-                    </div>
-
-                    {/* Center: Flow Sentiment top, Strategy & Risk + Bot Logs bottom */}
+                {/* ROWS 2-3: Main panels + Bot Logs column on the right */}
+                <div className="grid grid-cols-1 xl:grid-cols-[1fr_280px] gap-2 lg:h-[728px]">
+                    {/* Left: Rows 2 and 3 stacked */}
                     <div className="flex flex-col gap-2 min-h-0">
-                        {/* ROW 2: Flow Sentiment (full width) */}
-                        <div className="lg:flex-[380] min-h-0 overflow-hidden">
-                            <FlowMetricsPanel pollInterval={2000} />
-                        </div>
-
-                        {/* ROW 3: Strategy & Risk + Bot Logs side by side */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 lg:flex-[340] min-h-0">
+                        {/* ROW 2: Strategy & Risk, Flow Sentiment spanning 2 cols (3-col grid) */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 lg:flex-[380] min-h-0">
                             <div className="min-h-0 h-full overflow-y-auto scrollbar-thin">
                                 <ControlsPanel
                                     strategy={bot.strategy}
@@ -526,23 +509,40 @@ export default function Page() {
                                     loading={actionLoading}
                                 />
                             </div>
+                            <div className="min-h-0 h-full overflow-hidden md:col-span-2">
+                                <FlowMetricsPanel pollInterval={2000} />
+                            </div>
+                        </div>
+
+                        {/* ROW 3: Capital Protection, Order Book, Trade Tape (3 columns) */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 lg:flex-[340] min-h-0">
                             <div className="min-h-0 h-full overflow-hidden">
-                                <LogsPanel maxRows={50} />
+                                <GovernancePanel />
+                            </div>
+                            <div className="min-h-0 h-full overflow-hidden">
+                                <OrderBookPanel
+                                    bids={orderBookBids}
+                                    asks={orderBookAsks}
+                                    midPrice={midPrice}
+                                    spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                                    loading={orderBookLoading}
+                                    error={orderBookError}
+                                />
+                            </div>
+                            <div className="min-h-0 h-full overflow-hidden">
+                                <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={100} />
                             </div>
                         </div>
                     </div>
 
-                    {/* Right column: Trade Tape spanning rows 2-3 */}
+                    {/* Right column: Bot Logs spanning rows 2-3 */}
                     <div className="min-h-0 h-full overflow-hidden">
-                        <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={100} />
+                        <LogsPanel maxRows={50} />
                     </div>
                 </div>
 
-                {/* ROW 4: Capital Protection, Adaptive, Analytics, Regime Performance (4 columns) */}
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 lg:h-[180px]">
-                    <div className="min-h-0 h-full overflow-hidden">
-                        <GovernancePanel />
-                    </div>
+                {/* ROW 4: Adaptive, Analytics, Regime Performance (3 columns) */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 lg:h-[180px]">
                     <div className="min-h-0 h-full overflow-hidden">
                         <AdaptivePanel pollInterval={5000} />
                     </div>
