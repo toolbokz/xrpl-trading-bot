@@ -8,7 +8,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { BarChart3, TrendingUp, AlertTriangle, Activity, Target, Percent, Grid3X3 } from 'lucide-react';
+import { BarChart3, TrendingUp, AlertTriangle, Activity, Target, Percent } from 'lucide-react';
 import clsx from 'clsx';
 import {
     ResponsiveContainer,
@@ -62,39 +62,6 @@ interface AnalyticsApiResponse {
     summary: AnalyticsSummary;
     byRegime: RegimeStats[];
     byStrategy: StrategyStats[];
-}
-
-type FlowRegime = 'quiet' | 'normal' | 'trendingUp' | 'trendingDown' | 'chaotic' | 'illiquid';
-
-interface HeatmapCellData {
-    regime: FlowRegime;
-    trades: number;
-    winRate: number;
-    profitFactor: number;
-    score: number;
-}
-
-interface StrategyHeatmap {
-    perStrategy: Record<string, Record<FlowRegime, HeatmapCellData>>;
-}
-
-const ALL_REGIMES: FlowRegime[] = ['quiet', 'normal', 'trendingUp', 'trendingDown', 'chaotic', 'illiquid'];
-
-const REGIME_SHORT: Record<FlowRegime, string> = {
-    quiet: 'Qt',
-    normal: 'Nm',
-    trendingUp: '↑',
-    trendingDown: '↓',
-    chaotic: 'Ch',
-    illiquid: 'Il',
-};
-
-function scoreColor(score: number): string {
-    if (score >= 2) return 'bg-emerald-600/60 text-emerald-200';
-    if (score >= 0.5) return 'bg-emerald-700/40 text-emerald-300';
-    if (score >= -0.5) return 'bg-slate-700/50 text-slate-300';
-    if (score >= -2) return 'bg-amber-700/40 text-amber-300';
-    return 'bg-red-700/40 text-red-300';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -237,7 +204,6 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
     const [loading, setLoading] = useState(true);
     const analyticsHistoryRef = useRef<AnalyticsHistoryEntry[]>([]);
     const [analyticsHistory, setAnalyticsHistory] = useState<AnalyticsHistoryEntry[]>([]);
-    const [strategyHeatmap, setStrategyHeatmap] = useState<StrategyHeatmap | null>(null);
 
     const fetchAnalytics = useCallback(async () => {
         try {
@@ -274,23 +240,11 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
         }
     }, [pairKey]);
 
-    const fetchHeatmap = useCallback(async () => {
-        try {
-            const res = await fetch('/api/analytics/regimes/heatmap?hours=24&minTrades=5');
-            if (res.ok) {
-                const json = await res.json();
-                setStrategyHeatmap(json.heatmap ?? null);
-            }
-        } catch { /* ignore */ }
-    }, []);
-
     useEffect(() => {
         fetchAnalytics();
-        fetchHeatmap();
         const interval = setInterval(fetchAnalytics, pollInterval);
-        const heatmapInterval = setInterval(fetchHeatmap, 30000);
-        return () => { clearInterval(interval); clearInterval(heatmapInterval); };
-    }, [fetchAnalytics, fetchHeatmap, pollInterval]);
+        return () => clearInterval(interval);
+    }, [fetchAnalytics, pollInterval]);
 
     // Loading state
     if (loading && !data) {
@@ -501,48 +455,6 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
                         )}
                     </div>
                 </div>
-
-                {/* Strategy × Regime Heatmap */}
-                {strategyHeatmap && Object.keys(strategyHeatmap.perStrategy).length > 0 && (
-                    <div>
-                        <div className="flex items-center gap-1 text-[9px] text-slate-500 uppercase tracking-wider mb-1">
-                            <Grid3X3 size={9} />
-                            <span>Strategy × Regime</span>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="text-[9px] w-full">
-                                <thead>
-                                    <tr className="text-slate-500">
-                                        <th className="text-left font-normal pr-1"></th>
-                                        {ALL_REGIMES.map(r => (
-                                            <th key={r} className="font-normal text-center px-0.5">{REGIME_SHORT[r]}</th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {Object.entries(strategyHeatmap.perStrategy).map(([strategy, regimes]) => (
-                                        <tr key={strategy}>
-                                            <td className="text-slate-400 truncate max-w-[60px] pr-1">{strategy}</td>
-                                            {ALL_REGIMES.map(regime => {
-                                                const cell = regimes[regime];
-                                                if (!cell || cell.trades < 1) {
-                                                    return <td key={regime} className="px-0.5 py-0.5"><div className="rounded text-center bg-slate-700/30 text-slate-600 px-1">-</div></td>;
-                                                }
-                                                return (
-                                                    <td key={regime} className="px-0.5 py-0.5">
-                                                        <div className={clsx('rounded text-center px-1 font-mono', scoreColor(cell.score))}>
-                                                            {cell.score.toFixed(1)}
-                                                        </div>
-                                                    </td>
-                                                );
-                                            })}
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                )}
             </div>
 
             {/* Footer */}
