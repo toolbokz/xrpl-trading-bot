@@ -74,8 +74,8 @@ vi.mock('../feedbackDb', async () => {
             }
             return mockDb;
         },
-        insertTradeEvent: () => {},
-        insertMarketSnapshot: () => {},
+        insertTradeEvent: () => { },
+        insertMarketSnapshot: () => { },
         queryTradeEvents: () => [],
         getSnapshotNear: () => null,
         pruneOldData: () => ({ deletedEvents: 0, deletedSnapshots: 0 }),
