@@ -1,0 +1,154 @@
+%% Full architecture diagram source (Mermaid).
+%% Export to SVG:
+%%   npx mmdc -i docs/architecture-full.mmd -o docs/architecture-full.svg
+
+flowchart LR
+    subgraph UI ["UI Layer (Next.js)"]
+        Dashboard["Dashboard<br/>src/ui/app/page.tsx"]
+        APIRoutes["API Routes<br/>src/ui/pages/api/**"]
+        LocalApi["withLocalApi Middleware<br/>src/ui/lib/localApi/"]
+    end
+
+    subgraph Bridge ["Runtime Bridge (src/ui/lib/)"]
+        RuntimeHooks["runtimeHooks.ts"]
+        RuntimeBridge["runtimeBridge.ts"]
+        BotController["botController.ts"]
+    end
+
+    subgraph Runtime ["Runtime Core (src/runtime/)"]
+        TradingRuntime["TradingRuntime<br/>tradingRuntime.ts"]
+        RuntimeFSM["RuntimeFSM (8-state)<br/>runtimeFsm.ts"]
+        PairSwitchFSM["PairSwitchFSM (12-state)<br/>pairSwitchFsm.ts"]
+        PairOrchestrator["PairSwitchOrchestrator<br/>pairSwitchOrchestrator.ts"]
+        CacheRegistry["RuntimeCacheRegistry<br/>runtimeCacheRegistry.ts"]
+        RuntimeSingleton["runtimeSingleton.ts"]
+    end
+
+    subgraph Market ["Market Layer (src/market/)"]
+        InstrumentRegistry["Instrument Registry (SQLite)<br/>instrumentRegistry/"]
+        IssuerRouter["Issuer Router<br/>issuerRouter.ts"]
+        PairResolver["Execution Pair Resolver<br/>executionPairResolver.ts"]
+        AvailScanner["Availability Scanner<br/>availabilityScanner.ts"]
+        TrustGov["Trustline Governance<br/>trustlineGovernance.ts"]
+        LiqIntel["Liquidity Intelligence<br/>liquidityIntelligence.ts"]
+        OrderBook["OrderBookTracker<br/>orderBookTracker.ts"]
+        TradeTape["TradeTape + Service<br/>tradeTape.ts"]
+        FlowMetrics["Flow Metrics<br/>flowMetrics.ts"]
+        FeedStall["Feed Stall Recovery<br/>feedStallRecovery.ts"]
+        DataHealth["Market Data Health<br/>marketDataHealth.ts"]
+    end
+
+    subgraph Execution ["Execution Layer (src/execution/)"]
+        ExecGate["Execution Gate<br/>executionGate.ts"]
+        QualGate["Quality Gate (logic only)<br/>qualityGate.ts"]
+        RepricePolicy["Reprice Policy (logic only)<br/>repricePolicy.ts"]
+        OfferExec["Offer Executor<br/>offerExecutor.ts"]
+        OfferBuild["Offer Builder<br/>offerBuilder.ts"]
+        ExecTrace["Execution Trace<br/>executionTrace.ts"]
+    end
+
+    subgraph Risk ["Risk Layer (src/risk/)"]
+        HardRisk["Hard Risk Guard<br/>hardRiskGuard.ts"]
+        RiskEngine["Risk Engine<br/>riskEngine.ts"]
+        CapProt["Capital Protection<br/>capitalProtection.ts"]
+        ExposureTracker["Exposure Tracker<br/>exposureTracker.ts"]
+    end
+
+    subgraph XRPL ["XRPL Layer (src/xrpl/)"]
+        XRPLClient["XRPLWebSocket<br/>client.ts"]
+        SharedClient["Shared Client<br/>sharedClient.ts"]
+        Signer["Signer (Seed/Xumm/Ledger/KMS)<br/>signer.ts"]
+        TxEngine["Transaction Engine<br/>transactionEngine.ts"]
+        Trustlines["Trustline Manager<br/>trustlines.ts"]
+        Wallet["Wallet<br/>wallet.ts"]
+    end
+
+    subgraph Observability ["Observability & Monitoring"]
+        EventBus["ObservabilityBus<br/>src/observability/eventBus.ts"]
+        PerfTracer["PerfTracer<br/>src/monitoring/perfTracer.ts"]
+        ELLag["EventLoopLagTracker<br/>src/monitoring/eventLoopLag.ts"]
+        CPUDog["CPU Watchdog<br/>src/monitoring/cpuWatchdog.ts"]
+    end
+
+    subgraph Analytics ["Analytics (src/analytics/)"]
+        ExecQuality["Execution Quality<br/>executionQuality.ts"]
+        SlipAttrib["Slippage Attribution<br/>slippageAttribution.ts"]
+        AdaptLearner["Adaptive Learner<br/>adaptiveLearner.ts"]
+        FeedbackEng["Feedback Engine<br/>feedbackEngine.ts"]
+        RegimePolicy["Regime Policy<br/>regimePolicy.ts"]
+    end
+
+    subgraph Persistence ["Persistence"]
+        SQLiteRegistry[("Instrument Registry DB<br/>data/instruments.sqlite")]
+        SQLiteExposure[("Exposure DB<br/>data/exposure.sqlite")]
+        SQLiteFeedback[("Feedback DB<br/>data/feedback.sqlite")]
+        BreakerStore["Circuit Breaker Store<br/>src/persistence/breakerStore.ts"]
+    end
+
+    subgraph Strategies ["Strategies (src/strategies/)"]
+        Scalper["Scalper"]
+        AMMArb["AMM Arbitrage"]
+        PathArb["Path Arbitrage"]
+    end
+
+    Dashboard --> APIRoutes
+    APIRoutes --> LocalApi
+    LocalApi --> RuntimeBridge
+    RuntimeBridge --> RuntimeSingleton
+    RuntimeHooks --> BotController
+    BotController --> TradingRuntime
+    RuntimeSingleton --> TradingRuntime
+
+    TradingRuntime --> RuntimeFSM
+    TradingRuntime --> PairSwitchFSM
+    TradingRuntime --> PairOrchestrator
+    TradingRuntime --> CacheRegistry
+
+    TradingRuntime --> Strategies
+    Strategies --> OfferExec
+    TradingRuntime --> OrderBook
+    TradingRuntime --> TradeTape
+    TradingRuntime --> FlowMetrics
+    TradingRuntime --> FeedStall
+    TradingRuntime --> DataHealth
+    TradingRuntime --> LiqIntel
+
+    TradingRuntime --> ExecGate
+    ExecGate --> DataHealth
+    OfferExec --> QualGate
+    OfferExec --> RepricePolicy
+    OfferExec --> OfferBuild
+    OfferExec --> ExecTrace
+    OfferBuild --> PairResolver
+    PairResolver --> IssuerRouter
+    IssuerRouter --> InstrumentRegistry
+
+    TradingRuntime --> HardRisk
+    TradingRuntime --> RiskEngine
+    TradingRuntime --> CapProt
+    TradingRuntime --> ExposureTracker
+    OfferExec --> ExposureTracker
+
+    TradingRuntime --> XRPLClient
+    XRPLClient --> SharedClient
+    OfferExec --> TxEngine
+    TxEngine --> Signer
+    TrustGov --> Trustlines
+    AvailScanner --> SharedClient
+
+    TradingRuntime --> EventBus
+    TradingRuntime --> PerfTracer
+    TradingRuntime --> ELLag
+    TradingRuntime --> CPUDog
+
+    TradingRuntime --> ExecQuality
+    OfferExec --> ExecQuality
+    ExecQuality --> SlipAttrib
+    TradingRuntime --> AdaptLearner
+    TradingRuntime --> FeedbackEng
+    TradingRuntime --> RegimePolicy
+
+    InstrumentRegistry --> SQLiteRegistry
+    ExposureTracker --> SQLiteExposure
+    FeedbackEng --> SQLiteFeedback
+    PathArb --> BreakerStore
