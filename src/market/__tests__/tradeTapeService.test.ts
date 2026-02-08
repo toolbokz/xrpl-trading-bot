@@ -51,9 +51,46 @@ function createMockOfferCreateTx(options: {
 }
 
 /**
- * Create a DeletedNode for a fully filled offer (XRP/issued).
+ * Create a DeletedNode for a fully filled offer.
+ * XRPL always sets PreviousFields when an offer is consumed (TakerGets/TakerPays
+ * changed from their original value to zero). A DeletedNode WITHOUT PreviousFields
+ * is a cancelled offer, not a trade.
  */
 function createDeletedOfferNode(options: {
+    account: string;
+    takerGets: string | { currency: string; issuer: string; value: string };
+    takerPays: string | { currency: string; issuer: string; value: string };
+}): any {
+    // FinalFields shows the depleted state (zero remaining)
+    const zeroGets = typeof options.takerGets === 'string'
+        ? '0'
+        : { ...options.takerGets, value: '0' };
+    const zeroPays = typeof options.takerPays === 'string'
+        ? '0'
+        : { ...options.takerPays, value: '0' };
+
+    return {
+        DeletedNode: {
+            LedgerEntryType: 'Offer',
+            FinalFields: {
+                Account: options.account,
+                TakerGets: zeroGets,
+                TakerPays: zeroPays,
+            },
+            PreviousFields: {
+                TakerGets: options.takerGets,
+                TakerPays: options.takerPays,
+            },
+        },
+    };
+}
+
+/**
+ * Create a DeletedNode for a CANCELLED offer (e.g. via OfferSequence replacement).
+ * Cancelled offers have no PreviousFields for TakerGets/TakerPays because
+ * those fields didn't change — the offer was just removed.
+ */
+function createCancelledOfferNode(options: {
     account: string;
     takerGets: string | { currency: string; issuer: string; value: string };
     takerPays: string | { currency: string; issuer: string; value: string };
@@ -323,6 +360,31 @@ describe('TradeTapeService', () => {
             expect(tape.size()).toBe(0);
         });
 
+        it('should ignore cancelled offers (DeletedNode without PreviousFields)', () => {
+            // A market maker reprices by cancelling their old offer via OfferSequence.
+            // The cancelled offer appears as a DeletedNode with no PreviousFields
+            // for TakerGets/TakerPays — it must NOT be treated as a trade.
+            const tx = createMockOfferCreateTx({
+                txHash: 'CANCEL123',
+                ledgerIndex: 90000010,
+                takerAccount: 'rMarketMaker',
+                affectedNodes: [
+                    createCancelledOfferNode({
+                        account: 'rMarketMaker',
+                        takerGets: '1000000000000', // 1,000,000 XRP — not a real fill!
+                        takerPays: {
+                            currency: 'RLUSD',
+                            issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De',
+                            value: '1000000',
+                        },
+                    }),
+                ],
+            });
+
+            service.processTransaction(tx);
+            expect(tape.size()).toBe(0); // Must not appear as a trade
+        });
+
         it('should handle multiple offer crossings in single transaction', () => {
             const tx = createMockOfferCreateTx({
                 txHash: 'MULTI123',
@@ -374,7 +436,7 @@ describe('TradeTapeService', () => {
                 ledgerIndex: 90000008,
                 takerAccount: 'rOtherTaker',
                 affectedNodes: [
-                    // This offer belongs to the bot - should be filtered
+                    // This offer belongs to the bot and was consumed - should be filtered
                     createDeletedOfferNode({
                         account: botAddress,
                         takerGets: '100000000',

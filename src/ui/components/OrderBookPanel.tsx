@@ -108,11 +108,11 @@ export function OrderBookPanel({
             </div>
 
             {/* Asks (sells) - reversed so lowest ask is at bottom */}
-            <div className="flex-1 min-h-0 overflow-hidden flex flex-col justify-end">
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col justify-evenly py-1">
                 {displayAsks.map((entry, i) => (
                     <div
                         key={`ask-${i}`}
-                        className="relative grid grid-cols-3 gap-1 px-2.5 py-0.5 text-[11px] font-mono"
+                        className="relative grid grid-cols-3 gap-1 px-2.5 py-0.5 text-[11px] font-mono items-center"
                     >
                         {/* Depth bar */}
                         <div
@@ -137,11 +137,11 @@ export function OrderBookPanel({
             </div>
 
             {/* Bids (buys) */}
-            <div className="flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col justify-evenly py-1">
                 {displayBids.map((entry, i) => (
                     <div
                         key={`bid-${i}`}
-                        className="relative grid grid-cols-3 gap-1 px-2.5 py-0.5 text-[11px] font-mono"
+                        className="relative grid grid-cols-3 gap-1 px-2.5 py-0.5 text-[11px] font-mono items-center"
                     >
                         {/* Depth bar */}
                         <div

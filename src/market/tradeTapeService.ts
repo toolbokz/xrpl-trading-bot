@@ -222,16 +222,18 @@ export class TradeTapeService {
     /**
      * Calculate the fill amount from offer fields.
      * 
-     * For DeletedNode with PreviousFields: Previous - Final = filled amount
-     * For DeletedNode without PreviousFields: entire offer filled in one shot (use FinalFields)
-     * For ModifiedNode: Previous - Final = filled amount (partial fill)
+     * For DeletedNode/ModifiedNode with PreviousFields: Previous - Final = filled amount.
+     * For DeletedNode WITHOUT PreviousFields: the offer was cancelled (e.g. via
+     * OfferSequence replacement), NOT consumed. When an offer is genuinely filled,
+     * XRPL always populates PreviousFields for TakerGets/TakerPays because those
+     * values changed. A DeletedNode with no change to those fields is a cancellation.
      */
     private calculateFill(
         fields: OfferFields,
         previousFields: Partial<OfferFields> | null,
-        isFullFill: boolean
+        _isFullFill: boolean
     ): { takerGets: Amount; takerPays: Amount } | null {
-        // If we have PreviousFields, always compute the delta (both deleted and modified nodes)
+        // If we have PreviousFields, compute the delta (both deleted and modified nodes)
         if (previousFields?.TakerGets && previousFields?.TakerPays) {
             const filledGets = this.subtractAmounts(previousFields.TakerGets, fields.TakerGets);
             const filledPays = this.subtractAmounts(previousFields.TakerPays, fields.TakerPays);
@@ -246,16 +248,8 @@ export class TradeTapeService {
             };
         }
 
-        if (isFullFill) {
-            // No PreviousFields — offer was created and fully consumed in the same ledger
-            // FinalFields contains the entire amount
-            return {
-                takerGets: fields.TakerGets,
-                takerPays: fields.TakerPays,
-            };
-        }
-
-        // ModifiedNode without PreviousFields — shouldn't happen, but bail
+        // No PreviousFields for TakerGets/TakerPays → offer was cancelled, not filled.
+        // Skip to avoid ghost trades from market-maker repricing.
         return null;
     }
 
