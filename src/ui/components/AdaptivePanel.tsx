@@ -152,12 +152,12 @@ export function AdaptivePanel({
     if (loading && !data) {
         return (
             <div className="card h-full flex flex-col">
-                <div className="flex items-center gap-2 p-3 border-b border-white/5">
-                    <Brain size={14} className="text-slate-400" />
-                    <span className="text-xs font-medium text-slate-200">Adaptive</span>
+                <div className="flex items-center gap-1.5 p-2 border-b border-white/5">
+                    <Brain size={12} className="text-slate-400" />
+                    <span className="text-[11px] font-medium text-slate-200">Adaptive</span>
                 </div>
                 <div className="flex-1 flex items-center justify-center p-2">
-                    <RefreshCw size={16} className="animate-spin text-slate-500" />
+                    <RefreshCw size={12} className="animate-spin text-slate-500" />
                 </div>
             </div>
         );
@@ -167,13 +167,13 @@ export function AdaptivePanel({
     if (error && !data) {
         return (
             <div className="card h-full flex flex-col">
-                <div className="flex items-center gap-2 p-3 border-b border-white/5">
-                    <Brain size={14} className="text-slate-400" />
-                    <span className="text-xs font-medium text-slate-200">Adaptive</span>
+                <div className="flex items-center gap-1.5 p-2 border-b border-white/5">
+                    <Brain size={12} className="text-slate-400" />
+                    <span className="text-[11px] font-medium text-slate-200">Adaptive</span>
                 </div>
                 <div className="flex-1 flex items-center justify-center p-2">
-                    <AlertTriangle size={14} className="text-red-400 mr-1" />
-                    <span className="text-xs text-red-400">{error}</span>
+                    <AlertTriangle size={10} className="text-red-400 mr-1" />
+                    <span className="text-[10px] text-red-400">{error}</span>
                 </div>
             </div>
         );
@@ -184,10 +184,10 @@ export function AdaptivePanel({
     return (
         <div className="card h-full flex flex-col overflow-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between p-2.5 border-b border-white/5 shrink-0">
-                <div className="flex items-center gap-2">
-                    <Brain size={14} className="text-slate-400" />
-                    <span className="text-xs font-medium text-slate-200">Adaptive</span>
+            <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-white/5 shrink-0">
+                <div className="flex items-center gap-1.5">
+                    <Brain size={12} className="text-slate-400" />
+                    <span className="text-[11px] font-medium text-slate-200">Adaptive</span>
                 </div>
                 {/* Status Badge */}
                 <button
@@ -206,10 +206,10 @@ export function AdaptivePanel({
             </div>
 
             {/* Content */}
-            <div className="flex-1 p-2.5 space-y-2 overflow-hidden">
+            <div className="flex-1 px-2.5 py-2 space-y-1.5 overflow-hidden">
                 {/* Current Regime */}
                 {regime && (
-                    <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center justify-between text-[11px]">
                         <span className="text-slate-500">Regime</span>
                         <span className={clsx(
                             'font-medium',
@@ -230,8 +230,8 @@ export function AdaptivePanel({
 
                 {/* Current Tuning */}
                 {enabled && currentTuning ? (
-                    <div className="space-y-1.5">
-                        <div className="flex items-center justify-between text-xs">
+                    <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
                             <span className="text-slate-500">Size ×</span>
                             <span className={clsx(
                                 'font-mono',
@@ -242,20 +242,20 @@ export function AdaptivePanel({
                                 {currentTuning.sizeMultiplier.toFixed(2)}
                             </span>
                         </div>
-                        <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center justify-between text-[11px]">
                             <span className="text-slate-500">Max Slip</span>
                             <span className="font-mono text-slate-300">
                                 {currentTuning.maxSlippageBps} bps
                             </span>
                         </div>
-                        <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center justify-between text-[11px]">
                             <span className="text-slate-500">Min Edge</span>
                             <span className="font-mono text-slate-300">
                                 {currentTuning.minEdgeBpsToTrade} bps
                             </span>
                         </div>
                         {currentTuning.coolDownMs > 0 && (
-                            <div className="flex items-center justify-between text-xs">
+                            <div className="flex items-center justify-between text-[11px]">
                                 <span className="text-slate-500">Cooldown</span>
                                 <span className="font-mono text-amber-400">
                                     {(currentTuning.coolDownMs / 1000).toFixed(1)}s
@@ -264,18 +264,18 @@ export function AdaptivePanel({
                         )}
                     </div>
                 ) : enabled ? (
-                    <div className="text-xs text-slate-500 text-center py-2">
+                    <div className="text-[10px] text-slate-500 text-center py-1.5">
                         No tuning for current context
                     </div>
                 ) : (
-                    <div className="text-xs text-slate-500 text-center py-2">
+                    <div className="text-[10px] text-slate-500 text-center py-1.5">
                         Adaptive learning disabled
                     </div>
                 )}
 
                 {/* Reason (truncated) */}
                 {enabled && currentTuning?.reason && (
-                    <div className="text-[10px] text-slate-600 truncate" title={currentTuning.reason}>
+                    <div className="text-[9px] text-slate-600 truncate" title={currentTuning.reason}>
                         {currentTuning.reason}
                     </div>
                 )}

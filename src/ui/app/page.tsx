@@ -10,7 +10,6 @@ import { TerminalHeader } from '../components/TerminalHeader';
 // Panel components
 import { OrderBookPanel } from '../components/OrderBookPanel';
 import { MarketStatsPanel } from '../components/MarketStatsPanel';
-import { ChartPanel } from '../components/ChartPanel';
 import { ControlsPanel } from '../components/ControlsPanel';
 import { TradeTapePanel } from '../components/TradeTapePanel';
 import { LogsPanel } from '../components/LogsPanel';
@@ -27,7 +26,6 @@ import { MobileDashboard, MobileSection } from '../components/layout/MobileDashb
 
 // Data hooks (real data fetching)
 import { useOrderBook } from '../lib/hooks/useOrderBook';
-import { useCandles } from '../lib/hooks/useCandles';
 
 
 
@@ -129,21 +127,7 @@ export default function Page() {
         enabled: !!selectedPairKey,
     });
 
-    // Candles from real trade data via /api/pairs/[key]/candles
-    const {
-        candles: candleData,
-        volumeData,
-        loading: candlesLoading,
-        error: candlesError,
-    } = useCandles(selectedPairKey, {
-        interval: '1m',
-        limit: 120,
-        pollInterval: 10000,
-        enabled: !!selectedPairKey,
-    });
-
     // Derived values from order book
-    const currentPrice = orderBookData.midPrice ?? 0;
     const midPrice = orderBookData.midPrice;
     const orderBookBids = orderBookData.bids;
     const orderBookAsks = orderBookData.asks;
@@ -387,7 +371,7 @@ export default function Page() {
     }, []);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Header component
+    // Header component (now includes pair selector + position size)
     // ─────────────────────────────────────────────────────────────────────────
     const headerComponent = (
         <TerminalHeader
@@ -413,16 +397,7 @@ export default function Page() {
                 flowMetrics={<FlowMetricsPanel pollInterval={2000} compact />}
                 overviewContent={
                     <MobileSection>
-                        <ChartPanel
-                            data={candleData}
-                            volumeData={volumeData}
-                            pairKey={currentPair?.key || 'Select Pair'}
-                            currentPrice={currentPrice}
-                            quoteCurrency={bot.quoteCurrency}
-                            spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
-                            loading={candlesLoading}
-                            error={candlesError}
-                        />
+                        <FlowMetricsPanel pollInterval={2000} />
                         <MarketStatsPanel
                             totalPnl={bot.pnlTotal}
                             todayPnl={bot.pnlToday}
@@ -453,7 +428,6 @@ export default function Page() {
                 tradingContent={
                     <MobileSection>
                         <ControlsPanel
-                            pairSelector={pairSelectorElement}
                             strategy={bot.strategy}
                             lastLedger={bot.lastLedger}
                             liquidity={bot.liquidity}
@@ -463,10 +437,11 @@ export default function Page() {
                             currentExposure={bot.risk.currentExposure}
                             dailyLossLimit={bot.risk.dailyLossLimit}
                             killSwitch={bot.risk.killSwitch}
+                            pairSelector={pairSelectorElement}
                             onPositionSizeChange={setPositionSize}
                             onApplyPositionSize={updatePositionSize}
+                            positionSizeMessage={positionSizeMessage}
                             loading={actionLoading}
-                            message={positionSizeMessage}
                         />
                         <LogsPanel maxRows={50} />
                     </MobileSection>
@@ -488,114 +463,94 @@ export default function Page() {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Desktop Layout - Full-screen professional grid
+    // Desktop Layout - Institutional terminal grid (scrollable)
     // ─────────────────────────────────────────────────────────────────────────
 
     return (
         <AppShell header={headerComponent}>
-            <div className="h-full w-full grid gap-2 overflow-hidden
-                grid-cols-[180px_240px_1fr_240px_200px]
-                grid-rows-[minmax(0,0.45fr)_minmax(0,0.55fr)]
-                lg:grid-cols-[200px_260px_1fr_260px_220px]
-                xl:grid-cols-[200px_280px_1fr_300px_260px]
-                2xl:grid-cols-[220px_300px_1fr_320px_280px]"
-            >
-                {/* Left sidebar: Market Stats + Data Health + Flow Metrics (spans 2 rows) */}
-                <div className="row-span-2 min-h-0 overflow-hidden flex flex-col gap-2">
-                    <div className="shrink-0">
-                        <MarketStatsPanel
-                            totalPnl={bot.pnlTotal}
-                            todayPnl={bot.pnlToday}
-                            winRate={bot.winRate}
-                            position={bot.openPosition}
-                            xrpBalance={bot.xrpBalance}
-                            quoteBalance={bot.quoteBalance}
-                            quoteCurrency={bot.quoteCurrency}
-                            usdRate={bot.usdRate}
-                            xrpBalanceHistory={xrpBalanceHistory}
-                        />
-                    </div>
-                    <div className="shrink-0">
-                        <MarketDataHealthPanel />
-                    </div>
-                    <div className="flex-1 min-h-0 overflow-hidden">
-                        <FlowMetricsPanel pollInterval={2000} />
-                    </div>
-                </div>
-
-                {/* Trade Tape + Order Book (spans 2 rows, col 2) */}
-                <div className="row-span-2 min-h-0 overflow-hidden flex flex-col gap-2">
-                    <div className="h-[45%] min-h-0 overflow-hidden">
-                        <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={100} />
-                    </div>
-                    <div className="flex-1 min-h-0 overflow-hidden">
-                        <OrderBookPanel
-                            bids={orderBookBids}
-                            asks={orderBookAsks}
-                            midPrice={midPrice}
-                            spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
-                            loading={orderBookLoading}
-                            error={orderBookError}
-                        />
-                    </div>
-                </div>
-
-                {/* Chart (row 1, col 3) */}
-                <div className="min-h-0 overflow-hidden">
-                    <ChartPanel
-                        data={candleData}
-                        volumeData={volumeData}
-                        pairKey={currentPair?.key || 'Select Pair'}
-                        currentPrice={currentPrice}
+            <div className="w-full flex flex-col gap-2 pb-2">
+                {/* ROW 1: Health + Stats (2 columns) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <MarketDataHealthPanel />
+                    <MarketStatsPanel
+                        totalPnl={bot.pnlTotal}
+                        todayPnl={bot.pnlToday}
+                        winRate={bot.winRate}
+                        position={bot.openPosition}
+                        xrpBalance={bot.xrpBalance}
+                        quoteBalance={bot.quoteBalance}
                         quoteCurrency={bot.quoteCurrency}
-                        spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
-                        loading={candlesLoading}
-                        error={candlesError}
+                        usdRate={bot.usdRate}
+                        xrpBalanceHistory={xrpBalanceHistory}
                     />
                 </div>
 
-                {/* Controls column (row-span-2, col 4): Governance, Logs */}
-                <div className="row-span-2 min-h-0 overflow-hidden flex flex-col gap-2">
-                    <div className="shrink-0">
-                        <GovernancePanel />
+                {/* ROWS 2-3: Main panels + Bot Logs column on the right */}
+                <div className="grid grid-cols-1 xl:grid-cols-[1fr_280px] gap-2 lg:h-[728px]">
+                    {/* Left: Rows 2 and 3 stacked */}
+                    <div className="flex flex-col gap-2 min-h-0">
+                        {/* ROW 2: Strategy & Risk, Flow Sentiment spanning 2 cols (3-col grid) */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 lg:flex-[380] min-h-0">
+                            <div className="min-h-0 h-full overflow-y-auto scrollbar-thin">
+                                <ControlsPanel
+                                    strategy={bot.strategy}
+                                    lastLedger={bot.lastLedger}
+                                    liquidity={bot.liquidity}
+                                    slippageBps={bot.slippageBps}
+                                    positionSize={positionSize}
+                                    maxExposure={bot.risk.maxExposure}
+                                    currentExposure={bot.risk.currentExposure}
+                                    dailyLossLimit={bot.risk.dailyLossLimit}
+                                    killSwitch={bot.risk.killSwitch}
+                                    pairSelector={pairSelectorElement}
+                                    onPositionSizeChange={setPositionSize}
+                                    onApplyPositionSize={updatePositionSize}
+                                    positionSizeMessage={positionSizeMessage}
+                                    loading={actionLoading}
+                                />
+                            </div>
+                            <div className="min-h-0 h-full overflow-hidden md:col-span-2">
+                                <FlowMetricsPanel pollInterval={2000} />
+                            </div>
+                        </div>
+
+                        {/* ROW 3: Capital Protection, Order Book, Trade Tape (3 columns) */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 lg:flex-[340] min-h-0">
+                            <div className="min-h-0 h-full overflow-hidden">
+                                <GovernancePanel />
+                            </div>
+                            <div className="min-h-0 h-full overflow-hidden">
+                                <OrderBookPanel
+                                    bids={orderBookBids}
+                                    asks={orderBookAsks}
+                                    midPrice={midPrice}
+                                    spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                                    loading={orderBookLoading}
+                                    error={orderBookError}
+                                />
+                            </div>
+                            <div className="min-h-0 h-full overflow-hidden">
+                                <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={100} />
+                            </div>
+                        </div>
                     </div>
-                    <div className="flex-1 min-h-0 overflow-hidden">
+
+                    {/* Right column: Bot Logs spanning rows 2-3 */}
+                    <div className="min-h-0 h-full overflow-hidden">
                         <LogsPanel maxRows={50} />
                     </div>
                 </div>
 
-                {/* Analytics sidebar (row 1+2, col 5): Analytics, Adaptive */}
-                <div className="row-span-2 min-h-0 overflow-hidden flex flex-col gap-2">
-                    <div className="flex-1 min-h-0 overflow-hidden">
-                        <AnalyticsPanel pollInterval={5000} />
-                    </div>
-                    <div className="flex-1 min-h-0 overflow-hidden">
+                {/* ROW 4: Adaptive, Analytics, Regime Performance (3 columns) */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 lg:h-[180px]">
+                    <div className="min-h-0 h-full overflow-hidden">
                         <AdaptivePanel pollInterval={5000} />
                     </div>
-                </div>
-
-                {/* Below chart (row 2, col 3): RegimeHeatmap + Controls stacked */}
-                <div className="min-h-0 overflow-hidden flex flex-col gap-2">
-                    <div className="shrink-0">
-                        <RegimeHeatmapPanel />
+                    <div className="min-h-0 h-full overflow-hidden">
+                        <AnalyticsPanel pollInterval={5000} />
                     </div>
-                    <div className="flex-1 min-h-0 overflow-hidden">
-                        <ControlsPanel
-                            pairSelector={pairSelectorElement}
-                            strategy={bot.strategy}
-                            lastLedger={bot.lastLedger}
-                            liquidity={bot.liquidity}
-                            slippageBps={bot.slippageBps}
-                            positionSize={positionSize}
-                            maxExposure={bot.risk.maxExposure}
-                            currentExposure={bot.risk.currentExposure}
-                            dailyLossLimit={bot.risk.dailyLossLimit}
-                            killSwitch={bot.risk.killSwitch}
-                            onPositionSizeChange={setPositionSize}
-                            onApplyPositionSize={updatePositionSize}
-                            loading={actionLoading}
-                            message={positionSizeMessage}
-                        />
+                    <div className="min-h-0 h-full overflow-visible">
+                        <RegimeHeatmapPanel />
                     </div>
                 </div>
             </div>

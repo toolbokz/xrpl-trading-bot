@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
     Grid3X3,
     RefreshCw,
@@ -133,50 +134,78 @@ function HeatmapCell({
 }) {
     const value = showMetric === 'score' ? cell.score : cell.expectancyBps;
     const colorClass = isDisabled ? 'bg-slate-700/50 text-slate-500' : getScoreColor(cell.score);
+    const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+    const cellRef = useRef<HTMLDivElement>(null);
+
+    const handleMouseEnter = useCallback(() => {
+        if (cellRef.current) {
+            const rect = cellRef.current.getBoundingClientRect();
+            setTooltipPos({
+                x: rect.left + rect.width / 2,
+                y: rect.top,
+            });
+        }
+    }, []);
+
+    const handleMouseLeave = useCallback(() => {
+        setTooltipPos(null);
+    }, []);
 
     return (
         <div
+            ref={cellRef}
             className={clsx(
-                'relative p-2 rounded text-center transition-all group cursor-pointer min-w-[60px]',
+                'relative p-1.5 rounded text-center transition-all cursor-pointer min-w-[52px]',
                 colorClass,
                 isDisabled && 'opacity-60'
             )}
-            title={`${cell.regime}: ${cell.trades} trades, WR: ${(cell.winRate * 100).toFixed(0)}%, PF: ${cell.profitFactor.toFixed(2)}`}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
         >
-            <div className="text-sm font-medium">
+            <div className="text-[11px] font-medium">
                 {cell.trades < 1 ? '-' : formatValue(value, 1)}
             </div>
-            <div className="text-[10px] opacity-70">{cell.trades}t</div>
+            <div className="text-[9px] opacity-70">{cell.trades}t</div>
             {isDisabled && (
                 <div className="absolute inset-0 flex items-center justify-center">
-                    <Ban size={16} className="text-slate-400" />
+                    <Ban size={12} className="text-slate-400" />
                 </div>
             )}
 
-            {/* Tooltip on hover */}
-            <div className="absolute z-10 hidden group-hover:block bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-48 p-2 bg-slate-800 border border-slate-700 rounded shadow-lg text-left text-xs">
-                <div className="font-medium text-slate-200 mb-1">{regimeLabels[cell.regime]}</div>
-                <div className="grid grid-cols-2 gap-1 text-slate-400">
-                    <span>Trades:</span>
-                    <span className="text-slate-200">{cell.trades}</span>
-                    <span>Win Rate:</span>
-                    <span className="text-slate-200">{(cell.winRate * 100).toFixed(1)}%</span>
-                    <span>PF:</span>
-                    <span className="text-slate-200">{cell.profitFactor.toFixed(2)}</span>
-                    <span>Expectancy:</span>
-                    <span className="text-slate-200">{cell.expectancyBps.toFixed(1)} bps</span>
-                    <span>Score:</span>
-                    <span className={cell.score >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-                        {cell.score.toFixed(1)}
-                    </span>
-                    <span>Slippage:</span>
-                    <span className="text-slate-200">{cell.avgSlippageBps.toFixed(1)} bps</span>
-                    <span>Spread:</span>
-                    <span className="text-slate-200">{cell.avgSpreadBps.toFixed(1)} bps</span>
-                    <span>Partial:</span>
-                    <span className="text-slate-200">{(cell.partialFillRate * 100).toFixed(0)}%</span>
-                </div>
-            </div>
+            {/* Tooltip — fixed position to escape overflow containers */}
+            {tooltipPos && createPortal(
+                <div
+                    className="fixed z-[200] w-44 p-1.5 bg-slate-800 border border-slate-700 rounded shadow-lg text-left text-[10px] pointer-events-none"
+                    style={{
+                        left: tooltipPos.x,
+                        top: tooltipPos.y,
+                        transform: 'translate(-50%, -100%) translateY(-4px)',
+                    }}
+                >
+                    <div className="font-medium text-slate-200 mb-0.5">{regimeLabels[cell.regime]}</div>
+                    <div className="grid grid-cols-2 gap-0.5 text-slate-400">
+                        <span>Trades:</span>
+                        <span className="text-slate-200">{cell.trades}</span>
+                        <span>Win Rate:</span>
+                        <span className="text-slate-200">{(cell.winRate * 100).toFixed(1)}%</span>
+                        <span>PF:</span>
+                        <span className="text-slate-200">{cell.profitFactor.toFixed(2)}</span>
+                        <span>Expectancy:</span>
+                        <span className="text-slate-200">{cell.expectancyBps.toFixed(1)} bps</span>
+                        <span>Score:</span>
+                        <span className={cell.score >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                            {cell.score.toFixed(1)}
+                        </span>
+                        <span>Slippage:</span>
+                        <span className="text-slate-200">{cell.avgSlippageBps.toFixed(1)} bps</span>
+                        <span>Spread:</span>
+                        <span className="text-slate-200">{cell.avgSpreadBps.toFixed(1)} bps</span>
+                        <span>Partial:</span>
+                        <span className="text-slate-200">{(cell.partialFillRate * 100).toFixed(0)}%</span>
+                    </div>
+                </div>,
+                document.body
+            )}
         </div>
     );
 }
@@ -260,10 +289,10 @@ export function RegimeHeatmapPanel() {
 
     if (loading) {
         return (
-            <div className="card p-6">
-                <div className="flex items-center gap-2 text-slate-400">
-                    <RefreshCw className="animate-spin" size={16} />
-                    <span>Loading regime heatmap...</span>
+            <div className="card h-full p-3">
+                <div className="flex items-center gap-1.5 text-slate-500 text-[10px]">
+                    <RefreshCw className="animate-spin" size={10} />
+                    <span>Loading heatmap…</span>
                 </div>
             </div>
         );
@@ -271,10 +300,10 @@ export function RegimeHeatmapPanel() {
 
     if (error) {
         return (
-            <div className="card p-6 border-danger/30">
-                <div className="flex items-center gap-2 text-danger">
-                    <AlertTriangle size={16} />
-                    <span>Error: {error}</span>
+            <div className="card h-full p-3 border-danger/30">
+                <div className="flex items-center gap-1.5 text-danger text-[10px]">
+                    <AlertTriangle size={10} />
+                    <span>{error}</span>
                 </div>
             </div>
         );
@@ -282,33 +311,26 @@ export function RegimeHeatmapPanel() {
 
     if (!heatmap) {
         return (
-            <div className="card p-6">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-white/5">
-                        <Grid3X3 size={20} className="text-slate-400" />
-                    </div>
-                    <div>
-                        <h3 className="font-medium text-slate-200">Regime Heatmap</h3>
-                        <p className="text-sm text-slate-400">No data available</p>
-                    </div>
+            <div className="card h-full p-3">
+                <div className="flex items-center gap-2">
+                    <Grid3X3 size={12} className="text-slate-500" />
+                    <span className="text-[11px] text-slate-400">Regime Heatmap — no data</span>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="card flex flex-col overflow-hidden">
+        <div className="card h-full flex flex-col overflow-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between p-4 shrink-0">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-indigo-500/10">
-                        <Grid3X3 size={20} className="text-indigo-400" />
-                    </div>
+            <div className="flex items-center justify-between px-3 py-2 shrink-0">
+                <div className="flex items-center gap-2">
+                    <Grid3X3 size={13} className="text-indigo-400" />
                     <div>
-                        <h3 className="font-medium text-slate-200">Regime Performance</h3>
-                        <p className="text-xs text-slate-400">
-                            {heatmap.meta.totalTrades} trades • {heatmap.meta.lookbackHours}h window
-                        </p>
+                        <span className="text-[11px] font-medium text-slate-200">Regime Performance</span>
+                        <span className="text-[9px] text-slate-500 ml-2">
+                            {heatmap.meta.totalTrades} trades • {heatmap.meta.lookbackHours}h
+                        </span>
                     </div>
                 </div>
 
@@ -318,7 +340,7 @@ export function RegimeHeatmapPanel() {
                         <button
                             onClick={() => setShowMetric('score')}
                             className={clsx(
-                                'px-2 py-1 text-xs rounded transition-colors',
+                                'px-1.5 py-0.5 text-[10px] rounded transition-colors',
                                 showMetric === 'score'
                                     ? 'bg-indigo-500/30 text-indigo-300'
                                     : 'text-slate-400 hover:text-slate-300'
@@ -329,13 +351,13 @@ export function RegimeHeatmapPanel() {
                         <button
                             onClick={() => setShowMetric('expectancyBps')}
                             className={clsx(
-                                'px-2 py-1 text-xs rounded transition-colors',
+                                'px-1.5 py-0.5 text-[10px] rounded transition-colors',
                                 showMetric === 'expectancyBps'
                                     ? 'bg-indigo-500/30 text-indigo-300'
                                     : 'text-slate-400 hover:text-slate-300'
                             )}
                         >
-                            Expectancy
+                            Exp.
                         </button>
                     </div>
 
@@ -343,26 +365,25 @@ export function RegimeHeatmapPanel() {
                     <button
                         onClick={handleRecompute}
                         disabled={recomputing}
-                        className="p-1.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-50"
+                        className="p-1 rounded bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-50"
                         title="Recompute policy"
                     >
-                        <RefreshCw size={14} className={recomputing ? 'animate-spin' : ''} />
+                        <RefreshCw size={11} className={recomputing ? 'animate-spin' : ''} />
                     </button>
                 </div>
             </div>
 
             {/* Scrollable body */}
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 pt-0 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+            <div className="flex-1 min-h-0 overflow-y-auto px-2.5 pb-2 pt-0 scrollbar-thin">
                 {/* Heatmap Grid */}
                 <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
+                    <table className="text-[10px] mx-auto">
                         <thead>
                             <tr className="text-slate-400">
-                                <th className="text-left p-1 font-normal"></th>
                                 {ALL_REGIMES.map(regime => {
                                     const Icon = regimeIcons[regime];
                                     return (
-                                        <th key={regime} className="p-1 font-normal text-center">
+                                        <th key={regime} className="px-0.5 py-1 font-normal text-center">
                                             <div className="flex flex-col items-center gap-0.5">
                                                 <Icon size={12} />
                                                 <span>{regimeLabels[regime]}</span>
@@ -375,9 +396,8 @@ export function RegimeHeatmapPanel() {
                         <tbody>
                             {/* Global Row */}
                             <tr>
-                                <td className="p-1 font-medium text-slate-300">Global</td>
                                 {ALL_REGIMES.map(regime => (
-                                    <td key={regime} className="p-1">
+                                    <td key={regime} className="px-0.5 py-0.5">
                                         <HeatmapCell
                                             cell={heatmap.global[regime]}
                                             isDisabled={globalDisabled.has(regime)}
@@ -390,15 +410,13 @@ export function RegimeHeatmapPanel() {
                             {/* Strategy Rows */}
                             {strategies.map(strategy => {
                                 const strategyDisabled = getDisabledRegimes(strategy);
-                                const shortName = strategy.replace('Strategy', '').replace(/-/g, ' ');
                                 const strategyData = heatmap.perStrategy[strategy];
                                 return (
                                     <tr key={strategy}>
-                                        <td className="p-1 text-slate-400 whitespace-nowrap">{shortName}</td>
                                         {ALL_REGIMES.map(regime => {
                                             const cellData = strategyData?.[regime];
                                             return (
-                                                <td key={regime} className="p-1">
+                                                <td key={regime} className="px-0.5 py-0.5">
                                                     {cellData ? (
                                                         <HeatmapCell
                                                             cell={cellData}
@@ -406,9 +424,9 @@ export function RegimeHeatmapPanel() {
                                                             showMetric={showMetric}
                                                         />
                                                     ) : (
-                                                        <div className="relative p-2 rounded text-center min-w-[60px] bg-slate-700/30 text-slate-500">
-                                                            <div className="text-sm font-medium">-</div>
-                                                            <div className="text-[10px] opacity-70">0t</div>
+                                                        <div className="relative p-1.5 rounded text-center min-w-[52px] bg-slate-700/30 text-slate-500">
+                                                            <div className="text-[11px] font-medium">-</div>
+                                                            <div className="text-[9px] opacity-70">0t</div>
                                                         </div>
                                                     )}
                                                 </td>
@@ -423,20 +441,20 @@ export function RegimeHeatmapPanel() {
 
                 {/* Policy Section */}
                 {policy && (
-                    <div className="border-t border-slate-700/50 pt-3 space-y-2">
-                        <div className="flex items-center gap-2 text-xs">
-                            <Scale size={12} className="text-slate-400" />
+                    <div className="border-t border-slate-700/50 pt-2 space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-[10px]">
+                            <Scale size={10} className="text-slate-400" />
                             <span className="text-slate-400">Policy</span>
                             <span className="text-slate-500">•</span>
                             <span className="text-slate-500">
-                                Updated {new Date(policy.updatedAt).toLocaleTimeString()}
+                                {new Date(policy.updatedAt).toLocaleTimeString()}
                             </span>
                         </div>
 
                         {/* Global Disabled Regimes */}
                         {policy.global.disabledRegimes.length > 0 && (
-                            <div className="flex items-center gap-2 text-xs">
-                                <Ban size={12} className="text-red-400" />
+                            <div className="flex items-center gap-1.5 text-[10px]">
+                                <Ban size={10} className="text-red-400" />
                                 <span className="text-slate-400">Disabled:</span>
                                 {policy.global.disabledRegimes.map(regime => (
                                     <span
@@ -450,7 +468,7 @@ export function RegimeHeatmapPanel() {
                         )}
 
                         {/* Size Multipliers (compact) */}
-                        <div className="flex flex-wrap gap-1 text-xs">
+                        <div className="flex flex-wrap gap-1 text-[10px]">
                             {ALL_REGIMES.map(regime => {
                                 const sizePolicy = policy.global.sizeByRegime[regime];
                                 if (!sizePolicy || sizePolicy.multiplier === 1.0) return null;
@@ -482,7 +500,7 @@ export function RegimeHeatmapPanel() {
                 )}
 
                 {/* Legend */}
-                <div className="flex items-center justify-center gap-2 text-[10px] text-slate-500 mt-4">
+                <div className="flex items-center justify-center gap-2 text-[9px] text-slate-500 mt-2">
                     <span className="flex items-center gap-1">
                         <div className="w-3 h-3 rounded bg-emerald-500/80" />
                         <span>&gt;10</span>

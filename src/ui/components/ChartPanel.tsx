@@ -45,11 +45,11 @@ export function ChartPanel({
             actions={
                 <>
                     {currentPrice > 0 && (
-                        <div className="flex items-baseline gap-2 mr-2">
-                            <span className="text-base font-semibold text-emerald-400 font-mono">
+                        <div className="flex items-baseline gap-1.5 mr-2">
+                            <span className="text-[13px] font-semibold text-emerald-400 font-mono">
                                 {formatPrice(currentPrice)}
                             </span>
-                            <span className="text-[10px] text-slate-500">
+                            <span className="text-[9px] text-slate-500">
                                 {quoteCurrency || 'QUOTE'}
                             </span>
                         </div>
@@ -68,9 +68,9 @@ export function ChartPanel({
                 {/* Loading state */}
                 {loading && isEmpty && (
                     <div className="absolute inset-0 flex items-center justify-center bg-surface/80 z-10">
-                        <div className="flex items-center gap-2 text-slate-400">
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                            <span className="text-sm">Loading chart data...</span>
+                        <div className="flex items-center gap-1.5 text-slate-400">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span className="text-[11px]">Loading chart…</span>
                         </div>
                     </div>
                 )}
@@ -78,20 +78,20 @@ export function ChartPanel({
                 {/* Error state */}
                 {error && (
                     <div className="absolute inset-0 flex items-center justify-center bg-surface/80 z-10">
-                        <div className="flex items-center gap-2 text-red-400">
-                            <AlertCircle className="w-5 h-5" />
-                            <span className="text-sm">{error}</span>
+                        <div className="flex items-center gap-1.5 text-red-400">
+                            <AlertCircle className="w-4 h-4" />
+                            <span className="text-[11px]">{error}</span>
                         </div>
                     </div>
                 )}
 
-                {/* Empty state (no error, not loading, but no data) */}
+                {/* Empty state */}
                 {!loading && !error && isEmpty && pairKey && pairKey !== 'Select Pair' && (
                     <div className="absolute inset-0 flex items-center justify-center bg-surface/80 z-10">
                         <div className="text-center text-slate-500">
-                            <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">No trade data available</p>
-                            <p className="text-xs mt-1">Candles will appear as trades occur</p>
+                            <Activity className="w-5 h-5 mx-auto mb-1 opacity-50" />
+                            <p className="text-[11px]">No trade data available</p>
+                            <p className="text-[9px] mt-0.5">Candles appear as trades occur</p>
                         </div>
                     </div>
                 )}
@@ -100,8 +100,8 @@ export function ChartPanel({
                 {(!pairKey || pairKey === 'Select Pair') && (
                     <div className="absolute inset-0 flex items-center justify-center bg-surface/80 z-10">
                         <div className="text-center text-slate-500">
-                            <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">Select a trading pair</p>
+                            <Activity className="w-5 h-5 mx-auto mb-1 opacity-50" />
+                            <p className="text-[11px]">Select a trading pair</p>
                         </div>
                     </div>
                 )}

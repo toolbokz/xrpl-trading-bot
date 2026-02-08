@@ -62,7 +62,7 @@ export function Sparkline({
     const trendColor = data[data.length - 1]! >= data[0]! ? color : '#ef4444';
 
     return (
-        <svg width={width} height={height} className={className}>
+        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" width={width} height={height} className={className}>
             {fill && (
                 <>
                     <defs>

@@ -72,9 +72,9 @@ export function OrderBookPanel({
             {/* Loading overlay */}
             {loading && isEmpty && (
                 <div className="absolute inset-0 flex items-center justify-center bg-surface/80 z-10">
-                    <div className="flex items-center gap-2 text-slate-400">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span className="text-xs">Loading order book...</span>
+                    <div className="flex items-center gap-1.5 text-slate-400">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span className="text-[11px]">Loading…</span>
                     </div>
                 </div>
             )}
@@ -82,9 +82,9 @@ export function OrderBookPanel({
             {/* Error state */}
             {error && (
                 <div className="absolute inset-0 flex items-center justify-center bg-surface/80 z-10">
-                    <div className="flex items-center gap-2 text-red-400">
-                        <AlertCircle className="w-4 h-4" />
-                        <span className="text-xs">{error}</span>
+                    <div className="flex items-center gap-1.5 text-red-400">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        <span className="text-[11px]">{error}</span>
                     </div>
                 </div>
             )}
@@ -93,15 +93,15 @@ export function OrderBookPanel({
             {!loading && !error && isEmpty && (
                 <div className="absolute inset-0 flex items-center justify-center bg-surface/80 z-10">
                     <div className="text-center text-slate-500">
-                        <BookOpen className="w-6 h-6 mx-auto mb-1 opacity-50" />
-                        <p className="text-xs">No order book data</p>
-                        <p className="text-[10px] mt-0.5">Select a trading pair</p>
+                        <BookOpen className="w-5 h-5 mx-auto mb-1 opacity-50" />
+                        <p className="text-[11px]">No order book data</p>
+                        <p className="text-[9px] mt-0.5">Select a trading pair</p>
                     </div>
                 </div>
             )}
 
             {/* Column headers */}
-            <div className="grid grid-cols-3 gap-1 px-3 py-1.5 text-[10px] text-slate-500 uppercase tracking-wider border-b border-white/5">
+            <div className="grid grid-cols-3 gap-1 px-2.5 py-1 text-[9px] text-slate-500 uppercase tracking-wider border-b border-white/5">
                 <div>Price</div>
                 <div className="text-right">Size</div>
                 <div className="text-right">Total</div>
@@ -112,7 +112,7 @@ export function OrderBookPanel({
                 {displayAsks.map((entry, i) => (
                     <div
                         key={`ask-${i}`}
-                        className="relative grid grid-cols-3 gap-1 px-3 py-1 text-xs font-mono"
+                        className="relative grid grid-cols-3 gap-1 px-2.5 py-0.5 text-[11px] font-mono"
                     >
                         {/* Depth bar */}
                         <div
@@ -127,12 +127,12 @@ export function OrderBookPanel({
             </div>
 
             {/* Mid price / spread divider */}
-            <div className="flex items-center justify-between px-3 py-2 bg-white/5 border-y border-white/5">
-                <span className="text-sm font-semibold text-slate-100 font-mono">
+            <div className="flex items-center justify-between px-2.5 py-1.5 bg-white/5 border-y border-white/5">
+                <span className="text-[13px] font-semibold text-slate-100 font-mono">
                     {midPrice !== null ? formatPrice(midPrice) : '—'}
                 </span>
-                <span className="text-[10px] text-slate-500">
-                    Spread: {spreadBps.toFixed(1)} bps
+                <span className="text-[9px] text-slate-500">
+                    {spreadBps.toFixed(1)} bps
                 </span>
             </div>
 
@@ -141,7 +141,7 @@ export function OrderBookPanel({
                 {displayBids.map((entry, i) => (
                     <div
                         key={`bid-${i}`}
-                        className="relative grid grid-cols-3 gap-1 px-3 py-1 text-xs font-mono"
+                        className="relative grid grid-cols-3 gap-1 px-2.5 py-0.5 text-[11px] font-mono"
                     >
                         {/* Depth bar */}
                         <div

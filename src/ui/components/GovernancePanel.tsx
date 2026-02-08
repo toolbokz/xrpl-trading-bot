@@ -91,33 +91,26 @@ function MetricBar({
     inverse?: boolean;
     icon: typeof Target;
 }) {
-    // For "inverse" metrics, lower is better (drawdown, slippage, partial fills)
-    // For normal metrics, higher is better (PF, expectancy, win rate)
     const isBreach = inverse ? value > threshold : value < threshold;
     const percentage = inverse
         ? Math.min(100, (value / threshold) * 100)
         : Math.min(100, (value / (threshold * 2)) * 100);
 
     return (
-        <div className="space-y-1">
-            <div className="flex justify-between text-xs">
-                <span className="flex items-center gap-1.5 text-slate-400">
-                    <Icon size={12} />
+        <div className="space-y-0.5">
+            <div className="flex justify-between text-[10px]">
+                <span className="flex items-center gap-1 text-slate-400">
+                    <Icon size={10} />
                     {label}
                 </span>
                 <span className={clsx(isBreach ? 'text-danger' : 'text-slate-200')}>
                     {format(value)}
-                    <span className="text-slate-500 ml-1">
-                        ({inverse ? '≤' : '≥'} {format(threshold)})
-                    </span>
+                    <span className="text-slate-600 ml-1">({inverse ? '≤' : '≥'}{format(threshold)})</span>
                 </span>
             </div>
-            <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+            <div className="h-1 bg-white/5 rounded-full overflow-hidden">
                 <div
-                    className={clsx(
-                        'h-full rounded-full transition-all duration-300',
-                        isBreach ? 'bg-danger' : 'bg-success'
-                    )}
+                    className={clsx('h-full rounded-full transition-all duration-300', isBreach ? 'bg-danger' : 'bg-success')}
                     style={{ width: `${percentage}%` }}
                 />
             </div>
@@ -158,10 +151,10 @@ export function GovernancePanel() {
 
     if (loading) {
         return (
-            <div className="card p-6">
-                <div className="flex items-center gap-2 text-slate-400">
-                    <RefreshCw className="animate-spin" size={16} />
-                    <span>Loading governance state...</span>
+            <div className="card p-3">
+                <div className="flex items-center gap-1.5 text-slate-500 text-[10px]">
+                    <RefreshCw className="animate-spin" size={10} />
+                    <span>Loading…</span>
                 </div>
             </div>
         );
@@ -169,10 +162,10 @@ export function GovernancePanel() {
 
     if (error) {
         return (
-            <div className="card p-6 border-danger/30">
-                <div className="flex items-center gap-2 text-danger">
-                    <AlertTriangle size={16} />
-                    <span>Error: {error}</span>
+            <div className="card p-3 border-danger/30">
+                <div className="flex items-center gap-1.5 text-danger text-[10px]">
+                    <AlertTriangle size={10} />
+                    <span>{error}</span>
                 </div>
             </div>
         );
@@ -180,15 +173,10 @@ export function GovernancePanel() {
 
     if (!available || !state) {
         return (
-            <div className="card p-6">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-white/5">
-                        <Shield size={20} className="text-slate-400" />
-                    </div>
-                    <div>
-                        <h3 className="font-medium text-slate-200">Capital Protection</h3>
-                        <p className="text-sm text-slate-400">Bot not running or governance unavailable</p>
-                    </div>
+            <div className="card p-3">
+                <div className="flex items-center gap-2">
+                    <Shield size={12} className="text-slate-500" />
+                    <span className="text-[11px] text-slate-400">Capital Protection — unavailable</span>
                 </div>
             </div>
         );
@@ -198,41 +186,35 @@ export function GovernancePanel() {
     const ModeIcon = config.icon;
 
     return (
-        <div className={clsx('card border overflow-hidden flex flex-col', config.bgClass)}>
+        <div className={clsx('card border overflow-hidden flex flex-col h-full', config.bgClass)}>
             {/* Header */}
-            <div className="flex items-center justify-between p-4 pb-3 shrink-0">
-                <div className="flex items-center gap-3">
-                    <div className={clsx('p-2 rounded-lg', config.bgClass)}>
-                        <ModeIcon size={20} className={config.textClass} />
-                    </div>
+            <div className="flex items-center justify-between px-2.5 py-1.5 shrink-0">
+                <div className="flex items-center gap-2">
+                    <ModeIcon size={13} className={config.textClass} />
                     <div>
-                        <h3 className="font-medium text-slate-200">Capital Protection</h3>
-                        <p className={clsx('text-sm', config.textClass)}>{config.label}</p>
+                        <span className="text-[11px] font-semibold text-slate-200">Capital Protection</span>
+                        <span className={clsx('text-[9px] ml-1.5 uppercase', config.textClass)}>{config.label}</span>
                     </div>
                 </div>
-                <div className="text-right">
+                <div className="flex items-center gap-2 text-[10px]">
                     {state.sizeMultiplier < 1 && (
-                        <div className="text-sm text-amber-400">
-                            Size: {(state.sizeMultiplier * 100).toFixed(0)}%
-                        </div>
+                        <span className="text-amber-400">×{(state.sizeMultiplier * 100).toFixed(0)}%</span>
                     )}
                     {state.cooldownMs > 0 && (
-                        <div className="text-xs text-slate-400">
-                            Cooldown: {(state.cooldownMs / 1000).toFixed(1)}s
-                        </div>
+                        <span className="text-slate-500">{(state.cooldownMs / 1000).toFixed(1)}s cd</span>
                     )}
                 </div>
             </div>
 
             {/* Scrollable body */}
-            <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+            <div className="flex-1 min-h-0 overflow-y-auto px-2.5 pb-2 scrollbar-thin">
 
                 {/* Reasons */}
                 {state.reasons.length > 0 && (
-                    <div className="mb-4 p-3 rounded-lg bg-black/20 space-y-1">
+                    <div className="mb-2 p-2 rounded bg-black/20 space-y-0.5">
                         {state.reasons.map((reason, i) => (
-                            <div key={i} className="flex items-start gap-2 text-sm">
-                                <AlertTriangle size={14} className={clsx('mt-0.5 flex-shrink-0', config.textClass)} />
+                            <div key={i} className="flex items-start gap-1 text-[10px]">
+                                <AlertTriangle size={9} className={clsx('mt-0.5 flex-shrink-0', config.textClass)} />
                                 <span className="text-slate-300">{reason}</span>
                             </div>
                         ))}
@@ -241,9 +223,9 @@ export function GovernancePanel() {
 
                 {/* Metrics */}
                 {state.metrics && state.thresholds && state.metrics.tradesCount >= state.thresholds.minTrades && (
-                    <div className="space-y-3">
-                        <div className="text-xs text-slate-500 uppercase tracking-wide">
-                            Rolling Metrics ({state.metrics.tradesCount} trades)
+                    <div className="space-y-2">
+                        <div className="text-[9px] text-slate-500 uppercase tracking-wider">
+                            Metrics ({state.metrics.tradesCount} trades)
                         </div>
 
                         <MetricBar
@@ -282,30 +264,25 @@ export function GovernancePanel() {
                             icon={Clock}
                         />
 
-                        {/* Additional metrics as text */}
-                        <div className="grid grid-cols-3 gap-4 pt-2 border-t border-white/5">
+                        <div className="grid grid-cols-3 gap-2 pt-1.5 border-t border-white/5">
                             <div className="text-center">
-                                <div className="text-xs text-slate-400">Win Rate</div>
-                                <div className="text-sm text-slate-200">{(state.metrics.winRate * 100).toFixed(1)}%</div>
+                                <div className="text-[9px] text-slate-500">Win</div>
+                                <div className="text-[11px] text-slate-200 font-mono">{(state.metrics.winRate * 100).toFixed(1)}%</div>
                             </div>
                             <div className="text-center">
-                                <div className="text-xs text-slate-400">Partial Fills</div>
+                                <div className="text-[9px] text-slate-500">Partials</div>
                                 <div className={clsx(
-                                    'text-sm',
-                                    state.metrics.partialFillRate > state.thresholds.maxPartialFillRate
-                                        ? 'text-danger'
-                                        : 'text-slate-200'
+                                    'text-[11px] font-mono',
+                                    state.metrics.partialFillRate > state.thresholds.maxPartialFillRate ? 'text-danger' : 'text-slate-200'
                                 )}>
                                     {(state.metrics.partialFillRate * 100).toFixed(1)}%
                                 </div>
                             </div>
                             <div className="text-center">
-                                <div className="text-xs text-slate-400">Consec. Fails</div>
+                                <div className="text-[9px] text-slate-500">Fails</div>
                                 <div className={clsx(
-                                    'text-sm',
-                                    state.metrics.consecutiveFailures >= state.thresholds.consecFailShutdown
-                                        ? 'text-danger'
-                                        : 'text-slate-200'
+                                    'text-[11px] font-mono',
+                                    state.metrics.consecutiveFailures >= state.thresholds.consecFailShutdown ? 'text-danger' : 'text-slate-200'
                                 )}>
                                     {state.metrics.consecutiveFailures}
                                 </div>
@@ -314,21 +291,17 @@ export function GovernancePanel() {
                     </div>
                 )}
 
-                {/* Insufficient data notice */}
                 {state.metrics && state.thresholds && state.metrics.tradesCount < state.thresholds.minTrades && (
-                    <div className="text-sm text-slate-400 text-center py-4">
-                        Collecting data... {state.metrics.tradesCount}/{state.thresholds.minTrades} trades
+                    <div className="text-[10px] text-slate-500 text-center py-2">
+                        Collecting… {state.metrics.tradesCount}/{state.thresholds.minTrades}
                     </div>
                 )}
             </div>
 
-            {/* Footer */}
             {lastUpdate && (
-                <div className="px-4 py-3 border-t border-white/5 flex justify-between text-xs text-slate-500 shrink-0">
-                    <span>Last check: {lastUpdate.toLocaleTimeString()}</span>
-                    {state.evaluatedAt && (
-                        <span>Evaluated: {new Date(state.evaluatedAt).toLocaleTimeString()}</span>
-                    )}
+                <div className="px-2.5 py-1 border-t border-white/5 flex justify-between text-[9px] text-slate-600 shrink-0">
+                    <span>{lastUpdate.toLocaleTimeString()}</span>
+                    {state.evaluatedAt && <span>{new Date(state.evaluatedAt).toLocaleTimeString()}</span>}
                 </div>
             )}
         </div>

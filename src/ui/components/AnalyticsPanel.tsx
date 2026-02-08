@@ -95,13 +95,13 @@ function StatCard({
     icon?: typeof Activity;
 }) {
     return (
-        <div className="bg-white/5 rounded-lg p-2.5 border border-white/5">
-            <div className="flex items-center gap-1.5 mb-1">
-                {Icon && <Icon size={12} className="text-slate-500" />}
-                <span className="text-[10px] text-slate-500 uppercase tracking-wider">{label}</span>
+        <div className="bg-white/5 rounded p-2 border border-white/5">
+            <div className="flex items-center gap-1 mb-0.5">
+                {Icon && <Icon size={10} className="text-slate-500" />}
+                <span className="text-[9px] text-slate-500 uppercase tracking-wider">{label}</span>
             </div>
             <div className={clsx(
-                'text-sm font-mono font-medium',
+                'text-[12px] font-mono font-medium',
                 positive === true && 'text-emerald-400',
                 positive === false && 'text-red-400',
                 positive === null && 'text-slate-300'
@@ -115,7 +115,7 @@ function StatCard({
 function ProgressBar({ value, max, color = 'bg-sky-500' }: { value: number; max: number; color?: string }) {
     const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
     return (
-        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+        <div className="h-1 bg-white/10 rounded-full overflow-hidden">
             <div
                 className={clsx('h-full rounded-full transition-all', color)}
                 style={{ width: `${pct}%` }}
@@ -152,9 +152,9 @@ function MiniEquityChart({ history }: { history: AnalyticsHistoryEntry[] }) {
     const isPositive = chartData[chartData.length - 1]!.pnl >= 0;
 
     return (
-        <div className="bg-white/5 rounded-lg p-2.5 border border-white/5">
-            <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] text-slate-500 uppercase tracking-wider">Equity Curve</span>
+        <div className="bg-white/5 rounded p-2 border border-white/5">
+            <div className="flex items-center justify-between mb-0.5">
+                <span className="text-[9px] text-slate-500 uppercase tracking-wider">Equity</span>
                 <span className={clsx(
                     'text-[10px] font-mono',
                     isPositive ? 'text-emerald-400' : 'text-red-400',
@@ -162,7 +162,7 @@ function MiniEquityChart({ history }: { history: AnalyticsHistoryEntry[] }) {
                     {isPositive ? '+' : ''}{chartData[chartData.length - 1]!.pnl.toFixed(4)}
                 </span>
             </div>
-            <ResponsiveContainer width="100%" height={48}>
+            <ResponsiveContainer width="100%" height={40}>
                 <AreaChart data={chartData} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
                     <defs>
                         <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
@@ -250,14 +250,14 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
     if (loading && !data) {
         return (
             <div className="card h-full flex flex-col">
-                <div className="flex items-center gap-2 p-3 border-b border-white/5">
-                    <BarChart3 size={14} className="text-slate-400" />
-                    <span className="text-xs font-medium text-slate-200">Analytics</span>
+                <div className="flex items-center gap-1.5 p-2.5 border-b border-white/5">
+                    <BarChart3 size={12} className="text-slate-400" />
+                    <span className="text-[11px] font-medium text-slate-200">Analytics</span>
                 </div>
                 <div className="flex-1 flex items-center justify-center">
-                    <div className="flex items-center gap-2 text-slate-400">
-                        <Activity size={16} className="animate-pulse" />
-                        <span className="text-sm">Loading analytics...</span>
+                    <div className="flex items-center gap-1.5 text-slate-500 text-[10px]">
+                        <Activity size={12} className="animate-pulse" />
+                        <span>Loading…</span>
                     </div>
                 </div>
             </div>
@@ -268,14 +268,14 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
     if (error && !data) {
         return (
             <div className="card h-full flex flex-col">
-                <div className="flex items-center gap-2 p-3 border-b border-white/5">
-                    <BarChart3 size={14} className="text-slate-400" />
-                    <span className="text-xs font-medium text-slate-200">Analytics</span>
+                <div className="flex items-center gap-1.5 p-2.5 border-b border-white/5">
+                    <BarChart3 size={12} className="text-slate-400" />
+                    <span className="text-[11px] font-medium text-slate-200">Analytics</span>
                 </div>
                 <div className="flex-1 flex items-center justify-center">
-                    <div className="flex items-center gap-2 text-red-400">
-                        <AlertTriangle size={16} />
-                        <span className="text-sm">{error}</span>
+                    <div className="flex items-center gap-1.5 text-danger text-[10px]">
+                        <AlertTriangle size={10} />
+                        <span>{error}</span>
                     </div>
                 </div>
             </div>
@@ -286,14 +286,14 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
     if (!data || data.summary.trades === 0) {
         return (
             <div className="card h-full flex flex-col">
-                <div className="flex items-center gap-2 p-3 border-b border-white/5">
-                    <BarChart3 size={14} className="text-slate-400" />
-                    <span className="text-xs font-medium text-slate-200">Analytics</span>
+                <div className="flex items-center gap-1.5 p-2.5 border-b border-white/5">
+                    <BarChart3 size={12} className="text-slate-400" />
+                    <span className="text-[11px] font-medium text-slate-200">Analytics</span>
                 </div>
-                <div className="flex-1 flex flex-col items-center justify-center p-4 text-center">
-                    <BarChart3 size={28} className="text-slate-600 mb-2" />
-                    <p className="text-sm text-slate-400">No trade data yet</p>
-                    <p className="text-xs text-slate-500">Analytics will appear after trades execute</p>
+                <div className="flex-1 flex flex-col items-center justify-center p-3 text-center">
+                    <BarChart3 size={20} className="text-slate-600 mb-1" />
+                    <p className="text-[11px] text-slate-400">No trade data yet</p>
+                    <p className="text-[10px] text-slate-500">Analytics appear after trades execute</p>
                 </div>
             </div>
         );
@@ -304,18 +304,18 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
     return (
         <div className="card h-full flex flex-col overflow-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between p-3 border-b border-white/5 shrink-0">
-                <div className="flex items-center gap-2">
-                    <BarChart3 size={14} className="text-slate-400" />
-                    <span className="text-xs font-medium text-slate-200">Analytics</span>
+            <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-white/5 shrink-0">
+                <div className="flex items-center gap-1.5">
+                    <BarChart3 size={12} className="text-slate-400" />
+                    <span className="text-[11px] font-medium text-slate-200">Analytics</span>
                 </div>
-                <span className="text-[10px] text-slate-500">
+                <span className="text-[9px] text-slate-500">
                     {summary.trades} trades
                 </span>
             </div>
 
             {/* Content - scrollable */}
-            <div className="flex-1 overflow-y-auto p-3 space-y-4">
+            <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">
                 {/* Key Metrics */}
                 <div className="grid grid-cols-2 gap-2">
                     <StatCard
@@ -347,9 +347,9 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
                 </div>
 
                 {/* Max Drawdown */}
-                <div className="bg-white/5 rounded-lg p-2.5 border border-white/5">
-                    <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[10px] text-slate-500 uppercase tracking-wider">Max Drawdown</span>
+                <div className="bg-white/5 rounded p-2 border border-white/5">
+                    <div className="flex items-center justify-between mb-1">
+                        <span className="text-[9px] text-slate-500 uppercase tracking-wider">Max Drawdown</span>
                         <span className={clsx(
                             'text-xs font-mono',
                             summary.maxDrawdown > 0.1 ? 'text-red-400' : 'text-slate-300'
@@ -369,18 +369,18 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
 
                 {/* Regime Matrix */}
                 <div>
-                    <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">By Regime</div>
-                    <div className="space-y-1.5">
+                    <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">By Regime</div>
+                    <div className="space-y-1">
                         {byRegime.filter(r => r.trades > 0).map(regime => {
                             const config = REGIME_LABELS[regime.regime] || { label: regime.regime, color: 'text-slate-400' };
                             return (
                                 <div
                                     key={regime.regime}
-                                    className="flex items-center justify-between text-xs bg-white/5 rounded px-2 py-1.5"
+                                    className="flex items-center justify-between text-[11px] bg-white/5 rounded px-2 py-1"
                                 >
                                     <span className={config.color}>{config.label}</span>
-                                    <div className="flex items-center gap-3 text-slate-400">
-                                        <span>{regime.trades} trades</span>
+                                    <div className="flex items-center gap-2 text-slate-400">
+                                        <span className="text-[10px]">{regime.trades}</span>
                                         <span className={clsx(
                                             'font-mono',
                                             regime.winRate > 0.5 ? 'text-emerald-400' : regime.winRate < 0.4 ? 'text-red-400' : ''
@@ -392,7 +392,7 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
                             );
                         })}
                         {byRegime.filter(r => r.trades > 0).length === 0 && (
-                            <div className="text-xs text-slate-500 text-center py-2">No regime data</div>
+                            <div className="text-[10px] text-slate-500 text-center py-1">No regime data</div>
                         )}
                     </div>
                 </div>
@@ -400,16 +400,16 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
                 {/* Strategy Stats */}
                 {byStrategy.length > 0 && (
                     <div>
-                        <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">By Strategy</div>
-                        <div className="space-y-1.5">
+                        <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">By Strategy</div>
+                        <div className="space-y-1">
                             {byStrategy.map(strat => (
                                 <div
                                     key={strat.strategy}
-                                    className="flex items-center justify-between text-xs bg-white/5 rounded px-2 py-1.5"
+                                    className="flex items-center justify-between text-[11px] bg-white/5 rounded px-2 py-1"
                                 >
-                                    <span className="text-slate-300 truncate max-w-[100px]">{strat.strategy}</span>
-                                    <div className="flex items-center gap-3 text-slate-400">
-                                        <span>{strat.trades}</span>
+                                    <span className="text-slate-300 truncate max-w-[90px]">{strat.strategy}</span>
+                                    <div className="flex items-center gap-2 text-slate-400">
+                                        <span className="text-[10px]">{strat.trades}</span>
                                         <span className={clsx(
                                             'font-mono',
                                             strat.winRate > 0.5 ? 'text-emerald-400' : strat.winRate < 0.4 ? 'text-red-400' : ''
@@ -430,7 +430,7 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
                 )}
 
                 {/* Win/Loss Bar */}
-                <div className="bg-white/5 rounded-lg p-2.5 border border-white/5">
+                <div className="bg-white/5 rounded p-2 border border-white/5">
                     <div className="flex items-center justify-between text-[10px] mb-1.5">
                         <span className="text-emerald-400">{summary.wins} W</span>
                         <span className="text-slate-500">

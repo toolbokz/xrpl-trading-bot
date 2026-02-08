@@ -14,38 +14,29 @@ interface AppShellProps {
 }
 
 /**
- * AppShell - Full viewport container for the trading dashboard.
- * 
- * Creates a fixed viewport layout with:
- * - Mock data warning banner (if enabled, dev only)
- * - Sticky header (64px)
- * - Main content area fills remaining viewport height
- * - No body scrolling on desktop
- * - Smooth scrolling on mobile when needed
+ * AppShell - Scrollable viewport container for the trading dashboard.
+ *
+ * Tight 40px header, minimal chrome, maximum data density.
  */
 export function AppShell({ header, children, className }: AppShellProps) {
     return (
         <div
             className={clsx(
-                // Full viewport sizing - prevents any body scroll
-                'h-screen w-screen overflow-hidden',
-                // Dark background
+                'min-h-screen w-full overflow-x-hidden overflow-y-auto',
                 'bg-surface',
-                // Flex column layout
                 'flex flex-col',
                 className
             )}
         >
-            {/* Mock data warning banner - only shows in dev with flag */}
             <MockDataBanner />
 
-            {/* Fixed header area - 64px tall */}
-            <header className="h-16 shrink-0 px-3 py-2">
+            {/* Thin sticky header — 40px */}
+            <header className="h-10 shrink-0 px-3 sticky top-0 z-50 bg-surface/95 backdrop-blur-sm border-b border-white/[0.04]">
                 {header}
             </header>
 
-            {/* Main content area - fills remaining height */}
-            <main className="flex-1 min-h-0 overflow-hidden px-3 pb-3">
+            {/* Content — balanced padding */}
+            <main className="flex-1 px-5 py-2">
                 {children}
             </main>
         </div>

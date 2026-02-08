@@ -184,33 +184,33 @@ export function LogsPanel({ maxRows = 100, pollInterval = 2000 }: LogsPanelProps
         >
             <div
                 ref={containerRef}
-                className="h-full overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
+                className="h-full overflow-y-auto scrollbar-thin"
             >
                 {filteredLogs.length === 0 ? (
-                    <div className="text-center text-slate-500 text-xs py-8">
-                        {isPolling ? 'Waiting for logs...' : 'No logs'}
+                    <div className="text-center text-slate-500 text-[10px] py-4">
+                        {isPolling ? 'Waiting for logs…' : 'No logs'}
                     </div>
                 ) : (
                     filteredLogs.map((log) => (
                         <div
                             key={log.id}
                             className={clsx(
-                                'flex items-start gap-2 px-3 py-1.5 border-b border-white/5 text-xs',
+                                'flex items-start gap-1.5 px-2.5 py-1 border-b border-white/5 text-[11px]',
                                 levelBg[log.level] || levelBg.info
                             )}
                         >
-                            <span className="text-slate-500 font-mono text-[10px] shrink-0">
+                            <span className="text-slate-500 font-mono text-[9px] shrink-0">
                                 {formatTime(log.ts)}
                             </span>
                             <span className={clsx(
-                                'font-semibold uppercase text-[10px] w-10 shrink-0',
+                                'font-semibold uppercase text-[9px] w-8 shrink-0',
                                 levelColors[log.level] || levelColors.info
                             )}>
                                 {log.level}
                             </span>
                             <span className="text-slate-300 break-all flex-1">{log.message}</span>
                             {log.source && (
-                                <span className="text-slate-600 text-[10px] shrink-0">[{log.source}]</span>
+                                <span className="text-slate-600 text-[9px] shrink-0">[{log.source}]</span>
                             )}
                         </div>
                     ))

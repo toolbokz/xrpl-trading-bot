@@ -49,35 +49,30 @@ export function Panel({
     noPadding = false,
     subtitle,
 }: PanelProps) {
-    // Determine effective padding mode
-    const effectivePadding = noPadding ? 'p-0' : dense ? 'p-2' : compact ? 'p-3' : 'p-4';
-    const headerPadding = dense ? 'px-2 py-1.5' : compact ? 'px-3 py-2' : 'px-4 py-3';
+    const effectivePadding = noPadding ? 'p-0' : dense ? 'px-2 py-1' : compact ? 'px-2.5 py-1.5' : 'px-3 py-2';
+    const headerPadding = dense ? 'px-2 py-1' : compact ? 'px-2.5 py-1.5' : 'px-3 py-2';
 
     return (
         <div
             className={clsx(
-                // Base card styling
-                'flex flex-col rounded-2xl bg-card/90 backdrop-blur-sm border border-white/5 shadow-card',
-                // Height handling
+                'flex flex-col rounded-lg bg-card/90 border border-white/[0.06]',
                 fillHeight && 'h-full',
-                // Must have min-h-0 for flex child to allow proper shrinking
                 'min-h-0 min-w-0',
-                // Outer overflow hidden for rounded corners
                 'overflow-hidden',
                 className
             )}
         >
             {/* Header */}
             <div className={clsx(
-                'flex items-center justify-between border-b border-white/5 shrink-0',
+                'flex items-center justify-between border-b border-white/[0.06] shrink-0',
                 headerPadding
             )}>
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                    {Icon && <Icon size={dense ? 14 : 16} className="text-slate-400 shrink-0" />}
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    {Icon && <Icon size={dense ? 12 : 13} className="text-slate-500 shrink-0" />}
                     <div className="min-w-0 flex-1">
                         <h3 className={clsx(
-                            'font-semibold text-slate-100 truncate',
-                            dense ? 'text-xs' : 'text-sm'
+                            'font-semibold text-slate-300 truncate',
+                            'text-[11px] uppercase tracking-wider'
                         )}>
                             {title}
                         </h3>
@@ -111,8 +106,8 @@ export function Panel({
             {/* Footer */}
             {footer && (
                 <div className={clsx(
-                    'border-t border-white/5 shrink-0',
-                    dense ? 'px-2 py-1.5' : compact ? 'px-3 py-2' : 'px-4 py-3'
+                    'border-t border-white/[0.06] shrink-0',
+                    dense ? 'px-2 py-1' : compact ? 'px-2.5 py-1.5' : 'px-3 py-2'
                 )}>
                     {footer}
                 </div>
@@ -130,7 +125,7 @@ export function PanelBadge({ children, tone = 'neutral' }: { children: ReactNode
         warning: 'bg-amber-500/20 text-amber-400',
     };
     return (
-        <span className={clsx('px-2 py-0.5 text-[10px] font-medium rounded-full', toneMap[tone])}>
+        <span className={clsx('px-1.5 py-0.5 text-[9px] font-semibold rounded', toneMap[tone])}>
             {children}
         </span>
     );

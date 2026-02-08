@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Activity, TrendingUp, TrendingDown, AlertTriangle, Pause, Waves } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Activity, TrendingUp, TrendingDown, AlertTriangle, Pause, Waves, Zap } from 'lucide-react';
 import clsx from 'clsx';
 import { FlowResponse } from '../pages/api/bot/flow';
-import { Sparkline } from './charts/Sparkline';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -15,68 +14,68 @@ type FlowRegime = 'quiet' | 'normal' | 'trendingUp' | 'trendingDown' | 'chaotic'
 interface RegimeConfig {
     label: string;
     icon: typeof Activity;
-    tone: 'neutral' | 'success' | 'danger' | 'warning' | 'info';
-    bgColor: string;
-    borderColor: string;
-    textColor: string;
+    pillBg: string;
+    pillBorder: string;
+    pillText: string;
+    timelineColor: string;
 }
 
 const REGIME_CONFIG: Record<FlowRegime, RegimeConfig> = {
     quiet: {
         label: 'Quiet',
         icon: Pause,
-        tone: 'neutral',
-        bgColor: 'bg-slate-500/15',
-        borderColor: 'border-slate-500/30',
-        textColor: 'text-slate-300',
+        pillBg: 'bg-slate-500/12',
+        pillBorder: 'border-slate-500/25',
+        pillText: 'text-slate-300',
+        timelineColor: '#475569',
     },
     normal: {
         label: 'Normal',
         icon: Activity,
-        tone: 'success',
-        bgColor: 'bg-success/15',
-        borderColor: 'border-success/30',
-        textColor: 'text-success',
+        pillBg: 'bg-emerald-500/12',
+        pillBorder: 'border-emerald-500/25',
+        pillText: 'text-emerald-400',
+        timelineColor: '#34d399',
     },
     trendingUp: {
         label: 'Trending Up',
         icon: TrendingUp,
-        tone: 'info',
-        bgColor: 'bg-blue-500/15',
-        borderColor: 'border-blue-500/30',
-        textColor: 'text-blue-400',
+        pillBg: 'bg-sky-500/12',
+        pillBorder: 'border-sky-500/25',
+        pillText: 'text-sky-400',
+        timelineColor: '#38bdf8',
     },
     trendingDown: {
         label: 'Trending Down',
         icon: TrendingDown,
-        tone: 'warning',
-        bgColor: 'bg-amber-500/15',
-        borderColor: 'border-amber-500/30',
-        textColor: 'text-amber-400',
+        pillBg: 'bg-amber-500/12',
+        pillBorder: 'border-amber-500/25',
+        pillText: 'text-amber-400',
+        timelineColor: '#f59e0b',
     },
     chaotic: {
         label: 'Chaotic',
-        icon: AlertTriangle,
-        tone: 'danger',
-        bgColor: 'bg-danger/15',
-        borderColor: 'border-danger/30',
-        textColor: 'text-danger',
+        icon: Zap,
+        pillBg: 'bg-red-500/12',
+        pillBorder: 'border-red-500/25',
+        pillText: 'text-red-400',
+        timelineColor: '#ef4444',
     },
     illiquid: {
         label: 'Illiquid',
         icon: AlertTriangle,
-        tone: 'danger',
-        bgColor: 'bg-red-600/15',
-        borderColor: 'border-red-600/30',
-        textColor: 'text-red-400',
+        pillBg: 'bg-red-600/12',
+        pillBorder: 'border-red-600/25',
+        pillText: 'text-red-500',
+        timelineColor: '#dc2626',
     },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// History buffer for time-series mini charts
+// History buffer
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MAX_HISTORY = 60; // ~60 data points at 2s polling = 2 min window
+const MAX_HISTORY = 60;
 
 interface FlowHistoryEntry {
     ts: number;
@@ -84,182 +83,269 @@ interface FlowHistoryEntry {
     imbalance: number;
     midPrice: number;
     vwap: number | null;
+    spreadBps: number;
 }
 
-/** Regime → color for the timeline strip */
-const REGIME_TIMELINE_COLORS: Record<FlowRegime, string> = {
-    quiet: '#64748b',      // slate-500
-    normal: '#22c55e',     // emerald
-    trendingUp: '#3b82f6', // blue
-    trendingDown: '#f59e0b', // amber
-    chaotic: '#ef4444',    // red
-    illiquid: '#dc2626',   // red-600
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// SVG Mini-Chart (self-contained, glow + grid + dual-line)
+// ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Regime Timeline Strip — colored blocks showing regime changes over time
- */
-const RegimeTimeline = ({ history }: { history: FlowHistoryEntry[] }) => {
-    if (history.length < 2) return null;
+const PriceChart = ({
+    midPrices,
+    vwapPrices,
+}: {
+    midPrices: number[];
+    vwapPrices: number[];
+}) => {
+    const VB_W = 400;
+    const VB_H = 100;
+    const pad = 2;
+
+    const allVals = [...midPrices, ...vwapPrices].filter(v => v > 0);
+    if (allVals.length < 2) return null;
+
+    // Scale based on mid prices only so outlier VWAP values don't compress the chart
+    const midOnly = midPrices.filter(v => v > 0);
+    if (midOnly.length < 2) return null;
+
+    const min = Math.min(...midOnly);
+    const max = Math.max(...midOnly);
+    const range = max - min || max * 0.001 || 1;
+
+    const toPoints = (data: number[]) =>
+        data.map((v, i) => {
+            const x = pad + (i / (data.length - 1)) * (VB_W - pad * 2);
+            const y = pad + (VB_H - pad * 2) - ((v - min) / range) * (VB_H - pad * 2);
+            return `${x},${y}`;
+        }).join(' ');
+
+    const toFillPath = (data: number[]) => {
+        const pts = data.map((v, i) => {
+            const x = pad + (i / (data.length - 1)) * (VB_W - pad * 2);
+            const y = pad + (VB_H - pad * 2) - ((v - min) / range) * (VB_H - pad * 2);
+            return { x, y };
+        });
+        return `M ${pts[0]!.x},${pts[0]!.y} ` +
+            pts.slice(1).map(p => `L ${p.x},${p.y}`).join(' ') +
+            ` L ${pts[pts.length - 1]!.x},${VB_H} L ${pts[0]!.x},${VB_H} Z`;
+    };
+
+    const midGradId = 'mid-fill-grad';
+    const glowId = 'mid-glow';
+
+    const validMid = midPrices.filter(v => v > 0);
+    const validVwap = vwapPrices.filter(v => v > 0);
+
+    // Subtle horizontal grid lines
+    const gridLines = [0.25, 0.5, 0.75].map(pct => {
+        const y = pad + (VB_H - pad * 2) * (1 - pct);
+        return y;
+    });
 
     return (
-        <div className="space-y-1">
-            <span className="text-[11px] text-slate-400 uppercase tracking-wider">Regime History</span>
-            <div className="flex h-3 rounded overflow-hidden gap-px">
+        <svg viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="none" className="w-full h-full">
+            <defs>
+                <linearGradient id={midGradId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.15} />
+                    <stop offset="100%" stopColor="#38bdf8" stopOpacity={0} />
+                </linearGradient>
+                <filter id={glowId}>
+                    <feGaussianBlur stdDeviation="1.5" result="blur" />
+                    <feMerge>
+                        <feMergeNode in="blur" />
+                        <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                </filter>
+            </defs>
+
+            {/* Grid lines */}
+            {gridLines.map((y, i) => (
+                <line key={i} x1={pad} y1={y} x2={VB_W - pad} y2={y} stroke="white" strokeOpacity={0.04} strokeWidth={0.5} />
+            ))}
+
+            {/* Mid fill */}
+            {validMid.length >= 2 && (
+                <path d={toFillPath(validMid)} fill={`url(#${midGradId})`} />
+            )}
+
+            {/* VWAP line (dashed amber) */}
+            {validVwap.length >= 2 && (
+                <polyline
+                    points={toPoints(validVwap)}
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth={1}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeDasharray="3,2"
+                    opacity={0.7}
+                />
+            )}
+
+            {/* Mid line with glow */}
+            {validMid.length >= 2 && (
+                <polyline
+                    points={toPoints(validMid)}
+                    fill="none"
+                    stroke="#38bdf8"
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    filter={`url(#${glowId})`}
+                />
+            )}
+        </svg>
+    );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Micro Components
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Status pill for current regime */
+const RegimePill = ({ regime }: { regime: FlowRegime | null }) => {
+    if (!regime) {
+        return (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/5 border border-white/10 text-[11px] text-slate-500">
+                <Activity size={11} /> No Data
+            </span>
+        );
+    }
+    const cfg = REGIME_CONFIG[regime];
+    const Icon = cfg.icon;
+    return (
+        <span className={clsx(
+            'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-medium',
+            cfg.pillBg, cfg.pillBorder, cfg.pillText
+        )}>
+            <Icon size={11} /> {cfg.label}
+        </span>
+    );
+};
+
+/** Regime timeline strip — colored blocks showing regime changes over time */
+const RegimeStrip = ({ history }: { history: FlowHistoryEntry[] }) => {
+    if (history.length < 3) return null;
+    return (
+        <div className="space-y-0.5">
+            <div className="flex justify-between text-[9px] text-slate-500 px-px">
+                <span>{new Date(history[0]!.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span className="uppercase tracking-wider text-slate-600">Regime</span>
+                <span>now</span>
+            </div>
+            <div className="flex h-[5px] rounded-sm overflow-hidden gap-[1px]">
                 {history.map((entry, i) => (
                     <div
                         key={i}
-                        className="flex-1 min-w-0 transition-colors"
-                        style={{ backgroundColor: REGIME_TIMELINE_COLORS[entry.regime] }}
-                        title={`${entry.regime} @ ${new Date(entry.ts).toLocaleTimeString()}`}
+                        className="flex-1 min-w-0 transition-colors duration-200"
+                        style={{ backgroundColor: REGIME_CONFIG[entry.regime].timelineColor }}
                     />
                 ))}
             </div>
-            <div className="flex justify-between text-[9px] text-slate-500">
-                <span>{new Date(history[0]!.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                <span>now</span>
-            </div>
         </div>
     );
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Components
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Regime badge showing current market state
- */
-const RegimeBadge = ({ regime }: { regime: FlowRegime | null }) => {
-    if (!regime) {
-        return (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10">
-                <Activity size={16} className="text-slate-400" />
-                <span className="text-sm text-slate-400">No Data</span>
-            </div>
-        );
-    }
-
-    const config = REGIME_CONFIG[regime];
-    const Icon = config.icon;
-
-    return (
-        <div className={clsx(
-            'flex items-center gap-2 px-3 py-2 rounded-lg border',
-            config.bgColor,
-            config.borderColor
-        )}>
-            <Icon size={16} className={config.textColor} />
-            <span className={clsx('text-sm font-medium', config.textColor)}>{config.label}</span>
-        </div>
-    );
-};
-
-/**
- * Horizontal gauge showing a value from -1 to 1
- */
-const ImbalanceGauge = ({ value, label }: { value: number; label: string }) => {
-    // Clamp value to -1..1
-    const clampedValue = Math.max(-1, Math.min(1, value));
-    // Convert to 0-100 percentage (50 is center)
-    const position = ((clampedValue + 1) / 2) * 100;
-
-    // Determine color based on value
-    const getColor = () => {
-        if (clampedValue > 0.3) return 'bg-blue-500';
-        if (clampedValue < -0.3) return 'bg-amber-500';
-        return 'bg-success';
-    };
+/** Directional gauge — compact horizontal bar with sell/buy indicator */
+const FlowGauge = ({
+    value,
+    label,
+    leftLabel = 'Sell',
+    rightLabel = 'Buy',
+}: {
+    value: number;
+    label: string;
+    leftLabel?: string;
+    rightLabel?: string;
+}) => {
+    const clamped = Math.max(-1, Math.min(1, value));
+    const position = ((clamped + 1) / 2) * 100;
 
     return (
         <div className="space-y-1">
-            <div className="flex justify-between items-center">
-                <span className="text-[11px] text-slate-400 uppercase tracking-wider">{label}</span>
-                <span className="text-xs font-mono text-slate-300">{(clampedValue * 100).toFixed(1)}%</span>
+            <div className="flex justify-between items-baseline">
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider">{label}</span>
+                <span className={clsx(
+                    'text-xs font-mono tabular-nums',
+                    clamped > 0.15 ? 'text-sky-400' : clamped < -0.15 ? 'text-amber-400' : 'text-slate-300'
+                )}>
+                    {(clamped * 100).toFixed(1)}%
+                </span>
             </div>
-            <div className="relative h-2 bg-white/5 rounded-full overflow-hidden">
-                {/* Center line */}
-                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/20" />
-
-                {/* Value indicator */}
+            <div className="relative h-[6px] bg-white/[0.04] rounded-full overflow-hidden">
+                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/10" />
                 <div
-                    className={clsx('absolute top-0 h-full transition-all duration-300 rounded-full', getColor())}
+                    className={clsx(
+                        'absolute top-0 h-full rounded-full transition-all duration-300',
+                        clamped > 0.15 ? 'bg-sky-500/70' : clamped < -0.15 ? 'bg-amber-500/70' : 'bg-slate-400/50'
+                    )}
                     style={{
-                        left: clampedValue >= 0 ? '50%' : `${position}%`,
-                        width: `${Math.abs(clampedValue) * 50}%`,
+                        left: clamped >= 0 ? '50%' : `${position}%`,
+                        width: `${Math.abs(clamped) * 50}%`,
                     }}
                 />
-
-                {/* Marker */}
                 <div
-                    className="absolute top-1/2 -translate-y-1/2 w-1 h-3 bg-white rounded-full shadow-lg transition-all duration-300"
+                    className="absolute top-1/2 w-[3px] h-[10px] bg-white/80 rounded-full transition-all duration-300"
                     style={{ left: `${position}%`, transform: 'translate(-50%, -50%)' }}
                 />
             </div>
-            <div className="flex justify-between text-[10px] text-slate-500">
-                <span>Sell</span>
-                <span>Buy</span>
+            <div className="flex justify-between text-[8px] text-slate-600">
+                <span>{leftLabel}</span>
+                <span>{rightLabel}</span>
             </div>
         </div>
     );
 };
 
-/**
- * Depth bar showing bid vs ask depth
- */
+/** Book depth — bid vs ask with balance bar */
 const DepthBar = ({ bidDepth, askDepth }: { bidDepth: number; askDepth: number }) => {
     const total = bidDepth + askDepth;
-    const bidPercent = total > 0 ? (bidDepth / total) * 100 : 50;
-    const askPercent = total > 0 ? (askDepth / total) * 100 : 50;
+    const bidPct = total > 0 ? (bidDepth / total) * 100 : 50;
 
     return (
         <div className="space-y-1">
-            <div className="flex justify-between items-center">
-                <span className="text-[11px] text-slate-400 uppercase tracking-wider">Book Depth</span>
-                <span className="text-xs font-mono text-slate-300">{total.toFixed(0)} base</span>
+            <div className="flex justify-between items-baseline">
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider">Book Depth</span>
+                <span className="text-[10px] font-mono text-slate-400 tabular-nums">{total.toFixed(0)}</span>
             </div>
-            <div className="flex h-3 rounded-full overflow-hidden">
+            <div className="flex h-[6px] rounded-full overflow-hidden gap-px">
                 <div
-                    className="bg-success/60 transition-all duration-300"
-                    style={{ width: `${bidPercent}%` }}
-                    title={`Bid: ${bidDepth.toFixed(2)}`}
+                    className="bg-teal-500/50 rounded-l-full transition-all duration-300"
+                    style={{ width: `${bidPct}%` }}
                 />
                 <div
-                    className="bg-danger/60 transition-all duration-300"
-                    style={{ width: `${askPercent}%` }}
-                    title={`Ask: ${askDepth.toFixed(2)}`}
+                    className="bg-red-400/40 rounded-r-full transition-all duration-300"
+                    style={{ width: `${100 - bidPct}%` }}
                 />
             </div>
-            <div className="flex justify-between text-[10px]">
-                <span className="text-success">{bidDepth.toFixed(0)} bid</span>
-                <span className="text-danger">{askDepth.toFixed(0)} ask</span>
+            <div className="flex justify-between text-[8px]">
+                <span className="text-teal-400/80 font-mono tabular-nums">{bidDepth.toFixed(0)} bid</span>
+                <span className="text-red-400/70 font-mono tabular-nums">{askDepth.toFixed(0)} ask</span>
             </div>
         </div>
     );
 };
 
-/**
- * Signal strength meter
- */
-const SignalStrengthMeter = ({ strength }: { strength: number }) => {
-    const bars = 5;
-    const filledBars = Math.round(strength * bars);
+/** Signal strength — segmented blocks */
+const SignalBlocks = ({ strength }: { strength: number }) => {
+    const blocks = 5;
+    const filled = Math.round(strength * blocks);
 
     return (
         <div className="space-y-1">
-            <div className="flex justify-between items-center">
-                <span className="text-[11px] text-slate-400 uppercase tracking-wider">Signal Strength</span>
-                <span className="text-xs font-mono text-slate-300">{(strength * 100).toFixed(0)}%</span>
+            <div className="flex justify-between items-baseline">
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider">Signal</span>
+                <span className="text-[10px] font-mono text-slate-400 tabular-nums">{(strength * 100).toFixed(0)}%</span>
             </div>
-            <div className="flex gap-1">
-                {Array.from({ length: bars }).map((_, i) => (
+            <div className="flex gap-[3px]">
+                {Array.from({ length: blocks }).map((_, i) => (
                     <div
                         key={i}
                         className={clsx(
-                            'flex-1 h-2 rounded-sm transition-all duration-300',
-                            i < filledBars
-                                ? strength > 0.5 ? 'bg-amber-500' : 'bg-success'
-                                : 'bg-white/10'
+                            'flex-1 h-[5px] rounded-[2px] transition-all duration-300',
+                            i < filled
+                                ? (strength > 0.6 ? 'bg-amber-500/70' : 'bg-sky-500/50')
+                                : 'bg-white/[0.04]'
                         )}
                     />
                 ))}
@@ -268,54 +354,58 @@ const SignalStrengthMeter = ({ strength }: { strength: number }) => {
     );
 };
 
-/**
- * Price display with VWAP comparison
- */
-const PriceDisplay = ({
-    bestBid,
-    bestAsk,
-    midPrice: _midPrice,
-    spreadBps,
-    vwap,
-    vwapDeviationBps
+/** Bottom metrics strip — single micro metric with optional sparkline */
+const MicroMetric = ({
+    label,
+    value,
+    unit,
+    sparkData,
+    color = 'text-slate-300',
 }: {
-    bestBid: number;
-    bestAsk: number;
-    midPrice: number;
-    spreadBps: number;
-    vwap: number | null;
-    vwapDeviationBps: number;
-}) => {
+    label: string;
+    value: string;
+    unit?: string;
+    sparkData?: number[];
+    color?: string;
+}) => (
+    <div className="flex items-center gap-2 min-w-0">
+        <span className="text-[9px] text-slate-500 uppercase tracking-wider shrink-0">{label}</span>
+        <span className={clsx('text-[11px] font-mono tabular-nums shrink-0', color)}>
+            {value}{unit && <span className="text-slate-600 ml-0.5">{unit}</span>}
+        </span>
+        {sparkData && sparkData.length >= 3 && (
+            <MicroSparkline data={sparkData} color={color.includes('sky') ? '#38bdf8' : color.includes('amber') ? '#f59e0b' : '#94a3b8'} />
+        )}
+    </div>
+);
+
+/** Tiny inline sparkline for bottom metrics strip */
+const MicroSparkline = ({ data, color }: { data: number[]; color: string }) => {
+    const w = 40;
+    const h = 10;
+    const min = Math.min(...data);
+    const max = Math.max(...data);
+    const range = max - min || 1;
+
+    const points = data.map((v, i) => {
+        const x = (i / (data.length - 1)) * w;
+        const y = h - ((v - min) / range) * h;
+        return `${x},${y}`;
+    }).join(' ');
+
     return (
-        <div className="space-y-2">
-            <div className="flex justify-between text-xs">
-                <span className="text-success font-mono">{bestBid.toFixed(6)}</span>
-                <span className="text-slate-400">Spread: {spreadBps.toFixed(1)} bps</span>
-                <span className="text-danger font-mono">{bestAsk.toFixed(6)}</span>
-            </div>
-            {vwap && (
-                <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">VWAP: <span className="font-mono text-slate-300">{vwap.toFixed(6)}</span></span>
-                    <span className={clsx(
-                        'font-mono',
-                        vwapDeviationBps > 20 ? 'text-blue-400' : vwapDeviationBps < -20 ? 'text-amber-400' : 'text-slate-400'
-                    )}>
-                        {vwapDeviationBps >= 0 ? '+' : ''}{vwapDeviationBps.toFixed(1)} bps
-                    </span>
-                </div>
-            )}
-        </div>
+        <svg viewBox={`0 0 ${w} ${h}`} className="w-[40px] h-[10px] shrink-0 opacity-60">
+            <polyline points={points} fill="none" stroke={color} strokeWidth={1} strokeLinecap="round" />
+        </svg>
     );
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main Panel Component
+// Main Panel
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface FlowMetricsPanelProps {
-    /** Polling interval in ms (default: 1000) */
     pollInterval?: number;
-    /** Show compact version */
     compact?: boolean;
 }
 
@@ -334,7 +424,6 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
             setData(json);
             setError(null);
 
-            // Accumulate history for time-series charts
             if (json.hasMetrics && json.regime?.current) {
                 const entry: FlowHistoryEntry = {
                     ts: Date.now(),
@@ -342,6 +431,7 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
                     imbalance: json.signals?.imbalance ?? 0,
                     midPrice: json.prices?.midPrice ?? 0,
                     vwap: json.prices?.vwap ?? null,
+                    spreadBps: json.prices?.spreadBps ?? 0,
                 };
                 const next = [...historyRef.current, entry].slice(-MAX_HISTORY);
                 historyRef.current = next;
@@ -360,12 +450,19 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
         return () => clearInterval(interval);
     }, [fetchFlow, pollInterval]);
 
+    // Derived chart data
+    const midPrices = useMemo(() => history.map(h => h.midPrice).filter(v => v > 0), [history]);
+    const vwapPrices = useMemo(() => history.map(h => h.vwap ?? h.midPrice).filter(v => v > 0), [history]);
+    const spreadHistory = useMemo(() => history.map(h => h.spreadBps), [history]);
+    const imbalanceHistory = useMemo(() => history.map(h => Math.abs(h.imbalance) * 100), [history]);
+
+    // ── Loading state ────────────────────────────────────────────────────
     if (loading && !data) {
         return (
-            <div className="card p-4">
-                <div className="flex items-center gap-2 text-slate-400">
-                    <Waves size={16} className="animate-pulse" />
-                    <span className="text-sm">Loading flow metrics...</span>
+            <div className="card p-3">
+                <div className="flex items-center gap-1.5 text-slate-500 text-[10px]">
+                    <Waves size={10} className="animate-pulse" />
+                    <span>Loading flow metrics…</span>
                 </div>
             </div>
         );
@@ -373,27 +470,27 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
 
     if (error && !data) {
         return (
-            <div className="card p-4 border-danger/30">
-                <div className="flex items-center gap-2 text-danger">
-                    <AlertTriangle size={16} />
-                    <span className="text-sm">{error}</span>
+            <div className="card p-3 border-danger/30">
+                <div className="flex items-center gap-1.5 text-danger text-[10px]">
+                    <AlertTriangle size={10} />
+                    <span>{error}</span>
                 </div>
             </div>
         );
     }
 
-    // No metrics yet (bot not running or no data)
+    // ── Empty state ──────────────────────────────────────────────────────
     if (!data?.hasMetrics) {
         return (
-            <div className="card h-full flex flex-col">
-                <div className="flex items-center gap-2 p-4 border-b border-white/5">
-                    <Waves size={16} className="text-slate-400" />
-                    <span className="text-sm font-medium text-slate-200">Flow Sentiment</span>
+            <div className="card flex flex-col">
+                <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5">
+                    <Waves size={12} className="text-slate-500" />
+                    <span className="text-[11px] font-medium text-slate-300">Flow Sentiment</span>
                 </div>
-                <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-                    <Activity size={32} className="text-slate-600 mb-3" />
-                    <p className="text-sm text-slate-400 mb-1">No flow data available</p>
-                    <p className="text-xs text-slate-500">Start the bot to begin collecting market flow metrics</p>
+                <div className="flex-1 flex flex-col items-center justify-center py-6 text-center">
+                    <Activity size={18} className="text-slate-700 mb-1" />
+                    <p className="text-[11px] text-slate-500">No flow data available</p>
+                    <p className="text-[9px] text-slate-600 mt-0.5">Start the bot to begin collecting flow metrics</p>
                 </div>
             </div>
         );
@@ -401,20 +498,20 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
 
     const regime = data?.regime.current as FlowRegime | null;
 
-    // Compact mode: just show regime badge and imbalance
+    // ── Compact mode ─────────────────────────────────────────────────────
     if (compact) {
         return (
-            <div className="card p-3 flex items-center gap-4">
-                <Waves size={16} className="text-slate-400" />
-                <RegimeBadge regime={regime} />
+            <div className="card p-3 flex items-center gap-3">
+                <Waves size={14} className="text-slate-500" />
+                <RegimePill regime={regime} />
                 {data?.signals && (
-                    <div className="flex-1 max-w-[120px]">
-                        <div className="relative h-1.5 bg-white/5 rounded-full overflow-hidden">
+                    <div className="flex-1 max-w-[100px]">
+                        <div className="relative h-1 bg-white/5 rounded-full overflow-hidden">
                             <div
                                 className={clsx(
                                     'absolute top-0 h-full rounded-full transition-all',
-                                    data.signals.imbalance > 0.3 ? 'bg-blue-500' :
-                                        data.signals.imbalance < -0.3 ? 'bg-amber-500' : 'bg-success'
+                                    data.signals.imbalance > 0.3 ? 'bg-sky-500' :
+                                        data.signals.imbalance < -0.3 ? 'bg-amber-500' : 'bg-slate-400'
                                 )}
                                 style={{
                                     left: data.signals.imbalance >= 0 ? '50%' : `${((data.signals.imbalance + 1) / 2) * 100}%`,
@@ -428,116 +525,171 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
         );
     }
 
-    // Full panel
+    // ── Full panel — institutional quant terminal layout ─────────────────
     return (
-        <div className="card h-full flex flex-col overflow-hidden">
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 pb-0 shrink-0">
-                <div className="flex items-center gap-2">
-                    <Waves size={18} className="text-slate-400" />
-                    <h3 className="text-sm font-medium text-slate-200">Flow Sentiment</h3>
+        <div className="card overflow-hidden flex flex-col h-full" style={{ background: 'linear-gradient(180deg, #121933 0%, #0e1528 100%)' }}>
+            {/* ─── HEADER ────────────────────────────────────────────────── */}
+            <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.06] shrink-0">
+                {/* Left: icon + title + regime pill */}
+                <div className="flex items-center gap-2.5 min-w-0">
+                    <Waves size={15} className="text-slate-500 shrink-0" />
+                    <span className="text-xs font-medium text-slate-200 shrink-0">Flow Sentiment</span>
+                    <RegimePill regime={regime} />
+                    <span className="text-[10px] text-slate-500 truncate hidden xl:inline">{data?.regime.description}</span>
                 </div>
-                <RegimeBadge regime={regime} />
-            </div>
 
-            {/* Scrollable body */}
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 pt-3 space-y-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
-                {/* Description */}
-                <p className="text-xs text-slate-400">{data?.regime.description}</p>
-
-                {/* Trading status */}
-                <div className="flex gap-2">
-                    <div className={clsx(
-                        'text-[10px] px-2 py-1 rounded-full border',
+                {/* Right: mode badges + timestamp */}
+                <div className="flex items-center gap-2 shrink-0">
+                    <span className={clsx(
+                        'text-[9px] px-2 py-0.5 rounded border font-medium',
                         data?.regime.safeForMM
-                            ? 'bg-success/10 border-success/20 text-success'
-                            : 'bg-danger/10 border-danger/20 text-danger'
+                            ? 'bg-emerald-500/8 border-emerald-500/20 text-emerald-400'
+                            : 'bg-red-500/8 border-red-500/20 text-red-400'
                     )}>
-                        MM: {data?.regime.safeForMM ? 'Safe' : 'Avoid'}
-                    </div>
-                    <div className={clsx(
-                        'text-[10px] px-2 py-1 rounded-full border',
+                        MM {data?.regime.safeForMM ? '✓' : '✗'}
+                    </span>
+                    <span className={clsx(
+                        'text-[9px] px-2 py-0.5 rounded border font-medium',
                         data?.regime.safeForArb
-                            ? 'bg-success/10 border-success/20 text-success'
-                            : 'bg-danger/10 border-danger/20 text-danger'
+                            ? 'bg-emerald-500/8 border-emerald-500/20 text-emerald-400'
+                            : 'bg-red-500/8 border-red-500/20 text-red-400'
                     )}>
-                        Arb: {data?.regime.safeForArb ? 'Safe' : 'Avoid'}
-                    </div>
+                        Arb {data?.regime.safeForArb ? '✓' : '✗'}
+                    </span>
+                    <span className="text-[9px] text-slate-600 hidden sm:inline font-mono tabular-nums">
+                        {data?.timestamp ? new Date(data.timestamp).toLocaleTimeString() : ''}
+                    </span>
                 </div>
-
-                {/* Signals */}
-                {data?.signals && (
-                    <div className="space-y-3 pt-2 border-t border-white/5">
-                        <ImbalanceGauge value={data.signals.imbalance} label="Trade Flow" />
-                        <ImbalanceGauge value={data.signals.depthImbalance} label="Depth Bias" />
-                        <SignalStrengthMeter strength={data.signals.signalStrength} />
-                    </div>
-                )}
-
-                {/* Regime Timeline Strip */}
-                {history.length >= 3 && (
-                    <div className="pt-2 border-t border-white/5">
-                        <RegimeTimeline history={history} />
-                    </div>
-                )}
-
-                {/* VWAP vs Mid Price Sparkline */}
-                {history.length >= 3 && (
-                    <div className="pt-2 border-t border-white/5 space-y-1">
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-slate-400 uppercase tracking-wider">VWAP / Mid</span>
-                            <div className="flex items-center gap-2 text-[9px]">
-                                <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-sky-400 inline-block rounded" /> Mid</span>
-                                <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-amber-400 inline-block rounded" /> VWAP</span>
-                            </div>
-                        </div>
-                        <div className="relative">
-                            <Sparkline
-                                data={history.map(h => h.midPrice).filter(v => v > 0)}
-                                width={200}
-                                height={28}
-                                color="#38bdf8"
-                                fill
-                                className="w-full"
-                            />
-                            {history.some(h => h.vwap !== null && h.vwap > 0) && (
-                                <div className="absolute inset-0">
-                                    <Sparkline
-                                        data={history.map(h => h.vwap ?? h.midPrice).filter(v => v > 0)}
-                                        width={200}
-                                        height={28}
-                                        color="#f59e0b"
-                                        strokeWidth={1}
-                                        className="w-full"
-                                    />
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                )}
-
-                {/* Depth */}
-                {data?.depth && (
-                    <div className="pt-2 border-t border-white/5">
-                        <DepthBar
-                            bidDepth={data.depth.bidDepthBase}
-                            askDepth={data.depth.askDepthBase}
-                        />
-                    </div>
-                )}
-
-                {/* Prices */}
-                {data?.prices && (
-                    <div className="pt-2 border-t border-white/5">
-                        <PriceDisplay {...data.prices} />
-                    </div>
-                )}
-
             </div>
 
-            {/* Last update - footer */}
-            <div className="text-[10px] text-slate-500 text-right px-4 py-2 border-t border-white/5 shrink-0">
-                Updated: {data?.timestamp ? new Date(data.timestamp).toLocaleTimeString() : 'N/A'}
+            {/* ─── BODY ──────────────────────────────────────────────────── */}
+            <div className="flex flex-col lg:flex-row flex-1 min-h-0">
+                {/* LEFT COLUMN — Metrics Stack (~30%) */}
+                <div className="lg:w-[280px] xl:w-[300px] shrink-0 px-4 py-3 flex flex-col gap-3 border-r border-white/[0.04]">
+                    {/* Trade Flow */}
+                    {data?.signals && (
+                        <FlowGauge value={data.signals.imbalance} label="Trade Flow" />
+                    )}
+
+                    {/* Depth Bias */}
+                    {data?.signals && (
+                        <FlowGauge value={data.signals.depthImbalance} label="Depth Bias" leftLabel="Ask" rightLabel="Bid" />
+                    )}
+
+                    {/* Book Depth */}
+                    {data?.depth && (
+                        <DepthBar bidDepth={data.depth.bidDepthBase} askDepth={data.depth.askDepthBase} />
+                    )}
+
+                    {/* Signal Strength */}
+                    {data?.signals && (
+                        <SignalBlocks strength={data.signals.signalStrength} />
+                    )}
+                </div>
+
+                {/* RIGHT COLUMN — Chart Zone (~70%) */}
+                <div className="flex-1 min-w-0 flex flex-col px-3 py-2">
+                    {/* Regime timeline strip */}
+                    <div className="shrink-0 mb-1">
+                        <RegimeStrip history={history} />
+                    </div>
+
+                    {/* Chart area — fills remaining height */}
+                    <div className="flex-1 min-h-[80px] relative">
+                        {history.length >= 3 ? (
+                            <>
+                                {/* Chart legend */}
+                                <div className="absolute top-0 right-0 z-10 flex items-center gap-3 text-[9px]">
+                                    <span className="flex items-center gap-1 text-slate-500">
+                                        <span className="w-3 h-[2px] bg-sky-400 inline-block rounded" /> Mid
+                                    </span>
+                                    <span className="flex items-center gap-1 text-slate-500">
+                                        <span className="w-3 h-[2px] bg-amber-400 inline-block rounded opacity-70" style={{ borderBottom: '1px dashed #f59e0b' }} /> VWAP
+                                    </span>
+                                </div>
+
+                                {/* Price labels */}
+                                {data?.prices && (
+                                    <div className="absolute top-0 left-0 z-10 flex flex-col gap-0.5">
+                                        <span className="text-[10px] font-mono tabular-nums text-sky-400/80">
+                                            {data.prices.midPrice.toFixed(6)}
+                                        </span>
+                                        {data.prices.vwap && (
+                                            <span className="text-[10px] font-mono tabular-nums text-amber-400/60">
+                                                {data.prices.vwap.toFixed(6)}
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
+
+                                <PriceChart midPrices={midPrices} vwapPrices={vwapPrices} />
+                            </>
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-600">
+                                Collecting data…
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Prices row (mobile fallback) */}
+                    {data?.prices && (
+                        <div className="shrink-0 flex items-center justify-between text-[10px] py-1 lg:hidden border-t border-white/[0.04]">
+                            <span className="font-mono text-teal-400">{data.prices.bestBid.toFixed(6)}</span>
+                            <span className="text-slate-500">Spread: {data.prices.spreadBps.toFixed(1)} bps</span>
+                            <span className="font-mono text-red-400">{data.prices.bestAsk.toFixed(6)}</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* ─── BOTTOM MICRO-METRICS STRIP ────────────────────────────── */}
+            <div className="shrink-0 flex items-center gap-6 px-4 py-1.5 border-t border-white/[0.06] bg-white/[0.015] overflow-x-auto">
+                {data?.prices && (
+                    <>
+                        <MicroMetric
+                            label="Spread"
+                            value={data.prices.spreadBps.toFixed(1)}
+                            unit="bps"
+                            sparkData={spreadHistory}
+                            color="text-slate-300"
+                        />
+                        <MicroMetric
+                            label="Bid"
+                            value={data.prices.bestBid.toFixed(6)}
+                            color="text-teal-400"
+                        />
+                        <MicroMetric
+                            label="Ask"
+                            value={data.prices.bestAsk.toFixed(6)}
+                            color="text-red-400/80"
+                        />
+                    </>
+                )}
+                {data?.signals && (
+                    <MicroMetric
+                        label="Imbalance"
+                        value={`${(Math.abs(data.signals.imbalance) * 100).toFixed(1)}`}
+                        unit="%"
+                        sparkData={imbalanceHistory}
+                        color={data.signals.imbalance > 0.15 ? 'text-sky-400' : data.signals.imbalance < -0.15 ? 'text-amber-400' : 'text-slate-300'}
+                    />
+                )}
+                {data?.prices?.vwap && (
+                    <MicroMetric
+                        label="VWAP Δ"
+                        value={`${data.prices.vwapDeviationBps >= 0 ? '+' : ''}${data.prices.vwapDeviationBps.toFixed(1)}`}
+                        unit="bps"
+                        color={data.prices.vwapDeviationBps > 20 ? 'text-sky-400' : data.prices.vwapDeviationBps < -20 ? 'text-amber-400' : 'text-slate-300'}
+                    />
+                )}
+                {data?.signals && (
+                    <MicroMetric
+                        label="Signal"
+                        value={`${(data.signals.signalStrength * 100).toFixed(0)}`}
+                        unit="%"
+                        color={data.signals.signalStrength > 0.6 ? 'text-amber-400' : 'text-slate-300'}
+                    />
+                )}
             </div>
         </div>
     );
