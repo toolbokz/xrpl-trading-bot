@@ -326,7 +326,7 @@ function isMainnetContext(): boolean {
  *      Set SIGNER_SKIP_READY_CHECK=true to bypass (for integration testing only).
  */
 export function createSignerFromEnv(): Signer {
-    const seed = process.env.XRPL_SEED;
+    const seed = process.env.XRPL_SEED || process.env.XRPL_SECRET;
     const secretNumbers = process.env.XRPL_SECRET_NUMBERS;
     const xummApiKey = process.env.XUMM_API_KEY;
     const kmsKeyId = process.env.KMS_KEY_ID;
@@ -362,7 +362,7 @@ export function createSignerFromEnv(): Signer {
     }
 
     throw new Error(
-        'No signing credentials found. Set XRPL_SEED or XRPL_SECRET_NUMBERS ' +
+        'No signing credentials found. Set XRPL_SECRET, XRPL_SEED, or XRPL_SECRET_NUMBERS ' +
         'for development, or KMS_KEY_ID/XUMM_API_KEY/LEDGER_ENABLED for production.'
     );
 }

@@ -83,16 +83,43 @@ async function getMainnetSecretNumbersFromEnv(): Promise<string | undefined> {
 }
 
 /**
+ * Get mainnet secret (family seed) from environment, decrypting if necessary.
+ * Prefers encrypted version (XRPL_SECRET_MAINNET_ENC) over plaintext.
+ * The "secret" and "seed" are the same format (s...) in the XRPL ecosystem.
+ */
+async function getMainnetSecretFromEnv(): Promise<string | undefined> {
+    const enc = process.env.XRPL_SECRET_MAINNET_ENC || process.env.XRPL_SEED_MAINNET_ENC;
+    if (enc) {
+        const pass =
+            process.env.XRPL_SECRET_PASSPHRASE ??
+            (await promptHidden('Enter passphrase to decrypt XRPL secret: '));
+        return decryptFromBase64(enc, pass);
+    }
+
+    // Fall back to plaintext
+    const plaintext = process.env.XRPL_SECRET_MAINNET || process.env.XRPL_SEED_MAINNET || process.env.XRPL_SECRET || process.env.XRPL_SEED;
+    if (plaintext) {
+        logger.warn('Using plaintext XRPL secret/seed for mainnet. Consider encrypting with XRPL_SECRET_MAINNET_ENC.');
+    }
+    return plaintext;
+}
+
+/**
  * Resolve wallet from config, with async support for encrypted mainnet secrets.
  */
 async function resolveWalletAsync(config: AppConfig): Promise<Wallet> {
     const isMainnet = config.xrpl.network === 'mainnet';
 
-    // For mainnet, check for encrypted or plaintext secret numbers in env
+    // For mainnet, check for encrypted or plaintext credentials in env
     if (isMainnet) {
         const secretNumbers = await getMainnetSecretNumbersFromEnv();
         if (secretNumbers) {
             return walletFromSecretNumbers(secretNumbers);
+        }
+
+        const secret = await getMainnetSecretFromEnv();
+        if (secret) {
+            return Wallet.fromSeed(secret);
         }
     }
 
@@ -104,7 +131,11 @@ async function resolveWalletAsync(config: AppConfig): Promise<Wallet> {
         return Wallet.fromSeed(config.walletSeed);
     }
 
-    throw new Error('No wallet credentials found. Set XRPL_SECRET_NUMBERS_MAINNET_ENC, XRPL_SECRET_NUMBERS_MAINNET, or XRPL_SEED.');
+    throw new Error(
+        'No wallet credentials found. Set one of: ' +
+        'XRPL_SECRET, XRPL_SEED, XRPL_SECRET_MAINNET_ENC, XRPL_SECRET_NUMBERS_MAINNET_ENC, ' +
+        'or XRPL_SECRET_NUMBERS.'
+    );
 }
 
 const resolveWallet = (config: AppConfig): Wallet => {
@@ -114,7 +145,7 @@ const resolveWallet = (config: AppConfig): Wallet => {
     if (config.walletSeed) {
         return Wallet.fromSeed(config.walletSeed);
     }
-    throw new Error('XRPL_SECRET_NUMBERS or XRPL_SEED is required for runtime');
+    throw new Error('XRPL_SECRET_NUMBERS, XRPL_SECRET, or XRPL_SEED is required for runtime');
 };
 
 const assertFaucetSafety = (network: string, enableTestnetFaucet: boolean): void => {

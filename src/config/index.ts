@@ -129,10 +129,11 @@ export const loadConfig = (): AppConfig => {
     const enableTestnetFaucet = toBool(process.env.ENABLE_TESTNET_FAUCET as EnvBool, false);
 
     // Network-specific wallet credentials
+    // Accepts XRPL_SEED or XRPL_SECRET (family seed / secret key) — they are the same format (s...)
     const isTestnet = network.toLowerCase() === 'testnet';
     const walletSeed = isTestnet
-        ? process.env.XRPL_SEED_TESTNET || process.env.XRPL_SEED || process.env.WALLET_SEED
-        : process.env.XRPL_SEED_MAINNET || process.env.XRPL_SEED || process.env.WALLET_SEED;
+        ? process.env.XRPL_SEED_TESTNET || process.env.XRPL_SECRET_TESTNET || process.env.XRPL_SEED || process.env.XRPL_SECRET || process.env.WALLET_SEED
+        : process.env.XRPL_SEED_MAINNET || process.env.XRPL_SECRET_MAINNET || process.env.XRPL_SEED || process.env.XRPL_SECRET || process.env.WALLET_SEED;
     const walletSecretNumbers = isTestnet
         ? process.env.XRPL_SECRET_NUMBERS_TESTNET || process.env.XRPL_SECRET_NUMBERS
         : process.env.XRPL_SECRET_NUMBERS_MAINNET || process.env.XRPL_SECRET_NUMBERS;
