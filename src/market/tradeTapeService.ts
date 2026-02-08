@@ -222,42 +222,41 @@ export class TradeTapeService {
     /**
      * Calculate the fill amount from offer fields.
      * 
-     * For DeletedNode: The entire final amount was filled
-     * For ModifiedNode: Previous - Final = filled amount
+     * For DeletedNode with PreviousFields: Previous - Final = filled amount
+     * For DeletedNode without PreviousFields: entire offer filled in one shot (use FinalFields)
+     * For ModifiedNode: Previous - Final = filled amount (partial fill)
      */
     private calculateFill(
         fields: OfferFields,
         previousFields: Partial<OfferFields> | null,
         isFullFill: boolean
     ): { takerGets: Amount; takerPays: Amount } | null {
-        if (isFullFill || !previousFields) {
-            // For full fills, use the final amounts (what was remaining and got filled)
+        // If we have PreviousFields, always compute the delta (both deleted and modified nodes)
+        if (previousFields?.TakerGets && previousFields?.TakerPays) {
+            const filledGets = this.subtractAmounts(previousFields.TakerGets, fields.TakerGets);
+            const filledPays = this.subtractAmounts(previousFields.TakerPays, fields.TakerPays);
+
+            if (filledGets <= 0 || filledPays <= 0) {
+                return null;
+            }
+
+            return {
+                takerGets: this.reconstructAmount(previousFields.TakerGets, filledGets),
+                takerPays: this.reconstructAmount(previousFields.TakerPays, filledPays),
+            };
+        }
+
+        if (isFullFill) {
+            // No PreviousFields — offer was created and fully consumed in the same ledger
+            // FinalFields contains the entire amount
             return {
                 takerGets: fields.TakerGets,
                 takerPays: fields.TakerPays,
             };
         }
 
-        // For partial fills, calculate delta
-        const prevGets = previousFields.TakerGets;
-        const prevPays = previousFields.TakerPays;
-
-        if (!prevGets || !prevPays) {
-            return null;
-        }
-
-        const filledGets = this.subtractAmounts(prevGets, fields.TakerGets);
-        const filledPays = this.subtractAmounts(prevPays, fields.TakerPays);
-
-        if (filledGets <= 0 || filledPays <= 0) {
-            return null;
-        }
-
-        // Reconstruct the filled amounts
-        return {
-            takerGets: this.reconstructAmount(prevGets, filledGets),
-            takerPays: this.reconstructAmount(prevPays, filledPays),
-        };
+        // ModifiedNode without PreviousFields — shouldn't happen, but bail
+        return null;
     }
 
     /**
