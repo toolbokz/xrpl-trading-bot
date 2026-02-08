@@ -83,6 +83,8 @@ export interface MarketSnapshotRecord {
     vwapDeviationBps: number | null;
     tradeCount: number | null;
     volumeVelocity: number | null;
+    /** 1 = adverse selection risk detected, 0 = not detected, null = unknown */
+    adverseSelectionRisk: number | null;
 }
 
 /**
@@ -228,6 +230,13 @@ const TRADE_EVENT_EXTRA_COLUMNS = {
 } as const;
 
 /**
+ * Snapshot columns added after initial schema (migration)
+ */
+const SNAPSHOT_EXTRA_COLUMNS = {
+    adverseSelectionRisk: 'INTEGER',
+} as const;
+
+/**
  * Ensure columns exist on a table (for migrations without a full migration system)
  * Uses PRAGMA table_info to check existing columns and ALTER TABLE to add missing ones
  */
@@ -279,12 +288,14 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 id, ts, pairKey, ledgerIndex, midPrice, spreadBps,
                 bestBid, bestAsk, bidDepthBase, askDepthBase,
                 flowRegime, flowImbalance, flowDepthImbalance, flowCombined, flowStrength,
-                vwap, vwapDeviationBps, tradeCount, volumeVelocity
+                vwap, vwapDeviationBps, tradeCount, volumeVelocity,
+                adverseSelectionRisk
             ) VALUES (
                 @id, @ts, @pairKey, @ledgerIndex, @midPrice, @spreadBps,
                 @bestBid, @bestAsk, @bidDepthBase, @askDepthBase,
                 @flowRegime, @flowImbalance, @flowDepthImbalance, @flowCombined, @flowStrength,
-                @vwap, @vwapDeviationBps, @tradeCount, @volumeVelocity
+                @vwap, @vwapDeviationBps, @tradeCount, @volumeVelocity,
+                @adverseSelectionRisk
             )
         `),
         pruneTradeEvents: db.prepare(`
@@ -321,6 +332,9 @@ export function getFeedbackDb(): DatabaseType {
 
         // Ensure cost realism columns exist (handles existing databases)
         ensureColumns(dbInstance, 'trade_events', TRADE_EVENT_EXTRA_COLUMNS);
+
+        // Ensure adverse selection column exists on snapshots
+        ensureColumns(dbInstance, 'market_snapshots', SNAPSHOT_EXTRA_COLUMNS);
 
         preparedStatements = createPreparedStatements(dbInstance);
 
@@ -437,6 +451,7 @@ export function insertMarketSnapshot(snapshot: MarketSnapshotRecord): void {
             vwapDeviationBps: snapshot.vwapDeviationBps,
             tradeCount: snapshot.tradeCount,
             volumeVelocity: snapshot.volumeVelocity,
+            adverseSelectionRisk: snapshot.adverseSelectionRisk ?? null,
         });
     } catch (err) {
         logger.warn({ err, snapshotId: snapshot.id }, 'Failed to insert market snapshot');
@@ -504,6 +519,7 @@ export function insertBatch(events: TradeEventRecord[], snapshot?: MarketSnapsho
                     vwapDeviationBps: snapshot.vwapDeviationBps,
                     tradeCount: snapshot.tradeCount,
                     volumeVelocity: snapshot.volumeVelocity,
+                    adverseSelectionRisk: snapshot.adverseSelectionRisk ?? null,
                 });
             }
         })();

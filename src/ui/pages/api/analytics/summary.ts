@@ -1,6 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
-import { feedbackEngine, AnalyticsResponse, AnalyticsSummary, RegimeStats, StrategyStats, DrawdownPoint } from '../../../../analytics/feedbackEngine';
+import { feedbackEngine, AnalyticsResponse, AnalyticsSummary, RegimeStats, StrategyStats, DrawdownPoint, ProfitFactorPoint } from '../../../../analytics/feedbackEngine';
 
 export const config = {
     api: { bodyParser: false },
@@ -20,6 +20,10 @@ export interface AnalyticsApiResponse {
     byRegime: RegimeStats[];
     byStrategy: StrategyStats[];
     drawdown: DrawdownPoint[];
+    /** Max rate of drawdown increase across consecutive buckets (per hour) */
+    drawdownVelocity: number;
+    /** Rolling cumulative profit factor series aligned with drawdown buckets */
+    profitFactorSeries: ProfitFactorPoint[];
 }
 
 /**
@@ -71,6 +75,8 @@ function handler(req: LocalRequest, res: NextApiResponse<AnalyticsApiResponse | 
             byRegime: analytics.byRegime,
             byStrategy: analytics.byStrategy,
             drawdown: analytics.drawdown,
+            drawdownVelocity: analytics.drawdownVelocity,
+            profitFactorSeries: analytics.profitFactorSeries,
         };
 
         return res.status(200).json(response);
