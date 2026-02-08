@@ -19,6 +19,8 @@ import { AdaptivePanel } from '../components/AdaptivePanel';
 import { GovernancePanel } from '../components/GovernancePanel';
 import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
 import { MarketDataHealthPanel } from '../components/MarketDataHealthPanel';
+import { AdverseSelectionPanel } from '../components/AdverseSelectionPanel';
+import { DrawdownGaugePanel } from '../components/DrawdownGaugePanel';
 import { InstrumentSelector } from '../components/InstrumentSelector';
 
 // Mobile layout
@@ -463,14 +465,23 @@ export default function Page() {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Desktop Layout - Institutional terminal grid (scrollable)
+    // Desktop Layout - 4×4 terminal grid with tall side columns
     // ─────────────────────────────────────────────────────────────────────────
+    //
+    //  Row 1 (auto):  [ Health + Stats ··················· col-span-4 ]
+    //  Row 2 (1fr):   [ Trade Tape ] [ Flow Metrics ·· col-span-2 ] [ Analytics (row-span-2) ]
+    //  Row 3 (1fr):   [ Order Book ] [ Strategy&Risk ] [ Bot Logs ] [ Analytics (cont.) ]
+    //  Row 4 (auto):  [ CapProtect ] [ Adaptive ] [ Adverse Sel ] [ Drawdown ] [ RegimePerf ]  (5-col sub-grid)
+    //
 
     return (
         <AppShell header={headerComponent}>
-            <div className="w-full flex flex-col gap-2 pb-2">
-                {/* ROW 1: Health + Stats (2 columns) */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div
+                className="w-full grid grid-cols-4 gap-2 pb-2"
+                style={{ gridTemplateRows: 'auto 1fr 1fr auto' }}
+            >
+                {/* ── ROW 1: Health + Stats (span all 4 columns) ── */}
+                <div className="col-span-4 grid grid-cols-2 gap-2">
                     <MarketDataHealthPanel />
                     <MarketStatsPanel
                         totalPnl={bot.pnlTotal}
@@ -485,71 +496,93 @@ export default function Page() {
                     />
                 </div>
 
-                {/* ROWS 2-3: Main panels + Bot Logs column on the right */}
-                <div className="grid grid-cols-1 xl:grid-cols-[1fr_280px] gap-2 lg:h-[728px]">
-                    {/* Left: Rows 2 and 3 stacked */}
-                    <div className="flex flex-col gap-2 min-h-0">
-                        {/* ROW 2: Strategy & Risk, Flow Sentiment spanning 2 cols (3-col grid) */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 lg:flex-[380] min-h-0">
-                            <div className="min-h-0 h-full overflow-y-auto scrollbar-thin">
-                                <ControlsPanel
-                                    strategy={bot.strategy}
-                                    lastLedger={bot.lastLedger}
-                                    liquidity={bot.liquidity}
-                                    slippageBps={bot.slippageBps}
-                                    positionSize={positionSize}
-                                    maxExposure={bot.risk.maxExposure}
-                                    currentExposure={bot.risk.currentExposure}
-                                    dailyLossLimit={bot.risk.dailyLossLimit}
-                                    killSwitch={bot.risk.killSwitch}
-                                    pairSelector={pairSelectorElement}
-                                    onPositionSizeChange={setPositionSize}
-                                    onApplyPositionSize={updatePositionSize}
-                                    positionSizeMessage={positionSizeMessage}
-                                    loading={actionLoading}
-                                />
-                            </div>
-                            <div className="min-h-0 h-full overflow-hidden md:col-span-2">
-                                <FlowMetricsPanel pollInterval={2000} />
-                            </div>
-                        </div>
-
-                        {/* ROW 3: Capital Protection, Order Book, Trade Tape (3 columns) */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 lg:flex-[340] min-h-0">
-                            <div className="min-h-0 h-full overflow-hidden">
-                                <GovernancePanel />
-                            </div>
-                            <div className="min-h-0 h-full overflow-hidden">
-                                <OrderBookPanel
-                                    bids={orderBookBids}
-                                    asks={orderBookAsks}
-                                    midPrice={midPrice}
-                                    spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
-                                    loading={orderBookLoading}
-                                    error={orderBookError}
-                                />
-                            </div>
-                            <div className="min-h-0 h-full overflow-hidden">
-                                <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={100} />
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Right column: Bot Logs spanning rows 2-3 */}
-                    <div className="min-h-0 h-full overflow-hidden">
-                        <LogsPanel maxRows={50} />
-                    </div>
+                {/* ── ROW 2, COL 1: Trade Tape ── */}
+                <div
+                    className="min-h-0 overflow-hidden"
+                    style={{ gridColumn: '1', gridRow: '2', height: '30vh' }}
+                >
+                    <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={100} />
                 </div>
 
-                {/* ROW 4: Adaptive, Analytics, Regime Performance (3 columns) */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 lg:h-[180px]">
-                    <div className="min-h-0 h-full overflow-hidden">
+                {/* ── ROW 2, COL 2-3: Flow Metrics ── */}
+                <div
+                    className="min-h-0 overflow-hidden col-span-2"
+                    style={{ gridColumn: '2 / 4', gridRow: '2', height: '30vh' }}
+                >
+                    <FlowMetricsPanel pollInterval={2000} />
+                </div>
+
+                {/* ── ROW 2-3, COL 4: Analytics (span 2 rows) ── */}
+                <div
+                    className="min-h-0 overflow-hidden"
+                    style={{ gridColumn: '4', gridRow: '2 / 4', height: '60vh' }}
+                >
+                    <AnalyticsPanel pollInterval={5000} />
+                </div>
+
+                {/* ── ROW 3, COL 1: Order Book ── */}
+                <div
+                    className="min-h-0 overflow-hidden"
+                    style={{ gridColumn: '1', gridRow: '3', height: '30vh' }}
+                >
+                    <OrderBookPanel
+                        bids={orderBookBids}
+                        asks={orderBookAsks}
+                        midPrice={midPrice}
+                        spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                        loading={orderBookLoading}
+                        error={orderBookError}
+                    />
+                </div>
+
+                {/* ── ROW 3 MIDDLE-LEFT: Strategy & Risk (col 2) ── */}
+                <div
+                    className="min-h-0 overflow-y-auto scrollbar-thin"
+                    style={{ gridColumn: '2', gridRow: '3', height: '30vh' }}
+                >
+                    <ControlsPanel
+                        strategy={bot.strategy}
+                        lastLedger={bot.lastLedger}
+                        liquidity={bot.liquidity}
+                        slippageBps={bot.slippageBps}
+                        positionSize={positionSize}
+                        maxExposure={bot.risk.maxExposure}
+                        currentExposure={bot.risk.currentExposure}
+                        dailyLossLimit={bot.risk.dailyLossLimit}
+                        killSwitch={bot.risk.killSwitch}
+                        pairSelector={pairSelectorElement}
+                        onPositionSizeChange={setPositionSize}
+                        onApplyPositionSize={updatePositionSize}
+                        positionSizeMessage={positionSizeMessage}
+                        loading={actionLoading}
+                    />
+                </div>
+
+                {/* ── ROW 3 MIDDLE-RIGHT: Bot Logs (col 3) ── */}
+                <div
+                    className="min-h-0 overflow-hidden"
+                    style={{ gridColumn: '3', gridRow: '3', height: '30vh' }}
+                >
+                    <LogsPanel maxRows={50} />
+                </div>
+
+                {/* ── ROW 4: 5-column sub-grid ── */}
+                <div className="col-span-4 grid grid-cols-5 gap-2">
+                    <div className="min-h-0 overflow-hidden" style={{ height: '30vh' }}>
+                        <GovernancePanel />
+                    </div>
+                    <div className="min-h-0 overflow-hidden" style={{ height: '14vh' }}>
                         <AdaptivePanel pollInterval={5000} />
                     </div>
-                    <div className="min-h-0 h-full overflow-hidden">
-                        <AnalyticsPanel pollInterval={5000} />
+                    <div className="min-h-0 overflow-hidden flex flex-col gap-2" style={{ height: '30vh' }}>
+                        <div className="flex-1 min-h-0 overflow-hidden">
+                            <AdverseSelectionPanel pollInterval={5000} />
+                        </div>
+                        <div className="flex-1 min-h-0 overflow-hidden">
+                            <DrawdownGaugePanel pollInterval={10000} />
+                        </div>
                     </div>
-                    <div className="min-h-0 h-full overflow-visible">
+                    <div className="min-h-0 overflow-visible col-span-2" style={{ height: '30vh' }}>
                         <RegimeHeatmapPanel />
                     </div>
                 </div>

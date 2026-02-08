@@ -269,9 +269,6 @@ export function RegimeHeatmapPanel() {
         return () => clearInterval(interval);
     }, [fetchData]);
 
-    // Get list of strategies from heatmap
-    const strategies = heatmap ? Object.keys(heatmap.perStrategy) : [];
-
     // Get disabled regimes from policy
     const getDisabledRegimes = (strategyName: string | null): Set<FlowRegime> => {
         if (!policy) return new Set();
@@ -374,16 +371,16 @@ export function RegimeHeatmapPanel() {
             </div>
 
             {/* Scrollable body */}
-            <div className="flex-1 min-h-0 overflow-y-auto px-2.5 pb-2 pt-0 scrollbar-thin">
+            <div className="flex-1 min-h-0 overflow-y-auto px-2.5 pb-2 pt-0 scrollbar-thin flex flex-col items-center justify-center">
                 {/* Heatmap Grid */}
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto w-full">
                     <table className="text-[10px] mx-auto">
                         <thead>
                             <tr className="text-slate-400">
                                 {ALL_REGIMES.map(regime => {
                                     const Icon = regimeIcons[regime];
                                     return (
-                                        <th key={regime} className="px-0.5 py-1 font-normal text-center">
+                                        <th key={regime} className="px-0.5 py-1 font-normal text-center align-middle">
                                             <div className="flex flex-col items-center gap-0.5">
                                                 <Icon size={12} />
                                                 <span>{regimeLabels[regime]}</span>
@@ -406,35 +403,6 @@ export function RegimeHeatmapPanel() {
                                     </td>
                                 ))}
                             </tr>
-
-                            {/* Strategy Rows */}
-                            {strategies.map(strategy => {
-                                const strategyDisabled = getDisabledRegimes(strategy);
-                                const strategyData = heatmap.perStrategy[strategy];
-                                return (
-                                    <tr key={strategy}>
-                                        {ALL_REGIMES.map(regime => {
-                                            const cellData = strategyData?.[regime];
-                                            return (
-                                                <td key={regime} className="px-0.5 py-0.5">
-                                                    {cellData ? (
-                                                        <HeatmapCell
-                                                            cell={cellData}
-                                                            isDisabled={strategyDisabled.has(regime)}
-                                                            showMetric={showMetric}
-                                                        />
-                                                    ) : (
-                                                        <div className="relative p-1.5 rounded text-center min-w-[52px] bg-slate-700/30 text-slate-500">
-                                                            <div className="text-[11px] font-medium">-</div>
-                                                            <div className="text-[9px] opacity-70">0t</div>
-                                                        </div>
-                                                    )}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                );
-                            })}
                         </tbody>
                     </table>
                 </div>

@@ -4,7 +4,6 @@ import { ReactNode } from 'react';
 import clsx from 'clsx';
 import { Settings, AlertTriangle } from 'lucide-react';
 import { Panel, PanelBadge } from './Panel';
-import { RadialGauge } from './charts/RadialGauge';
 
 interface ControlsPanelProps {
     /** Current strategy */
@@ -100,18 +99,6 @@ export function ControlsPanel({
                     )}
                 </div>
             )}
-
-            {/* Exposure gauge */}
-            <div className="flex justify-center pb-2 mb-2 border-b border-white/5">
-                <RadialGauge
-                    value={currentExposure}
-                    max={maxExposure}
-                    label="Exposure"
-                    size={56}
-                    format={(v) => maxExposure > 0 ? `${((v / maxExposure) * 100).toFixed(0)}%` : '0%'}
-                    thresholds={{ warn: 50, danger: 80 }}
-                />
-            </div>
 
             <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
                 <ControlItem label="Strategy" value={strategy} />
