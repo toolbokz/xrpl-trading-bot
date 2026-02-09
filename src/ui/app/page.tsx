@@ -15,8 +15,9 @@ import { TradeTapePanel } from '../components/TradeTapePanel';
 import { LogsPanel } from '../components/LogsPanel';
 import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
 import { AnalyticsPanel } from '../components/AnalyticsPanel';
-import { AdaptivePanel } from '../components/AdaptivePanel';
 import { GovernancePanel } from '../components/GovernancePanel';
+import { AdaptivePanel } from '../components/AdaptivePanel';
+import { ChartPanel } from '../components/ChartPanel';
 import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
 import { MarketDataHealthPanel } from '../components/MarketDataHealthPanel';
 import { AdverseSelectionPanel } from '../components/AdverseSelectionPanel';
@@ -28,6 +29,7 @@ import { MobileDashboard, MobileSection } from '../components/layout/MobileDashb
 
 // Data hooks (real data fetching)
 import { useOrderBook } from '../lib/hooks/useOrderBook';
+import { useCandles } from '../lib/hooks/useCandles';
 
 
 
@@ -133,6 +135,14 @@ export default function Page() {
     const midPrice = orderBookData.midPrice;
     const orderBookBids = orderBookData.bids;
     const orderBookAsks = orderBookData.asks;
+
+    // Candle chart data from /api/pairs/[key]/candles
+    const {
+        candles: candleData,
+        volumeData,
+        loading: candlesLoading,
+        error: candlesError,
+    } = useCandles(selectedPairKey, { pollInterval: 5000, enabled: !!selectedPairKey });
 
     // ─────────────────────────────────────────────────────────────────────────
     // Data Fetching (non-mock)
@@ -470,8 +480,8 @@ export default function Page() {
     //
     //  Row 1 (auto):  [ Health + Stats ··················· col-span-4 ]
     //  Row 2 (1fr):   [ Trade Tape ] [ Flow Metrics ·· col-span-2 ] [ Analytics (row-span-2) ]
-    //  Row 3 (1fr):   [ Order Book ] [ Strategy&Risk ] [ Bot Logs ] [ Analytics (cont.) ]
-    //  Row 4 (auto):  [ CapProtect ] [ Adaptive ] [ Adverse Sel ] [ Drawdown ] [ RegimePerf ]  (5-col sub-grid)
+    //  Row 3 (1fr):   [ Order Book ] [ Strategy&Risk ] [ Candle Chart ] [ Analytics (cont.) ]
+    //  Row 4 (auto):  [ CapProtect ] [ Bot Logs ] [ Adverse+Drawdown ] [ RegimePerf ]  (4-col sub-grid)
     //
 
     return (
@@ -558,21 +568,30 @@ export default function Page() {
                     />
                 </div>
 
-                {/* ── ROW 3 MIDDLE-RIGHT: Bot Logs (col 3) ── */}
+                {/* ── ROW 3, COL 3: Candle Chart ── */}
                 <div
                     className="min-h-0 overflow-hidden"
                     style={{ gridColumn: '3', gridRow: '3', height: '30vh' }}
                 >
-                    <LogsPanel maxRows={50} />
+                    <ChartPanel
+                        data={candleData}
+                        volumeData={volumeData}
+                        pairKey={selectedPairKey}
+                        currentPrice={midPrice ?? 0}
+                        quoteCurrency={bot.quoteCurrency}
+                        spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                        loading={candlesLoading}
+                        error={candlesError}
+                    />
                 </div>
 
-                {/* ── ROW 4: 5-column sub-grid ── */}
-                <div className="col-span-4 grid grid-cols-5 gap-2">
+                {/* ── ROW 4: 4-column sub-grid ── */}
+                <div className="col-span-4 grid grid-cols-4 gap-2">
                     <div className="min-h-0 overflow-hidden" style={{ height: '30vh' }}>
                         <GovernancePanel />
                     </div>
-                    <div className="min-h-0 overflow-hidden" style={{ height: '14vh' }}>
-                        <AdaptivePanel pollInterval={5000} />
+                    <div className="min-h-0 overflow-hidden" style={{ height: '30vh' }}>
+                        <LogsPanel maxRows={50} />
                     </div>
                     <div className="min-h-0 overflow-hidden flex flex-col gap-2" style={{ height: '30vh' }}>
                         <div className="flex-1 min-h-0 overflow-hidden">
@@ -582,7 +601,7 @@ export default function Page() {
                             <DrawdownGaugePanel pollInterval={10000} />
                         </div>
                     </div>
-                    <div className="min-h-0 overflow-visible col-span-2" style={{ height: '30vh' }}>
+                    <div className="min-h-0 overflow-visible" style={{ height: '30vh' }}>
                         <RegimeHeatmapPanel />
                     </div>
                 </div>
