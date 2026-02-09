@@ -115,7 +115,8 @@ function getScoreColor(score: number): string {
 /**
  * Format number for display
  */
-function formatValue(value: number, decimals: number = 1): string {
+function formatValue(value: number | null | undefined, decimals: number = 1): string {
+    if (value == null) return '—';
     return value.toFixed(decimals);
 }
 
@@ -187,21 +188,21 @@ function HeatmapCell({
                         <span>Trades:</span>
                         <span className="text-slate-200">{cell.trades}</span>
                         <span>Win Rate:</span>
-                        <span className="text-slate-200">{(cell.winRate * 100).toFixed(1)}%</span>
+                        <span className="text-slate-200">{((cell.winRate ?? 0) * 100).toFixed(1)}%</span>
                         <span>PF:</span>
-                        <span className="text-slate-200">{cell.profitFactor.toFixed(2)}</span>
+                        <span className="text-slate-200">{(cell.profitFactor ?? 0).toFixed(2)}</span>
                         <span>Expectancy:</span>
-                        <span className="text-slate-200">{cell.expectancyBps.toFixed(1)} bps</span>
+                        <span className="text-slate-200">{(cell.expectancyBps ?? 0).toFixed(1)} bps</span>
                         <span>Score:</span>
-                        <span className={cell.score >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-                            {cell.score.toFixed(1)}
+                        <span className={(cell.score ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                            {(cell.score ?? 0).toFixed(1)}
                         </span>
                         <span>Slippage:</span>
-                        <span className="text-slate-200">{cell.avgSlippageBps.toFixed(1)} bps</span>
+                        <span className="text-slate-200">{(cell.avgSlippageBps ?? 0).toFixed(1)} bps</span>
                         <span>Spread:</span>
-                        <span className="text-slate-200">{cell.avgSpreadBps.toFixed(1)} bps</span>
+                        <span className="text-slate-200">{(cell.avgSpreadBps ?? 0).toFixed(1)} bps</span>
                         <span>Partial:</span>
-                        <span className="text-slate-200">{(cell.partialFillRate * 100).toFixed(0)}%</span>
+                        <span className="text-slate-200">{((cell.partialFillRate ?? 0) * 100).toFixed(0)}%</span>
                     </div>
                 </div>,
                 document.body
@@ -497,7 +498,7 @@ export function RegimeHeatmapPanel() {
                                                 : 'bg-emerald-500/20 text-emerald-300'
                                         )}
                                     >
-                                        {regimeLabels[regime]}: {(sizePolicy.multiplier * 100).toFixed(0)}%
+                                        {regimeLabels[regime]}: {((sizePolicy.multiplier ?? 1) * 100).toFixed(0)}%
                                     </span>
                                 );
                             })}

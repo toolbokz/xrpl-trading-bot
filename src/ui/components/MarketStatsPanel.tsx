@@ -37,17 +37,17 @@ export function MarketStatsPanel({
 
                 <Stat
                     label="P&L"
-                    value={`${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(4)}`}
+                    value={`${(totalPnl ?? 0) >= 0 ? '+' : ''}${(totalPnl ?? 0).toFixed(4)}`}
                     suffix="XRP"
-                    positive={totalPnl >= 0}
+                    positive={(totalPnl ?? 0) >= 0}
                 />
                 <Stat
                     label="Today"
-                    value={`${todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(4)}`}
+                    value={`${(todayPnl ?? 0) >= 0 ? '+' : ''}${(todayPnl ?? 0).toFixed(4)}`}
                     suffix="XRP"
-                    positive={todayPnl >= 0}
+                    positive={(todayPnl ?? 0) >= 0}
                 />
-                <Stat label="Win" value={`${winRate.toFixed(1)}%`} positive={winRate >= 50} />
+                <Stat label="Win" value={`${(winRate ?? 0).toFixed(1)}%`} positive={(winRate ?? 0) >= 50} />
                 <Stat label="Pos" value={position} neutral />
 
                 {/* Balance cell */}

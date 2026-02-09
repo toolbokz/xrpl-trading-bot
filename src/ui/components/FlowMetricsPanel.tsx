@@ -306,7 +306,7 @@ const DepthBar = ({ bidDepth, askDepth }: { bidDepth: number; askDepth: number }
         <div className="space-y-1">
             <div className="flex justify-between items-baseline">
                 <span className="text-[10px] text-slate-500 uppercase tracking-wider">Book Depth</span>
-                <span className="text-[10px] font-mono text-slate-400 tabular-nums">{total.toFixed(0)}</span>
+                <span className="text-[10px] font-mono text-slate-400 tabular-nums">{(total ?? 0).toFixed(0)}</span>
             </div>
             <div className="flex h-[6px] rounded-full overflow-hidden gap-px">
                 <div
@@ -319,8 +319,8 @@ const DepthBar = ({ bidDepth, askDepth }: { bidDepth: number; askDepth: number }
                 />
             </div>
             <div className="flex justify-between text-[8px]">
-                <span className="text-teal-400/80 font-mono tabular-nums">{bidDepth.toFixed(0)} bid</span>
-                <span className="text-red-400/70 font-mono tabular-nums">{askDepth.toFixed(0)} ask</span>
+                <span className="text-teal-400/80 font-mono tabular-nums">{(bidDepth ?? 0).toFixed(0)} bid</span>
+                <span className="text-red-400/70 font-mono tabular-nums">{(askDepth ?? 0).toFixed(0)} ask</span>
             </div>
         </div>
     );
@@ -335,7 +335,7 @@ const SignalBlocks = ({ strength }: { strength: number }) => {
         <div className="space-y-1">
             <div className="flex justify-between items-baseline">
                 <span className="text-[10px] text-slate-500 uppercase tracking-wider">Signal</span>
-                <span className="text-[10px] font-mono text-slate-400 tabular-nums">{(strength * 100).toFixed(0)}%</span>
+                <span className="text-[10px] font-mono text-slate-400 tabular-nums">{((strength ?? 0) * 100).toFixed(0)}%</span>
             </div>
             <div className="flex gap-[3px]">
                 {Array.from({ length: blocks }).map((_, i) => (
@@ -612,11 +612,11 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
                                 {data?.prices && (
                                     <div className="absolute top-0 left-0 z-10 flex flex-col gap-0.5">
                                         <span className="text-[10px] font-mono tabular-nums text-sky-400/80">
-                                            {data.prices.midPrice.toFixed(6)}
+                                            {(data.prices.midPrice ?? 0).toFixed(6)}
                                         </span>
                                         {data.prices.vwap && (
                                             <span className="text-[10px] font-mono tabular-nums text-amber-400/60">
-                                                {data.prices.vwap.toFixed(6)}
+                                                {data.prices.vwap!.toFixed(6)}
                                             </span>
                                         )}
                                     </div>
@@ -634,9 +634,9 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
                     {/* Prices row (mobile fallback) */}
                     {data?.prices && (
                         <div className="shrink-0 flex items-center justify-between text-[10px] py-1 lg:hidden border-t border-white/[0.04]">
-                            <span className="font-mono text-teal-400">{data.prices.bestBid.toFixed(6)}</span>
-                            <span className="text-slate-500">Spread: {data.prices.spreadBps.toFixed(1)} bps</span>
-                            <span className="font-mono text-red-400">{data.prices.bestAsk.toFixed(6)}</span>
+                            <span className="font-mono text-teal-400">{(data.prices.bestBid ?? 0).toFixed(6)}</span>
+                            <span className="text-slate-500">Spread: {(data.prices.spreadBps ?? 0).toFixed(1)} bps</span>
+                            <span className="font-mono text-red-400">{(data.prices.bestAsk ?? 0).toFixed(6)}</span>
                         </div>
                     )}
                 </div>
@@ -648,19 +648,19 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
                     <>
                         <MicroMetric
                             label="Spread"
-                            value={data.prices.spreadBps.toFixed(1)}
+                            value={(data.prices.spreadBps ?? 0).toFixed(1)}
                             unit="bps"
                             sparkData={spreadHistory}
                             color="text-slate-300"
                         />
                         <MicroMetric
                             label="Bid"
-                            value={data.prices.bestBid.toFixed(6)}
+                            value={(data.prices.bestBid ?? 0).toFixed(6)}
                             color="text-teal-400"
                         />
                         <MicroMetric
                             label="Ask"
-                            value={data.prices.bestAsk.toFixed(6)}
+                            value={(data.prices.bestAsk ?? 0).toFixed(6)}
                             color="text-red-400/80"
                         />
                     </>
@@ -668,7 +668,7 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
                 {data?.signals && (
                     <MicroMetric
                         label="Imbalance"
-                        value={`${(Math.abs(data.signals.imbalance) * 100).toFixed(1)}`}
+                        value={`${(Math.abs(data.signals.imbalance ?? 0) * 100).toFixed(1)}`}
                         unit="%"
                         sparkData={imbalanceHistory}
                         color={data.signals.imbalance > 0.15 ? 'text-sky-400' : data.signals.imbalance < -0.15 ? 'text-amber-400' : 'text-slate-300'}
@@ -677,7 +677,7 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
                 {data?.prices?.vwap && (
                     <MicroMetric
                         label="VWAP Δ"
-                        value={`${data.prices.vwapDeviationBps >= 0 ? '+' : ''}${data.prices.vwapDeviationBps.toFixed(1)}`}
+                        value={`${(data.prices.vwapDeviationBps ?? 0) >= 0 ? '+' : ''}${(data.prices.vwapDeviationBps ?? 0).toFixed(1)}`}
                         unit="bps"
                         color={data.prices.vwapDeviationBps > 20 ? 'text-sky-400' : data.prices.vwapDeviationBps < -20 ? 'text-amber-400' : 'text-slate-300'}
                     />
@@ -685,7 +685,7 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
                 {data?.signals && (
                     <MicroMetric
                         label="Signal"
-                        value={`${(data.signals.signalStrength * 100).toFixed(0)}`}
+                        value={`${((data.signals.signalStrength ?? 0) * 100).toFixed(0)}`}
                         unit="%"
                         color={data.signals.signalStrength > 0.6 ? 'text-amber-400' : 'text-slate-300'}
                     />

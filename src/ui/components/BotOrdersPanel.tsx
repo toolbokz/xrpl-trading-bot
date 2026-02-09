@@ -69,11 +69,13 @@ function formatTimeAgo(ts: number): string {
     return formatAge(diff);
 }
 
-function formatPrice(p: number): string {
+function formatPrice(p: number | null | undefined): string {
+    if (p == null) return '—';
     return p >= 1 ? p.toFixed(4) : p.toFixed(6);
 }
 
-function formatSize(s: number): string {
+function formatSize(s: number | null | undefined): string {
+    if (s == null) return '—';
     return s >= 1000 ? s.toFixed(0) : s.toFixed(2);
 }
 
@@ -415,9 +417,9 @@ export function BotOrdersPanel({ pollInterval = 5000 }: BotOrdersPanelProps) {
 
                         {/* PnL row detail (executed trades with non-zero PnL) */}
                         {/* PnL + paper badge row */}
-                        {(row.pnl !== undefined && row.pnl !== 0) || row.paper ? (
+                        {(row.pnl != null && row.pnl !== 0) || row.paper ? (
                             <div className="col-span-6 text-[9px] pl-[52px] -mt-0.5 mb-0.5">
-                                {row.pnl !== undefined && row.pnl !== 0 && (
+                                {row.pnl != null && row.pnl !== 0 && (
                                     <span className={row.pnl > 0 ? 'text-emerald-500' : 'text-red-500'}>
                                         PnL: {row.pnl > 0 ? '+' : ''}{row.pnl.toFixed(4)}
                                     </span>

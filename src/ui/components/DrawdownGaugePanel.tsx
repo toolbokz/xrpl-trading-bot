@@ -68,7 +68,7 @@ function ArcGauge({ value, max = 100 }: { value: number; max?: number }) {
                 <path d={valPath} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" />
             )}
             <text x="50" y="54" textAnchor="middle" className="fill-slate-200 text-[13px] font-mono font-bold">
-                {value.toFixed(1)}%
+                {(value ?? 0).toFixed(1)}%
             </text>
         </svg>
     );
@@ -120,9 +120,9 @@ export function DrawdownGaugePanel({ pollInterval = 10000 }: DrawdownGaugePanelP
                     <>
                         <ArcGauge value={currentDrawdown} max={Math.max(maxDrawdown * 1.5, 10)} />
                         <div className="flex gap-3 text-[10px] font-mono text-slate-500 mt-1">
-                            <span>max {maxDrawdown.toFixed(1)}%</span>
+                            <span>max {(maxDrawdown ?? 0).toFixed(1)}%</span>
                             <span className={clsx(velColor)}>
-                                vel {velocity > 0 ? '+' : ''}{velocity.toFixed(2)}/h
+                                vel {(velocity ?? 0) > 0 ? '+' : ''}{(velocity ?? 0).toFixed(2)}/h
                             </span>
                         </div>
                     </>

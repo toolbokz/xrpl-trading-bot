@@ -41,8 +41,8 @@ export function OrderBookPanel({
         return Math.max(...allTotals, 1);
     }, [bids, asks]);
 
-    const formatPrice = (p: number) => p >= 1 ? p.toFixed(4) : p.toFixed(6);
-    const formatSize = (s: number) => s.toFixed(2);
+    const formatPrice = (p: number | null | undefined) => p == null ? '—' : p >= 1 ? p.toFixed(4) : p.toFixed(6);
+    const formatSize = (s: number | null | undefined) => s == null ? '—' : s.toFixed(2);
 
     const isEmpty = bids.length === 0 && asks.length === 0;
 
@@ -54,8 +54,8 @@ export function OrderBookPanel({
             compact
             actions={
                 <>
-                    <PanelBadge tone={spreadBps > 50 ? 'warning' : 'neutral'}>
-                        {spreadBps.toFixed(1)} bps
+                    <PanelBadge tone={(spreadBps ?? 0) > 50 ? 'warning' : 'neutral'}>
+                        {(spreadBps ?? 0).toFixed(1)} bps
                     </PanelBadge>
                     {onRefresh && (
                         <PanelAction
@@ -132,7 +132,7 @@ export function OrderBookPanel({
                     {midPrice !== null ? formatPrice(midPrice) : '—'}
                 </span>
                 <span className="text-[9px] text-slate-500">
-                    {spreadBps.toFixed(1)} bps
+                    {(spreadBps ?? 0).toFixed(1)} bps
                 </span>
             </div>
 

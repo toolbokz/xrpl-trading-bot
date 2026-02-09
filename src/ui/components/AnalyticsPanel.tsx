@@ -320,28 +320,28 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
                 <div className="grid grid-cols-2 gap-2">
                     <StatCard
                         label="Win Rate"
-                        value={(summary.winRate * 100).toFixed(1)}
+                        value={((summary.winRate ?? 0) * 100).toFixed(1)}
                         suffix="%"
-                        positive={summary.winRate > 0.5 ? true : summary.winRate < 0.4 ? false : null}
+                        positive={(summary.winRate ?? 0) > 0.5 ? true : (summary.winRate ?? 0) < 0.4 ? false : null}
                         icon={Percent}
                     />
                     <StatCard
                         label="Profit Factor"
-                        value={summary.profitFactor === Infinity ? '∞' : summary.profitFactor.toFixed(2)}
-                        positive={summary.profitFactor > 1 ? true : summary.profitFactor < 1 ? false : null}
+                        value={summary.profitFactor === Infinity ? '∞' : (summary.profitFactor ?? 0).toFixed(2)}
+                        positive={(summary.profitFactor ?? 0) > 1 ? true : (summary.profitFactor ?? 0) < 1 ? false : null}
                         icon={TrendingUp}
                     />
                     <StatCard
                         label="Expectancy"
-                        value={summary.expectancy.toFixed(4)}
-                        positive={summary.expectancy > 0 ? true : summary.expectancy < 0 ? false : null}
+                        value={(summary.expectancy ?? 0).toFixed(4)}
+                        positive={(summary.expectancy ?? 0) > 0 ? true : (summary.expectancy ?? 0) < 0 ? false : null}
                         icon={Target}
                     />
                     <StatCard
                         label="Avg Slippage"
-                        value={summary.avgSlippageBps.toFixed(1)}
+                        value={(summary.avgSlippageBps ?? 0).toFixed(1)}
                         suffix=" bps"
-                        positive={summary.avgSlippageBps < 5 ? true : summary.avgSlippageBps > 20 ? false : null}
+                        positive={(summary.avgSlippageBps ?? 0) < 5 ? true : (summary.avgSlippageBps ?? 0) > 20 ? false : null}
                         icon={Activity}
                     />
                 </div>
@@ -354,7 +354,7 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
                             'text-xs font-mono',
                             summary.maxDrawdown > 0.1 ? 'text-red-400' : 'text-slate-300'
                         )}>
-                            {(summary.maxDrawdown * 100).toFixed(1)}%
+                            {((summary.maxDrawdown ?? 0) * 100).toFixed(1)}%
                         </span>
                     </div>
                     <ProgressBar
@@ -385,7 +385,7 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
                                             'font-mono',
                                             regime.winRate > 0.5 ? 'text-emerald-400' : regime.winRate < 0.4 ? 'text-red-400' : ''
                                         )}>
-                                            {(regime.winRate * 100).toFixed(0)}%
+                                            {((regime.winRate ?? 0) * 100).toFixed(0)}%
                                         </span>
                                     </div>
                                 </div>
@@ -414,13 +414,13 @@ export function AnalyticsPanel({ pollInterval = 15000, pairKey }: AnalyticsPanel
                                             'font-mono',
                                             strat.winRate > 0.5 ? 'text-emerald-400' : strat.winRate < 0.4 ? 'text-red-400' : ''
                                         )}>
-                                            {(strat.winRate * 100).toFixed(0)}%
+                                            {((strat.winRate ?? 0) * 100).toFixed(0)}%
                                         </span>
                                         <span className={clsx(
                                             'font-mono',
-                                            strat.profitFactor > 1 ? 'text-emerald-400' : 'text-red-400'
+                                            (strat.profitFactor ?? 0) > 1 ? 'text-emerald-400' : 'text-red-400'
                                         )}>
-                                            {strat.profitFactor === Infinity ? '∞' : strat.profitFactor.toFixed(1)}
+                                            {strat.profitFactor === Infinity ? '∞' : (strat.profitFactor ?? 0).toFixed(1)}
                                         </span>
                                     </div>
                                 </div>
