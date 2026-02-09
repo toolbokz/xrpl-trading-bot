@@ -117,8 +117,9 @@ export default function Page() {
     useEffect(() => {
         if (!selectedPairKey) {
             const instruments = getInstruments();
-            if (instruments.length > 0) {
-                setSelectedPairKey(instruments[0].key);
+            const first = instruments[0];
+            if (first) {
+                setSelectedPairKey(first.key);
             }
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
