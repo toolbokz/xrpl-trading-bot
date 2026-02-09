@@ -9,11 +9,13 @@
  * This is the single source of truth for the InstrumentSelector component.
  */
 
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
 import { getInstruments, type Instrument, type Network } from '../../../../market/instrumentRegistry';
 import { loadConfig } from '../../../../config';
 import { getRuntime } from '../../../../runtime/runtimeSingleton';
 import type { AvailabilityVerdict } from '../../../../market/availabilityScanner';
+import { withLocalApi } from '../../../lib/localApi';
+import type { LocalRequest } from '../../../lib/localApi';
 
 export const config = {
     api: { bodyParser: false },
@@ -44,15 +46,10 @@ interface PairsResponse {
     availabilityReady: boolean;
 }
 
-export default function handler(
-    req: NextApiRequest,
+function handler(
+    req: LocalRequest,
     res: NextApiResponse<PairsResponse | { error: string }>
 ) {
-    if (req.method !== 'GET') {
-        res.setHeader('Allow', ['GET']);
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
-
     try {
         const cfg = loadConfig();
         const currentNetwork = (cfg.xrpl.network as Network) || 'mainnet';
@@ -106,3 +103,5 @@ export default function handler(
         return res.status(500).json({ error: 'Internal server error' });
     }
 }
+
+export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });

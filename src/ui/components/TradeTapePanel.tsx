@@ -233,7 +233,7 @@ export function TradeTapePanel({ pairKey, maxRows = 100 }: TradeTapePanelProps) 
                     <span>{trades.length} trades</span>
                     {latestTx && (
                         <a
-                            href={`https://livenet.xrpl.org/transactions/${latestTx}`}
+                            href={`https://${process.env.NEXT_PUBLIC_XRPL_NETWORK === 'testnet' ? 'testnet' : 'livenet'}.xrpl.org/transactions/${latestTx}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-1 hover:text-slate-300 transition-colors"

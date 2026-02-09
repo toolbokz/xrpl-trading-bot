@@ -71,7 +71,7 @@ interface BotState {
 
 const createInitialBotState = (): BotState => ({
     status: 'STOPPED',
-    network: 'TESTNET',
+    network: (process.env.NEXT_PUBLIC_XRPL_NETWORK?.toUpperCase() === 'TESTNET' ? 'TESTNET' : 'MAINNET') as 'MAINNET' | 'TESTNET',
     paper: true,
     wallet: 'rABC...1234',
     xrpBalance: 0,

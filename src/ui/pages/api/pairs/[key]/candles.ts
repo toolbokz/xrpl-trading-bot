@@ -15,7 +15,7 @@
  * 4. Empty response with status if no data available
  */
 
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
 import { findPair, isValidPairKey } from '../../../../lib/tradingPairs';
 import { loadConfig } from '../../../../../config';
 import { logger } from '../../../../../analytics/logger';
@@ -28,6 +28,8 @@ import {
     getTapeFromRuntime,
     initRuntimeBridge,
 } from '../../../../lib/runtimeBridge';
+import { withLocalApi } from '../../../../lib/localApi';
+import type { LocalRequest } from '../../../../lib/localApi';
 
 export const config = {
     api: { bodyParser: false },
@@ -210,11 +212,11 @@ async function getTradesFromDb(pairKey: string, limit: number): Promise<TradeDat
 // Handler
 // =============================================================================
 
-export default async function handler(
-    req: NextApiRequest,
+async function handler(
+    req: LocalRequest,
     res: NextApiResponse<CandlesResponse | ErrorResponse>
 ) {
-    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const requestId = req.requestId;
 
     // Initialize runtime bridge in single-process mode
     if (isSingleProcessMode()) {
@@ -223,15 +225,6 @@ export default async function handler(
         } catch (err) {
             logger.warn({ err }, '[API /candles] Runtime bridge init failed, continuing...');
         }
-    }
-
-    if (req.method !== 'GET') {
-        res.setHeader('Allow', ['GET']);
-        return res.status(405).json({
-            error: 'Method not allowed',
-            code: 'METHOD_NOT_ALLOWED',
-            requestId,
-        });
     }
 
     // Extract parameters
@@ -353,3 +346,5 @@ export default async function handler(
         });
     }
 }
+
+export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });

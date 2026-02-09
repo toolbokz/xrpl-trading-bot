@@ -10,12 +10,14 @@
  * - Process mode (single/dual)
  */
 
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
 import { loadConfig } from '../../../../config';
 import { getGlobalTradeTape } from '../../../../market/tradeTape';
 import { logger } from '../../../../analytics/logger';
 import { getClientHealth } from '../../../lib/xrplClient';
 import { getProcessModeInfo, getTapeFromRuntime, isSingleProcessMode, getState } from '../../../lib/runtimeBridge';
+import { withLocalApi } from '../../../lib/localApi';
+import type { LocalRequest } from '../../../lib/localApi';
 
 export const config = {
     api: { bodyParser: false },
@@ -132,20 +134,11 @@ export function resetHealthTracking(): void {
 // Handler
 // =============================================================================
 
-export default async function handler(
-    req: NextApiRequest,
+async function handler(
+    req: LocalRequest,
     res: NextApiResponse<MarketHealthResponse | ErrorResponse>
 ) {
-    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-    if (req.method !== 'GET') {
-        res.setHeader('Allow', ['GET']);
-        return res.status(405).json({
-            error: 'Method not allowed',
-            code: 'METHOD_NOT_ALLOWED',
-            requestId,
-        });
-    }
+    const requestId = req.requestId;
 
     try {
         const cfg = loadConfig();
@@ -313,3 +306,5 @@ export default async function handler(
         });
     }
 }
+
+export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });

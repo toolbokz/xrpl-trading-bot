@@ -32,6 +32,10 @@ const nextConfig = {
     },
     // Trade streaming is served by Next.js API routes directly
     // (src/ui/pages/api/trades/stream.ts and src/ui/pages/api/trades/tape.ts).
+    // Expose XRPL network to client-side for explorer link generation
+    env: {
+        NEXT_PUBLIC_XRPL_NETWORK: process.env.XRPL_NETWORK || 'mainnet',
+    },
 };
 
 export default nextConfig;

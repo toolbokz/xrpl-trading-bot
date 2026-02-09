@@ -17,6 +17,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { tradeTapeEvents } from '../../../../market/tradeTapeService';
 import { getServerSessionId } from '../../../../runtime/runtimeSingleton';
 import type { Trade } from '../../../../market/tradeTape';
+import { isLocalRequest, jsonError } from '../../../lib/localApi';
 
 export const config = {
     api: { bodyParser: false },
@@ -28,6 +29,13 @@ export default function handler(req: NextApiRequest, res: NextApiResponse): void
     if (req.method !== 'GET') {
         res.setHeader('Allow', 'GET');
         res.status(405).end('Method Not Allowed');
+        return;
+    }
+
+    // SECURITY: Block non-localhost requests
+    const localCheck = isLocalRequest(req);
+    if (!localCheck.allowed) {
+        jsonError(res, 403, localCheck.error, 'sse', localCheck.reason);
         return;
     }
 

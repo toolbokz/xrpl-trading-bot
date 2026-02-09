@@ -6,10 +6,18 @@
  * This endpoint returns our local trade history for the pair.
  */
 
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
 import { findPair, isValidPairKey } from '../../../../lib/tradingPairs';
 import { loadConfig } from '../../../../../config';
 import { logger } from '../../../../../analytics/logger';
+import { getGlobalTradeTape, Trade } from '../../../../../market/tradeTape';
+import {
+    isSingleProcessMode,
+    getTapeFromRuntime,
+    initRuntimeBridge,
+} from '../../../../lib/runtimeBridge';
+import { withLocalApi } from '../../../../lib/localApi';
+import type { LocalRequest } from '../../../../lib/localApi';
 
 export const config = {
     api: { bodyParser: false },
@@ -47,11 +55,20 @@ interface ErrorResponse {
 // Handler
 // =============================================================================
 
-export default async function handler(
-    req: NextApiRequest,
+async function handler(
+    req: LocalRequest,
     res: NextApiResponse<TradesResponse | ErrorResponse>
 ) {
-    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const requestId = req.requestId;
+
+    // Initialize runtime bridge in single-process mode
+    if (isSingleProcessMode()) {
+        try {
+            await initRuntimeBridge();
+        } catch (err) {
+            logger.warn({ err }, '[API /pairs/[key]/trades] Runtime bridge init failed');
+        }
+    }
 
     if (req.method !== 'GET') {
         res.setHeader('Allow', ['GET']);
@@ -86,12 +103,40 @@ export default async function handler(
     try {
         const cfg = loadConfig();
         const currentNetwork = cfg.xrpl.network as 'mainnet' | 'testnet';
+        const limitParam = req.query.limit;
+        const limit = Math.min(Math.max(parseInt(String(limitParam || '50'), 10) || 50, 1), 500);
 
-        // For now, return empty trades array.
-        // In a full implementation, this would query:
-        // 1. Local trade history database
-        // 2. Or subscribe to XRPL transaction stream and filter for this pair
-        const trades: TradeRecord[] = [];
+        // Get trades from runtime trade tape (single-process mode) or global tape
+        let rawTrades: Trade[] = [];
+
+        if (isSingleProcessMode()) {
+            const tapeData = getTapeFromRuntime();
+            if (tapeData && tapeData.trades.length > 0) {
+                rawTrades = tapeData.trades
+                    .filter((t: Trade) => t.pairKey === pairKey)
+                    .slice(-limit);
+            }
+        } else {
+            const tape = getGlobalTradeTape();
+            if (tape) {
+                const tapeKey = tape.getPairKey();
+                if (tapeKey === pairKey) {
+                    rawTrades = tape.getAll().slice(-limit);
+                }
+            }
+        }
+
+        // Map to TradeRecord format
+        const trades: TradeRecord[] = rawTrades.map((t: Trade) => ({
+            id: t.txHash || `${t.ts}-${t.price}`,
+            timestamp: t.ts,
+            pair: pairKey,
+            side: t.side === 'buy' ? 'BUY' : 'SELL',
+            price: t.price,
+            amount: t.sizeBase,
+            total: t.sizeQuote,
+            txHash: t.txHash,
+        }));
 
         const response: TradesResponse = {
             pair: pairKey,
@@ -113,3 +158,5 @@ export default async function handler(
         });
     }
 }
+
+export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });

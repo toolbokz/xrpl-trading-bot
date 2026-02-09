@@ -8,7 +8,7 @@
  * In SINGLE_PROCESS_MODE=true, returns data from TradingRuntime instead of XRPL.
  */
 
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
 import { findPair, isValidPairKey, TradingPair } from '../../../../lib/tradingPairs';
 import { loadConfig } from '../../../../../config';
 import { getSharedClient } from '../../../../lib/xrplClient';
@@ -20,6 +20,8 @@ import {
     isRuntimeWarmingUp,
     initRuntimeBridge,
 } from '../../../../lib/runtimeBridge';
+import { withLocalApi } from '../../../../lib/localApi';
+import type { LocalRequest } from '../../../../lib/localApi';
 
 export const config = {
     api: { bodyParser: false },
@@ -193,20 +195,11 @@ async function fetchOrderBook(
 // Handler
 // =============================================================================
 
-export default async function handler(
-    req: NextApiRequest,
+async function handler(
+    req: LocalRequest,
     res: NextApiResponse<OrderBookResponse | ErrorResponse>
 ) {
-    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-    if (req.method !== 'GET') {
-        res.setHeader('Allow', ['GET']);
-        return res.status(405).json({
-            error: 'Method not allowed',
-            code: 'METHOD_NOT_ALLOWED',
-            requestId,
-        });
-    }
+    const requestId = req.requestId;
 
     // Initialize runtime bridge in single-process mode
     if (isSingleProcessMode()) {
@@ -347,3 +340,5 @@ export default async function handler(
         });
     }
 }
+
+export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });

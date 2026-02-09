@@ -331,7 +331,7 @@ export function TradeTape({ pairKey, maxRows = 300 }: TradeTapeProps) {
             <div className="flex items-center justify-between text-xs text-slate-500 pt-2 border-t border-white/5">
                 <span>{trades.length} trades</span>
                 <a
-                    href={trades[0]?.txHash ? `https://livenet.xrpl.org/transactions/${trades[0].txHash}` : '#'}
+                    href={trades[0]?.txHash ? `https://${process.env.NEXT_PUBLIC_XRPL_NETWORK === 'testnet' ? 'testnet' : 'livenet'}.xrpl.org/transactions/${trades[0].txHash}` : '#'}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="hover:text-slate-300 transition-colors"
