@@ -122,10 +122,7 @@ describe('Pairs API - Unit Tests', () => {
         it('should have all expected pairs available', () => {
             const expectedPairs = [
                 'XRP/RLUSD',
-                'XRP/USDC',
-                'XRP/EUR',
-                'XRP/BTC',
-                'XRP/ETH',
+                'XRP/USDT',
             ];
 
             expectedPairs.forEach((key) => {

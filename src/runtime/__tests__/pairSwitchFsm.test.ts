@@ -45,10 +45,10 @@ const pairA: TradingPair = {
 
 const pairB: TradingPair = {
     baseCurrency: 'XRP',
-    quoteCurrency: 'USDC',
-    quoteIssuer: 'rUSDC',
-    issuer: 'rUSDC',
-    description: 'XRP/USDC',
+    quoteCurrency: 'USDT',
+    quoteIssuer: 'rcvxE9PS9YBwxtGg1qNeewV6ZB3wGubZq',
+    issuer: 'rcvxE9PS9YBwxtGg1qNeewV6ZB3wGubZq',
+    description: 'XRP/USDT',
 };
 
 /** All 12 phases in forward order (including start and end). */
@@ -116,7 +116,7 @@ describe('PairSwitchFsm', () => {
 
     describe('forward-only transitions', () => {
         it('walks through all 10 forward transitions to complete a switch', () => {
-            fsm.beginSwitch('XRP/RLUSD', 'XRP/USDC', NOW);
+            fsm.beginSwitch('XRP/RLUSD', 'XRP/USDT', NOW);
             expect(fsm.getPhase()).toBe('FREEZE_EXECUTION');
 
             fsm.advance('UNSUBSCRIBE_OLD_FEEDS', 'step', NOW + 1);
@@ -414,7 +414,7 @@ describe('PairSwitchOrchestrator', () => {
             const result = await orchestrator.executePairSwitch(pairA, pairB, actions);
 
             expect(result.success).toBe(true);
-            expect(result.activePair).toBe('XRP/USDC');
+            expect(result.activePair).toBe('XRP/USDT');
             expect(result.durationMs).toBeGreaterThanOrEqual(0);
             expect(result.phases).toContain('FREEZE_EXECUTION');
             expect(result.phases).toContain('VALIDATE_DATA_TRUTH');
@@ -436,7 +436,7 @@ describe('PairSwitchOrchestrator', () => {
 
             const ctx = orchestrator.getContext();
             expect(ctx).not.toBeNull();
-            expect(ctx!.pairKey).toBe('XRP/USDC');
+            expect(ctx!.pairKey).toBe('XRP/USDT');
             expect(ctx!.hasBook).toBe(true);
             expect(ctx!.hasTape).toBe(true);
             expect(ctx!.hasBalances).toBe(true);
@@ -638,8 +638,8 @@ describe('PairSwitchOrchestrator', () => {
             const actionsAtoB = healthyActions();
             const resultAB = await orchestrator.executePairSwitch(pairA, pairB, actionsAtoB);
             expect(resultAB.success).toBe(true);
-            expect(resultAB.activePair).toBe('XRP/USDC');
-            expect(orchestrator.getContext()!.pairKey).toBe('XRP/USDC');
+            expect(resultAB.activePair).toBe('XRP/USDT');
+            expect(orchestrator.getContext()!.pairKey).toBe('XRP/USDT');
 
             const actionsBtoA = healthyActions();
             const resultBA = await orchestrator.executePairSwitch(pairB, pairA, actionsBtoA);

@@ -74,7 +74,7 @@ describe('Input Validation Schemas', () => {
         });
 
         it('accepts another valid pairKey', () => {
-            const result = validateBody({ pairKey: 'XRP/USDC' }, tradingPairSchema);
+            const result = validateBody({ pairKey: 'XRP/USDT' }, tradingPairSchema);
             expect(result.success).toBe(true);
         });
 

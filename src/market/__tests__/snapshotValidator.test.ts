@@ -150,7 +150,7 @@ describe('SnapshotValidator', () => {
         validator.validate(validSnapshot({ pairKey: 'XRP/USD', sequence: 10 }));
         // Different pair — sequence 1 should be fine (no gap)
         const result = validator.validate(validSnapshot({
-            pairKey: 'XRP/EUR',
+            pairKey: 'XRP/USDT',
             sequence: 1,
         }));
         expect(result.valid).toBe(true);

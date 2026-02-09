@@ -284,17 +284,8 @@ async function handler(
                 return res.status(200).json(response);
             }
 
-            // Fallback: no runtime data yet
-            const response: OrderBookResponse = {
-                pair: pairKey,
-                bids: [],
-                asks: [],
-                lastUpdated: Date.now(),
-                network: currentNetwork,
-                availableOnNetwork: false,
-                fromRuntime: true,
-            };
-            return res.status(200).json(response);
+            // Fallback: no runtime data for this pair — query XRPL directly
+            logger.debug({ pairKey }, '[OrderBook] Pair not active in runtime, falling back to direct XRPL query');
         }
 
         // =====================================================================

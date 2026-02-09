@@ -21,8 +21,8 @@ import {
 } from '../tradingPairs';
 
 describe('TRADING_PAIRS', () => {
-    it('should have exactly 6 pairs', () => {
-        expect(TRADING_PAIRS).toHaveLength(6);
+    it('should have exactly 2 pairs', () => {
+        expect(TRADING_PAIRS).toHaveLength(2);
     });
 
     it('should have unique keys', () => {
@@ -34,10 +34,6 @@ describe('TRADING_PAIRS', () => {
     it('should have all required pairs', () => {
         const expectedKeys = [
             'XRP/RLUSD',
-            'XRP/USDC',
-            'XRP/EUR',
-            'XRP/BTC',
-            'XRP/ETH',
             'XRP/USDT',
         ];
         expectedKeys.forEach((key) => {
@@ -131,9 +127,9 @@ describe('Helper Functions', () => {
 
     describe('findPair', () => {
         it('should return pair for valid key', () => {
-            const pair = findPair('XRP/USDC');
+            const pair = findPair('XRP/USDT');
             expect(pair).toBeDefined();
-            expect(pair?.key).toBe('XRP/USDC');
+            expect(pair?.key).toBe('XRP/USDT');
         });
 
         it('should return undefined for invalid key', () => {
@@ -163,8 +159,7 @@ describe('Helper Functions', () => {
     describe('isValidPairKey', () => {
         it('should return true for valid keys', () => {
             expect(isValidPairKey('XRP/RLUSD')).toBe(true);
-            expect(isValidPairKey('XRP/BTC')).toBe(true);
-            expect(isValidPairKey('XRP/USDC')).toBe(true);
+            expect(isValidPairKey('XRP/USDT')).toBe(true);
         });
 
         it('should return false for invalid keys', () => {
@@ -260,7 +255,7 @@ describe('Legacy Format Conversion', () => {
     });
 
     it('should roundtrip toLegacy -> fromLegacy', () => {
-        const original = getPair('XRP/USDC');
+        const original = getPair('XRP/USDT');
         const legacy = toLegacyPair(original);
         const restored = fromLegacyPair(legacy);
 

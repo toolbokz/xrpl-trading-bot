@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { findInstrument as findPair, type Instrument } from '../lib/instruments';
+import { findInstrument as findPair, getInstruments, type Instrument } from '../lib/instruments';
 
 // Layout components
 import { AppShell } from '../components/layout/AppShell';
@@ -10,7 +10,6 @@ import { TerminalHeader } from '../components/TerminalHeader';
 // Panel components
 import { OrderBookPanel } from '../components/OrderBookPanel';
 import { MarketStatsPanel } from '../components/MarketStatsPanel';
-import { ControlsPanel } from '../components/ControlsPanel';
 import { TradeTapePanel } from '../components/TradeTapePanel';
 import { LogsPanel } from '../components/LogsPanel';
 import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
@@ -22,7 +21,6 @@ import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
 import { MarketDataHealthPanel } from '../components/MarketDataHealthPanel';
 import { AdverseSelectionPanel } from '../components/AdverseSelectionPanel';
 import { DrawdownGaugePanel } from '../components/DrawdownGaugePanel';
-import { InstrumentSelector } from '../components/InstrumentSelector';
 
 // Mobile layout
 import { MobileDashboard, MobileSection } from '../components/layout/MobileDashboard';
@@ -108,13 +106,22 @@ export default function Page() {
     const [bot, setBot] = useState<BotState>(createInitialBotState);
     const [actionMessage, setActionMessage] = useState<string>('');
     const [actionLoading, setActionLoading] = useState<boolean>(false);
-    const [positionSize, setPositionSize] = useState<number>(2);
-    const [positionSizeMessage, setPositionSizeMessage] = useState<string>('');
+
     const [selectedPairKey, setSelectedPairKey] = useState<string>('');
     const [connected, setConnected] = useState<boolean>(false);
     const [xrpBalanceHistory, setXrpBalanceHistory] = useState<number[]>([]);
 
     const currentPair = useMemo(() => findPair(selectedPairKey), [selectedPairKey]);
+
+    // Auto-select first pair on mount (pair is configured via .env)
+    useEffect(() => {
+        if (!selectedPairKey) {
+            const instruments = getInstruments();
+            if (instruments.length > 0) {
+                setSelectedPairKey(instruments[0].key);
+            }
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─────────────────────────────────────────────────────────────────────────
     // Real Data Hooks (NO MOCK DATA)
@@ -184,9 +191,7 @@ export default function Page() {
                         killSwitch: data.killSwitch ?? prev.risk.killSwitch,
                     },
                 }));
-                if (typeof data.positionSize === 'number') {
-                    setPositionSize(data.positionSize);
-                }
+
             }
         } catch (err) {
             console.error('Failed to fetch risk status:', err);
@@ -300,70 +305,6 @@ export default function Page() {
         }
     };
 
-    const updatePositionSize = async () => {
-        setPositionSizeMessage('');
-        if (positionSize > bot.risk.maxExposure) {
-            setPositionSizeMessage(`⚠️ Exceeds max exposure (${bot.risk.maxExposure})`);
-            return;
-        }
-        try {
-            const res = await fetch('/api/bot/position-size', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ size: positionSize }),
-            });
-            const data = await res.json();
-            if (res.ok) {
-                setPositionSizeMessage(`Set to ${positionSize} XRP`);
-            } else {
-                setPositionSizeMessage(data?.error || 'Failed');
-            }
-        } catch (err: any) {
-            setPositionSizeMessage(err?.message || 'Failed');
-        }
-    };
-
-    const applyTradingPair = async (pairKey: string) => {
-        const previousPairKey = selectedPairKey;
-        try {
-            const res = await fetch('/api/bot/trading-pair', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pairKey }),
-            });
-            if (res.ok) {
-                setSelectedPairKey(pairKey);
-                const pair = findPair(pairKey);
-                if (pair) {
-                    setBot((prev) => ({
-                        ...prev,
-                        liquidity: pair.liquidity === 'high' ? 'High' : pair.liquidity === 'medium' ? 'Medium' : 'Low',
-                    }));
-                    // Immediately refresh balances for the new pair
-                    fetchWalletInfo(pair);
-                }
-            } else {
-                setSelectedPairKey(previousPairKey);
-            }
-        } catch (err) {
-            setSelectedPairKey(previousPairKey);
-            console.error('Failed to set trading pair:', err);
-        }
-    };
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Pair selector for Controls panel
-    // ─────────────────────────────────────────────────────────────────────────
-
-    const pairSelectorElement = (
-        <InstrumentSelector
-            selectedPairKey={selectedPairKey}
-            onPairChange={applyTradingPair}
-            pollInterval={10_000}
-            disabled={actionLoading}
-        />
-    );
-
     // ─────────────────────────────────────────────────────────────────────────
     // Detect mobile viewport
     // ─────────────────────────────────────────────────────────────────────────
@@ -433,22 +374,7 @@ export default function Page() {
                 }
                 tradingContent={
                     <MobileSection>
-                        <ControlsPanel
-                            strategy={bot.strategy}
-                            lastLedger={bot.lastLedger}
-                            liquidity={bot.liquidity}
-                            slippageBps={bot.slippageBps}
-                            positionSize={positionSize}
-                            maxExposure={bot.risk.maxExposure}
-                            currentExposure={bot.risk.currentExposure}
-                            dailyLossLimit={bot.risk.dailyLossLimit}
-                            killSwitch={bot.risk.killSwitch}
-                            pairSelector={pairSelectorElement}
-                            onPositionSizeChange={setPositionSize}
-                            onApplyPositionSize={updatePositionSize}
-                            positionSizeMessage={positionSizeMessage}
-                            loading={actionLoading}
-                        />
+                        <GovernancePanel />
                         <LogsPanel maxRows={50} />
                     </MobileSection>
                 }
@@ -473,9 +399,9 @@ export default function Page() {
     // ─────────────────────────────────────────────────────────────────────────
     //
     //  Row 1 (auto):  [ Health + Stats ··················· col-span-4 ]
-    //  Row 2 (1fr):   [ Trade Tape ] [ Flow Metrics ·· col-span-2 ] [ Analytics (row-span-2) ]
-    //  Row 3 (1fr):   [ Order Book ] [ Strategy&Risk ] [ Candle Chart ] [ Analytics (cont.) ]
-    //  Row 4 (auto):  [ CapProtect ] [ Bot Logs ] [ Adverse+Drawdown ] [ RegimePerf ]  (4-col sub-grid)
+    //  Row 2 (1fr):   [ CapProtect ] [ Flow Metrics ·· col-span-2 ] [ Bot Logs (row-span-2) ]
+    //  Row 3 (1fr):   [ Adverse   ] [ Trade Tape ] [ Bot Orders (row-span-2) ] [ Bot Logs (cont.) ]
+    //  Row 4 (auto):  [ Drawdown  ] [ Order Book ] [ Bot Orders (cont.) ] [ RegimePerf ]
     //
 
     return (
@@ -500,12 +426,12 @@ export default function Page() {
                     />
                 </div>
 
-                {/* ── ROW 2, COL 1: Trade Tape ── */}
+                {/* ── ROW 2, COL 1: Capital Protection ── */}
                 <div
                     className="min-h-0 overflow-hidden"
                     style={{ gridColumn: '1', gridRow: '2', height: '30vh' }}
                 >
-                    <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={100} />
+                    <GovernancePanel />
                 </div>
 
                 {/* ── ROW 2, COL 2-3: Flow Metrics ── */}
@@ -516,18 +442,50 @@ export default function Page() {
                     <FlowMetricsPanel pollInterval={2000} />
                 </div>
 
-                {/* ── ROW 2-3, COL 4: Analytics (span 2 rows) ── */}
+                {/* ── ROW 2-3, COL 4: Bot Logs (span 2 rows) ── */}
                 <div
                     className="min-h-0 overflow-hidden"
                     style={{ gridColumn: '4', gridRow: '2 / 4', height: '60vh' }}
                 >
-                    <AnalyticsPanel pollInterval={5000} />
+                    <LogsPanel maxRows={50} />
                 </div>
 
-                {/* ── ROW 3, COL 1: Order Book ── */}
+                {/* ── ROW 3, COL 1: Adverse Selection ── */}
                 <div
                     className="min-h-0 overflow-hidden"
-                    style={{ gridColumn: '1', gridRow: '3', height: '30vh' }}
+                    style={{ gridColumn: '1', gridRow: '3' }}
+                >
+                    <AdverseSelectionPanel pollInterval={5000} />
+                </div>
+
+                {/* ── ROW 3, COL 2: Trade Tape ── */}
+                <div
+                    className="min-h-0 overflow-hidden"
+                    style={{ gridColumn: '2', gridRow: '3', height: '30vh' }}
+                >
+                    <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={100} />
+                </div>
+
+                {/* ── ROW 3-4, COL 3: Bot Orders (span 2 rows) ── */}
+                <div
+                    className="min-h-0 overflow-hidden"
+                    style={{ gridColumn: '3', gridRow: '3 / 5', height: '60vh' }}
+                >
+                    <BotOrdersPanel pollInterval={5000} />
+                </div>
+
+                {/* ── ROW 4, COL 1: Drawdown ── */}
+                <div
+                    className="min-h-0 overflow-hidden"
+                    style={{ gridColumn: '1', gridRow: '4' }}
+                >
+                    <DrawdownGaugePanel pollInterval={10000} />
+                </div>
+
+                {/* ── ROW 4, COL 2: Order Book ── */}
+                <div
+                    className="min-h-0 overflow-hidden"
+                    style={{ gridColumn: '2', gridRow: '4', height: '30vh' }}
                 >
                     <OrderBookPanel
                         bids={orderBookBids}
@@ -539,56 +497,12 @@ export default function Page() {
                     />
                 </div>
 
-                {/* ── ROW 3 MIDDLE-LEFT: Strategy & Risk (col 2) ── */}
+                {/* ── ROW 4, COL 4: Regime Heatmap ── */}
                 <div
-                    className="min-h-0 overflow-y-auto scrollbar-thin"
-                    style={{ gridColumn: '2', gridRow: '3', height: '30vh' }}
+                    className="min-h-0 overflow-visible self-end"
+                    style={{ gridColumn: '4', gridRow: '4', height: '30vh' }}
                 >
-                    <ControlsPanel
-                        strategy={bot.strategy}
-                        lastLedger={bot.lastLedger}
-                        liquidity={bot.liquidity}
-                        slippageBps={bot.slippageBps}
-                        positionSize={positionSize}
-                        maxExposure={bot.risk.maxExposure}
-                        currentExposure={bot.risk.currentExposure}
-                        dailyLossLimit={bot.risk.dailyLossLimit}
-                        killSwitch={bot.risk.killSwitch}
-                        pairSelector={pairSelectorElement}
-                        onPositionSizeChange={setPositionSize}
-                        onApplyPositionSize={updatePositionSize}
-                        positionSizeMessage={positionSizeMessage}
-                        loading={actionLoading}
-                    />
-                </div>
-
-                {/* ── ROW 3, COL 3: Bot Orders ── */}
-                <div
-                    className="min-h-0 overflow-hidden"
-                    style={{ gridColumn: '3', gridRow: '3', height: '30vh' }}
-                >
-                    <BotOrdersPanel pollInterval={5000} />
-                </div>
-
-                {/* ── ROW 4: 4-column sub-grid ── */}
-                <div className="col-span-4 grid grid-cols-4 gap-2">
-                    <div className="min-h-0 overflow-hidden" style={{ height: '30vh' }}>
-                        <GovernancePanel />
-                    </div>
-                    <div className="min-h-0 overflow-hidden" style={{ height: '30vh' }}>
-                        <LogsPanel maxRows={50} />
-                    </div>
-                    <div className="min-h-0 overflow-hidden flex flex-col gap-2" style={{ height: '30vh' }}>
-                        <div className="flex-1 min-h-0 overflow-hidden">
-                            <AdverseSelectionPanel pollInterval={5000} />
-                        </div>
-                        <div className="flex-1 min-h-0 overflow-hidden">
-                            <DrawdownGaugePanel pollInterval={10000} />
-                        </div>
-                    </div>
-                    <div className="min-h-0 overflow-visible" style={{ height: '30vh' }}>
-                        <RegimeHeatmapPanel />
-                    </div>
+                    <RegimeHeatmapPanel />
                 </div>
             </div>
         </AppShell>

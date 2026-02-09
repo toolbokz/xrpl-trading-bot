@@ -40,24 +40,20 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('Schema Types', () => {
-    it('SEED_INSTRUMENTS should have exactly 6 instruments', async () => {
+    it('SEED_INSTRUMENTS should have exactly 2 instruments', async () => {
         const { SEED_INSTRUMENTS } = await import('../schema');
-        expect(SEED_INSTRUMENTS).toHaveLength(6);
+        expect(SEED_INSTRUMENTS).toHaveLength(2);
     });
 
-    it('SEED_ISSUERS should have exactly 6 issuers', async () => {
+    it('SEED_ISSUERS should have exactly 2 issuers', async () => {
         const { SEED_ISSUERS } = await import('../schema');
-        expect(SEED_ISSUERS).toHaveLength(6);
+        expect(SEED_ISSUERS).toHaveLength(2);
     });
 
     it('seed instruments should have expected keys', async () => {
         const { SEED_INSTRUMENTS } = await import('../schema');
         const keys = SEED_INSTRUMENTS.map((i) => i.key);
         expect(keys).toContain('XRP/RLUSD');
-        expect(keys).toContain('XRP/USDC');
-        expect(keys).toContain('XRP/EUR');
-        expect(keys).toContain('XRP/BTC');
-        expect(keys).toContain('XRP/ETH');
         expect(keys).toContain('XRP/USDT');
     });
 
@@ -115,7 +111,7 @@ describe('fromLegacyPair', () => {
 
     it('should roundtrip toLegacy → fromLegacy', async () => {
         const { SEED_INSTRUMENTS, toLegacyPair, fromLegacyPair } = await import('../schema');
-        const original = SEED_INSTRUMENTS.find((i) => i.key === 'XRP/USDC')!;
+        const original = SEED_INSTRUMENTS.find((i) => i.key === 'XRP/USDT')!;
         const legacy = toLegacyPair(original);
         const restored = fromLegacyPair(legacy);
 
@@ -134,14 +130,14 @@ describe('Database Layer', () => {
         const { getRegistryDb } = await import('../db');
         const db = getRegistryDb();
         const count = (db.prepare('SELECT COUNT(*) as count FROM instruments').get() as { count: number }).count;
-        expect(count).toBe(6);
+        expect(count).toBe(2);
     });
 
     it('should auto-seed issuers on first access', async () => {
         const { getRegistryDb } = await import('../db');
         const db = getRegistryDb();
         const count = (db.prepare('SELECT COUNT(*) as count FROM issuers').get() as { count: number }).count;
-        expect(count).toBe(6);
+        expect(count).toBe(2);
     });
 
     it('should use WAL journal mode', async () => {
@@ -155,12 +151,12 @@ describe('Database Layer', () => {
         const { getRegistryDb, resetRegistryDb, dbListInstruments } = await import('../db');
         // First access: seeds
         getRegistryDb();
-        expect(dbListInstruments()).toHaveLength(6);
+        expect(dbListInstruments()).toHaveLength(2);
 
         // Reset and reopen — should not duplicate
         resetRegistryDb();
         getRegistryDb();
-        expect(dbListInstruments()).toHaveLength(6);
+        expect(dbListInstruments()).toHaveLength(2);
     });
 });
 
@@ -187,10 +183,10 @@ describe('Instrument CRUD', () => {
         const { getRegistryDb, dbListInstruments } = await import('../db');
         getRegistryDb();
         const instruments = dbListInstruments();
-        expect(instruments).toHaveLength(6);
+        expect(instruments).toHaveLength(2);
         // First should be XRP/RLUSD (sortOrder=1)
         expect(instruments[0]!.key).toBe('XRP/RLUSD');
-        expect(instruments[5]!.key).toBe('XRP/USDT');
+        expect(instruments[1]!.key).toBe('XRP/USDT');
     });
 
     it('should list active instruments only', async () => {
@@ -198,18 +194,18 @@ describe('Instrument CRUD', () => {
         getRegistryDb();
 
         // Disable one
-        dbUpdateInstrumentStatus('XRP/BTC', 'disabled');
+        dbUpdateInstrumentStatus('XRP/USDT', 'disabled');
 
         const active = dbListInstruments({ activeOnly: true });
-        expect(active).toHaveLength(5);
-        expect(active.find((i) => i.key === 'XRP/BTC')).toBeUndefined();
+        expect(active).toHaveLength(1);
+        expect(active.find((i) => i.key === 'XRP/USDT')).toBeUndefined();
     });
 
     it('should list by network', async () => {
         const { getRegistryDb, dbListInstruments } = await import('../db');
         getRegistryDb();
         const mainnet = dbListInstruments({ network: 'mainnet' });
-        expect(mainnet).toHaveLength(6);
+        expect(mainnet).toHaveLength(2);
 
         const testnet = dbListInstruments({ network: 'testnet' });
         expect(testnet).toHaveLength(0); // all pairs are mainnet
@@ -243,10 +239,10 @@ describe('Instrument CRUD', () => {
         const { getRegistryDb, dbUpdateInstrumentStatus, dbGetInstrument } = await import('../db');
         getRegistryDb();
 
-        const ok = dbUpdateInstrumentStatus('XRP/EUR', 'disabled');
+        const ok = dbUpdateInstrumentStatus('XRP/USDT', 'disabled');
         expect(ok).toBe(true);
 
-        const inst = dbGetInstrument('XRP/EUR');
+        const inst = dbGetInstrument('XRP/USDT');
         expect(inst!.status).toBe('disabled');
     });
 
@@ -254,10 +250,10 @@ describe('Instrument CRUD', () => {
         const { getRegistryDb, dbUpdateInstrumentLiquidity, dbGetInstrument } = await import('../db');
         getRegistryDb();
 
-        const ok = dbUpdateInstrumentLiquidity('XRP/EUR', 'low');
+        const ok = dbUpdateInstrumentLiquidity('XRP/USDT', 'low');
         expect(ok).toBe(true);
 
-        const inst = dbGetInstrument('XRP/EUR');
+        const inst = dbGetInstrument('XRP/USDT');
         expect(inst!.liquidity).toBe('low');
     });
 
@@ -265,10 +261,10 @@ describe('Instrument CRUD', () => {
         const { getRegistryDb, dbDeleteInstrument, dbGetInstrument, dbListInstruments } = await import('../db');
         getRegistryDb();
 
-        const ok = dbDeleteInstrument('XRP/ETH');
+        const ok = dbDeleteInstrument('XRP/USDT');
         expect(ok).toBe(true);
-        expect(dbGetInstrument('XRP/ETH')).toBeNull();
-        expect(dbListInstruments()).toHaveLength(5);
+        expect(dbGetInstrument('XRP/USDT')).toBeNull();
+        expect(dbListInstruments()).toHaveLength(1);
     });
 });
 
@@ -306,9 +302,9 @@ describe('Issuer CRUD', () => {
         const { getRegistryDb, dbDeleteIssuer, dbGetIssuer } = await import('../db');
         getRegistryDb();
 
-        const ok = dbDeleteIssuer('rcA8X3TVMST1n3CJeAdGk1RdRCHii7N2h', 'ETH');
+        const ok = dbDeleteIssuer('rcvxE9PS9YBwxtGg1qNeewV6ZB3wGubZq', 'USDT');
         expect(ok).toBe(true);
-        expect(dbGetIssuer('rcA8X3TVMST1n3CJeAdGk1RdRCHii7N2h', 'ETH')).toBeNull();
+        expect(dbGetIssuer('rcvxE9PS9YBwxtGg1qNeewV6ZB3wGubZq', 'USDT')).toBeNull();
     });
 });
 
@@ -321,7 +317,7 @@ describe('Registry API', () => {
         it('should return all instruments', async () => {
             const { getInstruments } = await import('../registry');
             const instruments = getInstruments();
-            expect(instruments).toHaveLength(6);
+            expect(instruments).toHaveLength(2);
         });
 
         it('should return same reference on repeated calls (cached)', async () => {
@@ -335,10 +331,10 @@ describe('Registry API', () => {
     describe('findInstrument / getInstrument', () => {
         it('should find instrument by key', async () => {
             const { findInstrument } = await import('../registry');
-            const inst = findInstrument('XRP/BTC');
+            const inst = findInstrument('XRP/USDT');
             expect(inst).toBeDefined();
             expect(inst!.base.currency).toBe('XRP');
-            expect(inst!.quote.currency).toBe('BTC');
+            expect(inst!.quote.currency).toBe('USDT');
         });
 
         it('should return undefined for missing key', async () => {
@@ -356,7 +352,7 @@ describe('Registry API', () => {
         it('should return true for valid keys', async () => {
             const { isValidPairKey } = await import('../registry');
             expect(isValidPairKey('XRP/RLUSD')).toBe(true);
-            expect(isValidPairKey('XRP/BTC')).toBe(true);
+            expect(isValidPairKey('XRP/USDT')).toBe(true);
         });
 
         it('should return false for invalid keys', async () => {
@@ -369,7 +365,7 @@ describe('Registry API', () => {
     describe('listInstruments', () => {
         it('should return all when no filter', async () => {
             const { listInstruments } = await import('../registry');
-            expect(listInstruments()).toHaveLength(6);
+            expect(listInstruments()).toHaveLength(2);
         });
 
         it('should filter by network', async () => {
@@ -398,7 +394,7 @@ describe('Registry API', () => {
             });
 
             expect(findInstrument('XRP/NZD')).toBeDefined();
-            expect(getInstruments().length).toBe(7);
+            expect(getInstruments().length).toBe(3);
         });
 
         it('should reject invalid instrument structure', async () => {
@@ -422,20 +418,20 @@ describe('Registry API', () => {
     describe('setInstrumentStatus', () => {
         it('should disable an instrument', async () => {
             const { setInstrumentStatus, findInstrument, getActiveInstruments } = await import('../registry');
-            const ok = setInstrumentStatus('XRP/ETH', 'disabled');
+            const ok = setInstrumentStatus('XRP/USDT', 'disabled');
             expect(ok).toBe(true);
-            expect(findInstrument('XRP/ETH')!.status).toBe('disabled');
-            expect(getActiveInstruments().find((i) => i.key === 'XRP/ETH')).toBeUndefined();
+            expect(findInstrument('XRP/USDT')!.status).toBe('disabled');
+            expect(getActiveInstruments().find((i) => i.key === 'XRP/USDT')).toBeUndefined();
         });
     });
 
     describe('removeInstrument', () => {
         it('should remove an instrument', async () => {
             const { removeInstrument, findInstrument, getInstruments } = await import('../registry');
-            const ok = removeInstrument('XRP/EUR');
+            const ok = removeInstrument('XRP/USDT');
             expect(ok).toBe(true);
-            expect(findInstrument('XRP/EUR')).toBeUndefined();
-            expect(getInstruments()).toHaveLength(5);
+            expect(findInstrument('XRP/USDT')).toBeUndefined();
+            expect(getInstruments()).toHaveLength(1);
         });
     });
 
@@ -452,8 +448,8 @@ describe('Registry API', () => {
 
         it('should throw for disabled instrument', async () => {
             const { assertAllowedInstrument, setInstrumentStatus } = await import('../registry');
-            setInstrumentStatus('XRP/BTC', 'disabled');
-            expect(() => assertAllowedInstrument('XRP/BTC')).toThrow('disabled');
+            setInstrumentStatus('XRP/USDT', 'disabled');
+            expect(() => assertAllowedInstrument('XRP/USDT')).toThrow('disabled');
         });
     });
 });
@@ -557,9 +553,9 @@ describe('Validation', () => {
 describe('Backward Compatibility', () => {
     it('findPair alias should work', async () => {
         const { findPair } = await import('../registry');
-        const pair = findPair('XRP/USDC');
+        const pair = findPair('XRP/USDT');
         expect(pair).toBeDefined();
-        expect(pair!.key).toBe('XRP/USDC');
+        expect(pair!.key).toBe('XRP/USDT');
     });
 
     it('getPair alias should work', async () => {
@@ -576,7 +572,7 @@ describe('Backward Compatibility', () => {
     it('listPairs should work', async () => {
         const { listPairs } = await import('../registry');
         const all = listPairs();
-        expect(all.length).toBeGreaterThanOrEqual(5);
+        expect(all.length).toBeGreaterThanOrEqual(2);
         const mainnet = listPairs({ network: 'mainnet' });
         expect(mainnet.length).toBeGreaterThan(0);
     });
@@ -592,15 +588,15 @@ describe('Lifecycle', () => {
         initRegistry();
         initRegistry();
         initRegistry();
-        expect(getInstruments()).toHaveLength(6);
+        expect(getInstruments()).toHaveLength(2);
     });
 
     it('closeRegistry then reopen works', async () => {
         const { initRegistry, closeRegistry, getInstruments } = await import('../registry');
         initRegistry();
-        expect(getInstruments()).toHaveLength(6);
+        expect(getInstruments()).toHaveLength(2);
         closeRegistry();
         // Should lazily reopen
-        expect(getInstruments()).toHaveLength(6);
+        expect(getInstruments()).toHaveLength(2);
     });
 });

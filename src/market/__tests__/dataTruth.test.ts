@@ -354,7 +354,7 @@ describe('Spec: Metrics windows reset on pair switch', () => {
         validator.reset();
 
         // New pair B starts at sequence 1 — no sequence-gap error
-        const v = validator.validate(normalizeOrderBookSnapshot('XRP/EUR', healthyOrderBookState(), NOW + 100, 1));
+        const v = validator.validate(normalizeOrderBookSnapshot('XRP/USDT', healthyOrderBookState(), NOW + 100, 1));
         expect(v.valid).toBe(true);
         expect(v.reasons).toEqual([]);
     });
@@ -377,7 +377,7 @@ describe('Spec: Metrics windows reset on pair switch', () => {
         validator.validate(normalizeOrderBookSnapshot('XRP/USD', healthyOrderBookState(), NOW, 10));
 
         // Different pair key → validator skips sequence check (different pair)
-        const v = validator.validate(normalizeOrderBookSnapshot('XRP/EUR', healthyOrderBookState(), NOW + 100, 1));
+        const v = validator.validate(normalizeOrderBookSnapshot('XRP/USDT', healthyOrderBookState(), NOW + 100, 1));
         expect(v.valid).toBe(true);
     });
 });

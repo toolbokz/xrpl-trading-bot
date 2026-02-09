@@ -47,6 +47,7 @@ import type { TradingPair } from '../../config';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const RLUSD_ISSUER = 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De';
+const USDT_ISSUER = 'rcvxE9PS9YBwxtGg1qNeewV6ZB3wGubZq';
 const USDC_ISSUER = 'rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE';
 const EUR_ISSUER = 'rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq';
 const BTC_ISSUER = 'rchGBxcD1A1C2tdxF6papQYZ8kjRKMYcL';
@@ -746,7 +747,7 @@ describe('ExecutionPairResolver', () => {
 
     it('invalidate() with no arg clears all', () => {
         resolver.resolve('XRP/RLUSD');
-        resolver.resolve('XRP/USDC');
+        resolver.resolve('XRP/USDT');
         expect(resolver.getCacheSize()).toBe(2);
         resolver.invalidate();
         expect(resolver.getCacheSize()).toBe(0);
@@ -837,7 +838,7 @@ describe('ExecutionPairResolver — Cache Expiry', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('All Registered Pairs', () => {
-    const pairs = ['XRP/RLUSD', 'XRP/USDC', 'XRP/EUR', 'XRP/BTC', 'XRP/ETH'];
+    const pairs = ['XRP/RLUSD', 'XRP/USDT'];
 
     for (const pairKey of pairs) {
         it(`resolves ${pairKey} from key string`, () => {
@@ -878,27 +879,26 @@ describe('Offer Construction E2E', () => {
         expect(gets.issuer).toBe(RLUSD_ISSUER);
     });
 
-    it('XRP/EUR SELL 50 XRP at 1.8 produces correct TakerGets/TakerPays', () => {
-        const resolved = resolvePair('XRP/EUR');
+    it('XRP/USDT SELL 50 XRP at 1.8 produces correct TakerGets/TakerPays', () => {
+        const resolved = resolvePair('XRP/USDT');
         const offer = buildOfferAmounts(resolved, 'SELL', 50, 1.8);
 
         // TakerGets = 50 XRP = 50000000 drops
         expect(offer.TakerGets).toBe('50000000');
 
-        // TakerPays = 90 EUR
+        // TakerPays = 90 USDT
         const pays = offer.TakerPays as { currency: string; issuer: string; value: string };
         expect(pays.value).toBe('90');
-        expect(pays.currency).toBe('EUR'); // 3-char, no hex
-        expect(pays.issuer).toBe(EUR_ISSUER);
+        expect(pays.issuer).toBe(USDT_ISSUER);
     });
 
-    it('XRP/BTC BUY 1000 XRP at 0.00004 produces correct tiny quote amount', () => {
-        const resolved = resolvePair('XRP/BTC');
-        const offer = buildOfferAmounts(resolved, 'BUY', 1000, 0.00004);
+    it('XRP/RLUSD BUY 1000 XRP at 2.5 produces correct quote amount', () => {
+        const resolved = resolvePair('XRP/RLUSD');
+        const offer = buildOfferAmounts(resolved, 'BUY', 1000, 2.5);
 
-        // TakerGets = 1000 * 0.00004 = 0.04 BTC
+        // TakerGets = 1000 * 2.5 = 2500 RLUSD
         const gets = offer.TakerGets as { currency: string; issuer: string; value: string };
-        expect(parseFloat(gets.value)).toBeCloseTo(0.04);
+        expect(parseFloat(gets.value)).toBeCloseTo(2500);
     });
 });
 

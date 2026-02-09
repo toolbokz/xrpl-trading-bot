@@ -57,7 +57,7 @@ describe('ExposureTracker Persistence', () => {
     it('starts fresh when no persisted state exists', () => {
         vi.mocked(loadExposureState).mockReturnValue(null);
 
-        tracker.setPairKey('XRP/USDC');
+        tracker.setPairKey('XRP/USDT');
 
         const snap = tracker.getSnapshot();
         expect(snap.netPositionBase).toBe(0);
