@@ -27,7 +27,8 @@ export function MarketStatsPanel({
     xrpBalanceHistory,
 }: MarketStatsPanelProps) {
     const xrpUsdValue = usdRate !== null ? xrpBalance * usdRate : null;
-    const quoteUsdValue = quoteCurrency === 'RLUSD' ? quoteBalance : null;
+    const USD_PEGGED = new Set(['RLUSD', 'USDT', 'USDC']);
+    const quoteUsdValue = USD_PEGGED.has(quoteCurrency) ? quoteBalance : null;
     const totalUsdValue = xrpUsdValue !== null ? xrpUsdValue + (quoteUsdValue ?? 0) : null;
 
     return (
