@@ -97,7 +97,10 @@ export const normalizeIntent = (intent: TradeIntent): NormalizedTradeIntent => {
 const toXRPLAmount = (leg: TradingLeg, value: number): OfferCreate['TakerGets'] => {
     const normalized = toXrplCurrency(leg);
     if (normalized.currency === 'XRP') {
-        return xrpToDrops(value);
+        // XRP drops have 6 decimal places max; truncate to avoid floating point artifacts
+        // e.g. 0.47500000000000003 → "0.475"
+        const rounded = Math.floor(value * 1_000_000) / 1_000_000;
+        return xrpToDrops(rounded);
     }
     const issued = normalized as Extract<XrplCurrency, { issuer: string }>;
     return { currency: issued.currency, issuer: issued.issuer, value: toPrecisionString(value) } as any;
