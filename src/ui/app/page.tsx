@@ -17,7 +17,7 @@ import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
 import { AnalyticsPanel } from '../components/AnalyticsPanel';
 import { GovernancePanel } from '../components/GovernancePanel';
 import { AdaptivePanel } from '../components/AdaptivePanel';
-import { ChartPanel } from '../components/ChartPanel';
+import { BotOrdersPanel } from '../components/BotOrdersPanel';
 import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
 import { MarketDataHealthPanel } from '../components/MarketDataHealthPanel';
 import { AdverseSelectionPanel } from '../components/AdverseSelectionPanel';
@@ -29,7 +29,7 @@ import { MobileDashboard, MobileSection } from '../components/layout/MobileDashb
 
 // Data hooks (real data fetching)
 import { useOrderBook } from '../lib/hooks/useOrderBook';
-import { useCandles } from '../lib/hooks/useCandles';
+
 
 
 
@@ -136,13 +136,7 @@ export default function Page() {
     const orderBookBids = orderBookData.bids;
     const orderBookAsks = orderBookData.asks;
 
-    // Candle chart data from /api/pairs/[key]/candles
-    const {
-        candles: candleData,
-        volumeData,
-        loading: candlesLoading,
-        error: candlesError,
-    } = useCandles(selectedPairKey, { pollInterval: 5000, enabled: !!selectedPairKey });
+
 
     // ─────────────────────────────────────────────────────────────────────────
     // Data Fetching (non-mock)
@@ -568,21 +562,12 @@ export default function Page() {
                     />
                 </div>
 
-                {/* ── ROW 3, COL 3: Candle Chart ── */}
+                {/* ── ROW 3, COL 3: Bot Orders ── */}
                 <div
                     className="min-h-0 overflow-hidden"
                     style={{ gridColumn: '3', gridRow: '3', height: '30vh' }}
                 >
-                    <ChartPanel
-                        data={candleData}
-                        volumeData={volumeData}
-                        pairKey={selectedPairKey}
-                        currentPrice={midPrice ?? 0}
-                        quoteCurrency={bot.quoteCurrency}
-                        spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
-                        loading={candlesLoading}
-                        error={candlesError}
-                    />
+                    <BotOrdersPanel pollInterval={5000} />
                 </div>
 
                 {/* ── ROW 4: 4-column sub-grid ── */}
