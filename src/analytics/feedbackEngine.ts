@@ -411,8 +411,8 @@ class FeedbackEngine {
                 postSignal3s: input.postSignal3s ?? null,
             };
 
-            insertTradeEvent(event);
-            return event.id;
+            const insertedId = insertTradeEvent(event);
+            return insertedId;
         } catch (err) {
             logger.warn({ err, action: input.action }, 'Failed to record trade event');
         }
@@ -433,7 +433,12 @@ class FeedbackEngine {
     }): void {
         if (!this.ensureInitialized()) return;
         try {
-            updateTradeEventPostFill1s(input);
+            const changes = updateTradeEventPostFill1s(input);
+            if (changes === 1) {
+                logger.info({ eventId: input.id }, 'Recorded post-fill 1s snapshot');
+            } else {
+                logger.warn({ eventId: input.id, changes }, 'Post-fill 1s snapshot update affected no rows');
+            }
         } catch (err) {
             logger.warn({ err, eventId: input.id }, 'Failed to record post-fill 1s snapshot');
         }
@@ -450,7 +455,12 @@ class FeedbackEngine {
     }): void {
         if (!this.ensureInitialized()) return;
         try {
-            updateTradeEventPostFill3s(input);
+            const changes = updateTradeEventPostFill3s(input);
+            if (changes === 1) {
+                logger.info({ eventId: input.id }, 'Recorded post-fill 3s snapshot');
+            } else {
+                logger.warn({ eventId: input.id, changes }, 'Post-fill 3s snapshot update affected no rows');
+            }
         } catch (err) {
             logger.warn({ err, eventId: input.id }, 'Failed to record post-fill 3s snapshot');
         }

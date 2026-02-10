@@ -478,7 +478,7 @@ export function generateId(): string {
 /**
  * Insert a trade event
  */
-export function insertTradeEvent(event: TradeEventRecord): void {
+export function insertTradeEvent(event: TradeEventRecord): string | null {
     try {
         const stmt = getStatements().insertTradeEvent;
         stmt.run({
@@ -529,9 +529,11 @@ export function insertTradeEvent(event: TradeEventRecord): void {
             postSignal1s: event.postSignal1s,
             postSignal3s: event.postSignal3s,
         });
+        return event.id;
     } catch (err) {
         logger.warn({ err, eventId: event.id }, 'Failed to insert trade event');
     }
+    return null;
 }
 
 /**
@@ -545,10 +547,10 @@ export function updateTradeEventPostFill1s(input: {
     postFlowStrength1s: number | null;
     postFlowRegime1s: FlowRegime | null;
     postSignal1s: number | null;
-}): void {
+}): number {
     try {
         const stmt = getStatements().updateTradeEventPostFill1s;
-        stmt.run({
+        const result = stmt.run({
             id: input.id,
             postMid1s: input.postMid1s,
             postSpread1s: input.postSpread1s,
@@ -557,9 +559,11 @@ export function updateTradeEventPostFill1s(input: {
             postFlowRegime1s: input.postFlowRegime1s,
             postSignal1s: input.postSignal1s,
         });
+        return result.changes;
     } catch (err) {
         logger.warn({ err, eventId: input.id }, 'Failed to update post-fill 1s snapshot');
     }
+    return 0;
 }
 
 export function updateTradeEventPostFill3s(input: {
@@ -570,10 +574,10 @@ export function updateTradeEventPostFill3s(input: {
     postFlowStrength3s: number | null;
     postFlowRegime3s: FlowRegime | null;
     postSignal3s: number | null;
-}): void {
+}): number {
     try {
         const stmt = getStatements().updateTradeEventPostFill3s;
-        stmt.run({
+        const result = stmt.run({
             id: input.id,
             postMid3s: input.postMid3s,
             postSpread3s: input.postSpread3s,
@@ -582,9 +586,11 @@ export function updateTradeEventPostFill3s(input: {
             postFlowRegime3s: input.postFlowRegime3s,
             postSignal3s: input.postSignal3s,
         });
+        return result.changes;
     } catch (err) {
         logger.warn({ err, eventId: input.id }, 'Failed to update post-fill 3s snapshot');
     }
+    return 0;
 }
 
 /**

@@ -47,8 +47,10 @@ export function schedulePostFillSnapshots(opts: {
     setTimeoutFn?: typeof setTimeout;
 }): void {
     const setTimeoutFn = opts.setTimeoutFn ?? setTimeout;
+    logger.info({ eventId: opts.eventId }, 'Scheduled post-fill snapshots');
     const capture = (delayMs: number, record: (snapshot: PostFillSnapshot) => void) => {
         setTimeoutFn(() => {
+            logger.info({ eventId: opts.eventId, delayMs }, 'Post-fill snapshot callback fired');
             record(opts.getSnapshot());
         }, delayMs);
     };
