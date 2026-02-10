@@ -6,6 +6,7 @@ import { RiskEngine } from '../risk/riskEngine';
 import { logger } from '../analytics/logger';
 import { isRegimeSafeForArb, getRegimeDescription, getRegimeSizeMultiplier } from '../market/flowMetrics';
 import { resolveIssuerForRisk, resolveLegsForApi } from '../market/executionPairResolver';
+import { getExecutionOrderFlags, getExecutionOrderType } from '../execution/orderType';
 
 /**
  * Default flow config when not provided (should be passed from TradingRuntime)
@@ -132,6 +133,7 @@ export class AMMArbitrageStrategy implements Strategy {
             price: price.toFixed(6),
             diffBps: diffBps.toFixed(2),
             positionSize: adjustedPositionSize.toFixed(4),
+            orderType: getExecutionOrderType(),
             sizeMultiplier: sizeMultiplier.toFixed(2),
             regime: flow?.regime ?? 'unknown',
         }, 'AMM Arb: 🎯 Executing arbitrage opportunity');
@@ -140,7 +142,7 @@ export class AMMArbitrageStrategy implements Strategy {
             side,
             price,
             amount: adjustedPositionSize,
-            flags: { immediateOrCancel: true }
+            flags: getExecutionOrderFlags(),
         });
         if (res.accepted) {
             logger.info({

@@ -12,6 +12,7 @@ import {
     getRegimeDescription,
 } from '../market/flowMetrics';
 import { resolveIssuerForRisk } from '../market/executionPairResolver';
+import { getExecutionOrderFlags, getExecutionOrderType } from '../execution/orderType';
 
 interface PositionState {
     side: 'flat' | 'long' | 'short';
@@ -217,7 +218,7 @@ export class ScalperStrategy implements Strategy {
                 side: 'BUY',
                 price: price.toFixed(6),
                 amount: adjustedPositionSize.toFixed(4),
-                flags: 'IOC (Immediate-Or-Cancel)',
+                flags: `${getExecutionOrderType()} (${getExecutionOrderType() === 'FOK' ? 'Fill-Or-Kill' : 'Immediate-Or-Cancel'})`,
                 skewApplied: skewBps.toFixed(2),
             }, 'Scalper: 🚀 Placing BUY order');
 
@@ -225,7 +226,7 @@ export class ScalperStrategy implements Strategy {
                 side: 'buy',
                 price,
                 amount: adjustedPositionSize,
-                flags: { immediateOrCancel: true }
+                flags: getExecutionOrderFlags(),
             });
             if (res.accepted) {
                 this.position = { side: 'long', entryPrice: price };
@@ -278,7 +279,7 @@ export class ScalperStrategy implements Strategy {
                     side: 'sell',
                     price: targetExit,
                     amount: adjustedPositionSize,
-                    flags: { immediateOrCancel: true }
+                    flags: getExecutionOrderFlags(),
                 });
                 if (res.accepted) {
                     const shouldCooldown = isStopLoss || enhancedStopLoss;
