@@ -31,6 +31,32 @@ export interface SlippageCheckResult {
     reason?: string | undefined;
 }
 
+export interface PostFillSnapshot {
+    mid: number | null;
+    spreadBps: number | null;
+    flowCombined: number | null;
+    flowStrength: number | null;
+    flowRegime: FlowRegime | null;
+}
+
+export function schedulePostFillSnapshots(opts: {
+    eventId: string;
+    getSnapshot: () => PostFillSnapshot;
+    record1s: (snapshot: PostFillSnapshot) => void;
+    record3s: (snapshot: PostFillSnapshot) => void;
+    setTimeoutFn?: typeof setTimeout;
+}): void {
+    const setTimeoutFn = opts.setTimeoutFn ?? setTimeout;
+    const capture = (delayMs: number, record: (snapshot: PostFillSnapshot) => void) => {
+        setTimeoutFn(() => {
+            record(opts.getSnapshot());
+        }, delayMs);
+    };
+
+    capture(1000, opts.record1s);
+    capture(3000, opts.record3s);
+}
+
 export class OfferExecutor {
     private currentStrategy: string = 'unknown';
     private currentMidPrice: number | null = null;
@@ -38,6 +64,7 @@ export class OfferExecutor {
     private currentFlowCombined: number | null = null;
     private currentFlowStrength: number | null = null;
     private currentFlowRegime: FlowRegime | null = null;
+    private currentLocalExtreme: boolean | null = null;
 
     // Execution quality analytics collector (injected by TradingRuntime)
     private executionQualityCollector: ExecutionQualityCollector | null = null;
@@ -99,12 +126,14 @@ export class OfferExecutor {
         flowCombined: number | null;
         flowStrength: number | null;
         flowRegime: FlowRegime | null;
+        localExtreme?: boolean | null;
     }): void {
         this.currentMidPrice = input.midPrice;
         this.currentSpreadBps = input.spreadBps;
         this.currentFlowCombined = input.flowCombined;
         this.currentFlowStrength = input.flowStrength;
         this.currentFlowRegime = input.flowRegime;
+        this.currentLocalExtreme = input.localExtreme ?? null;
     }
 
     /**
@@ -538,6 +567,13 @@ export class OfferExecutor {
                     ammFeeBps: null,
                     fillRatio: 1,
                     isPartial: false,
+                    entrySpreadBps: this.currentSpreadBps,
+                    entryFlowCombined: this.currentFlowCombined,
+                    entryFlowStrength: this.currentFlowStrength,
+                    entryFlowRegime: this.currentFlowRegime,
+                    entryMid: this.currentMidPrice,
+                    entrySignalStrength: this.currentFlowStrength,
+                    entryLocalExtreme: this.currentLocalExtreme == null ? null : (this.currentLocalExtreme ? 1 : 0),
                 });
             } catch { /* feedback should never crash trading */ }
 
@@ -1077,37 +1113,44 @@ export class OfferExecutor {
                         entryFlowCombined: this.currentFlowCombined,
                         entryFlowStrength: this.currentFlowStrength,
                         entryFlowRegime: this.currentFlowRegime,
+                        entryMid: this.currentMidPrice,
+                        entrySignalStrength: this.currentFlowStrength,
+                        entryLocalExtreme: this.currentLocalExtreme == null ? null : (this.currentLocalExtreme ? 1 : 0),
                     });
 
                     if (eventId) {
-                        const capturePostFill = (delayMs: number) => {
-                            setTimeout(() => {
+                        schedulePostFillSnapshots({
+                            eventId,
+                            getSnapshot: () => ({
+                                mid: this.currentMidPrice,
+                                spreadBps: this.currentSpreadBps,
+                                flowCombined: this.currentFlowCombined,
+                                flowStrength: this.currentFlowStrength,
+                                flowRegime: this.currentFlowRegime,
+                            }),
+                            record1s: (snapshot) => {
                                 feedbackEngine.recordPostFillSnapshot1s({
                                     id: eventId,
-                                    postMid1s: this.currentMidPrice,
-                                    postSpread1s: this.currentSpreadBps,
-                                    postFlowCombined1s: this.currentFlowCombined,
-                                    postFlowStrength1s: this.currentFlowStrength,
-                                    postFlowRegime1s: this.currentFlowRegime,
+                                    postMid1s: snapshot.mid,
+                                    postSpread1s: snapshot.spreadBps,
+                                    postFlowCombined1s: snapshot.flowCombined,
+                                    postFlowStrength1s: snapshot.flowStrength,
+                                    postFlowRegime1s: snapshot.flowRegime,
+                                    postSignal1s: snapshot.flowStrength,
                                 });
-                            }, delayMs);
-                        };
-
-                        const capturePostFill3s = (delayMs: number) => {
-                            setTimeout(() => {
+                            },
+                            record3s: (snapshot) => {
                                 feedbackEngine.recordPostFillSnapshot3s({
                                     id: eventId,
-                                    postMid3s: this.currentMidPrice,
-                                    postSpread3s: this.currentSpreadBps,
-                                    postFlowCombined3s: this.currentFlowCombined,
-                                    postFlowStrength3s: this.currentFlowStrength,
-                                    postFlowRegime3s: this.currentFlowRegime,
+                                    postMid3s: snapshot.mid,
+                                    postSpread3s: snapshot.spreadBps,
+                                    postFlowCombined3s: snapshot.flowCombined,
+                                    postFlowStrength3s: snapshot.flowStrength,
+                                    postFlowRegime3s: snapshot.flowRegime,
+                                    postSignal3s: snapshot.flowStrength,
                                 });
-                            }, delayMs);
-                        };
-
-                        capturePostFill(1000);
-                        capturePostFill3s(3000);
+                            },
+                        });
                     }
                 } catch { /* feedback should never crash trading */ }
             }

@@ -96,6 +96,11 @@ export interface TradeEventInput {
     postFlowCombined3s?: number | null;
     postFlowStrength3s?: number | null;
     postFlowRegime3s?: FlowRegime | null;
+    entryMid?: number | null;
+    entrySignalStrength?: number | null;
+    entryLocalExtreme?: number | null;
+    postSignal1s?: number | null;
+    postSignal3s?: number | null;
     /** Execution source: AMM pool, DEX order book, mixed, or unknown. */
     executionSource?: 'amm' | 'orderbook' | 'mixed' | 'unknown' | null;
 }
@@ -399,6 +404,11 @@ class FeedbackEngine {
                 postFlowCombined3s: input.postFlowCombined3s ?? null,
                 postFlowStrength3s: input.postFlowStrength3s ?? null,
                 postFlowRegime3s: input.postFlowRegime3s ?? null,
+                entryMid: input.entryMid ?? null,
+                entrySignalStrength: input.entrySignalStrength ?? null,
+                entryLocalExtreme: input.entryLocalExtreme ?? null,
+                postSignal1s: input.postSignal1s ?? null,
+                postSignal3s: input.postSignal3s ?? null,
             };
 
             insertTradeEvent(event);
@@ -419,6 +429,7 @@ class FeedbackEngine {
         postFlowCombined1s: number | null;
         postFlowStrength1s: number | null;
         postFlowRegime1s: FlowRegime | null;
+        postSignal1s: number | null;
     }): void {
         if (!this.ensureInitialized()) return;
         try {
@@ -435,6 +446,7 @@ class FeedbackEngine {
         postFlowCombined3s: number | null;
         postFlowStrength3s: number | null;
         postFlowRegime3s: FlowRegime | null;
+        postSignal3s: number | null;
     }): void {
         if (!this.ensureInitialized()) return;
         try {
@@ -494,6 +506,11 @@ class FeedbackEngine {
                 postFlowCombined3s: input.postFlowCombined3s ?? null,
                 postFlowStrength3s: input.postFlowStrength3s ?? null,
                 postFlowRegime3s: input.postFlowRegime3s ?? null,
+                entryMid: input.entryMid ?? null,
+                entrySignalStrength: input.entrySignalStrength ?? null,
+                entryLocalExtreme: input.entryLocalExtreme ?? null,
+                postSignal1s: input.postSignal1s ?? null,
+                postSignal3s: input.postSignal3s ?? null,
             }));
 
             let snapshotRecord: MarketSnapshotRecord | undefined;

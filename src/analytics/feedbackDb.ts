@@ -74,6 +74,12 @@ export interface TradeEventRecord {
     postFlowCombined3s: number | null;
     postFlowStrength3s: number | null;
     postFlowRegime3s: FlowRegime | null;
+    // Beginner-friendly edge fields
+    entryMid: number | null;
+    entrySignalStrength: number | null;
+    entryLocalExtreme: number | null; // 1 = true, 0 = false, null = unknown
+    postSignal1s: number | null;
+    postSignal3s: number | null;
 }
 
 /**
@@ -204,7 +210,12 @@ function initSchema(db: DatabaseType): void {
             postSpread3s REAL,
             postFlowCombined3s REAL,
             postFlowStrength3s REAL,
-            postFlowRegime3s TEXT
+            postFlowRegime3s TEXT,
+            entryMid REAL,
+            entrySignalStrength REAL,
+            entryLocalExtreme INTEGER,
+            postSignal1s REAL,
+            postSignal3s REAL
         )
     `);
 
@@ -273,6 +284,11 @@ const TRADE_EVENT_EXTRA_COLUMNS = {
     postFlowCombined3s: 'REAL',
     postFlowStrength3s: 'REAL',
     postFlowRegime3s: 'TEXT',
+    entryMid: 'REAL',
+    entrySignalStrength: 'REAL',
+    entryLocalExtreme: 'INTEGER',
+    postSignal1s: 'REAL',
+    postSignal3s: 'REAL',
 } as const;
 
 /**
@@ -322,7 +338,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 edgeBpsVsMid, netEdgeBpsVsMid, txFeeXrp, ammFeeBps, fillRatio, isPartial,
                 entrySpreadBps, entryFlowCombined, entryFlowStrength, entryFlowRegime,
                 postMid1s, postSpread1s, postFlowCombined1s, postFlowStrength1s, postFlowRegime1s,
-                postMid3s, postSpread3s, postFlowCombined3s, postFlowStrength3s, postFlowRegime3s
+                postMid3s, postSpread3s, postFlowCombined3s, postFlowStrength3s, postFlowRegime3s,
+                entryMid, entrySignalStrength, entryLocalExtreme, postSignal1s, postSignal3s
             ) VALUES (
                 @id, @ts, @pairKey, @strategy, @action, @side,
                 @intentPrice, @intentSizeBase, @intentSizeQuote,
@@ -332,7 +349,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 @edgeBpsVsMid, @netEdgeBpsVsMid, @txFeeXrp, @ammFeeBps, @fillRatio, @isPartial,
                 @entrySpreadBps, @entryFlowCombined, @entryFlowStrength, @entryFlowRegime,
                 @postMid1s, @postSpread1s, @postFlowCombined1s, @postFlowStrength1s, @postFlowRegime1s,
-                @postMid3s, @postSpread3s, @postFlowCombined3s, @postFlowStrength3s, @postFlowRegime3s
+                @postMid3s, @postSpread3s, @postFlowCombined3s, @postFlowStrength3s, @postFlowRegime3s,
+                @entryMid, @entrySignalStrength, @entryLocalExtreme, @postSignal1s, @postSignal3s
             )
         `),
         updateTradeEventPostFill1s: db.prepare(`
@@ -341,7 +359,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 postSpread1s = @postSpread1s,
                 postFlowCombined1s = @postFlowCombined1s,
                 postFlowStrength1s = @postFlowStrength1s,
-                postFlowRegime1s = @postFlowRegime1s
+                postFlowRegime1s = @postFlowRegime1s,
+                postSignal1s = @postSignal1s
             WHERE id = @id
         `),
         updateTradeEventPostFill3s: db.prepare(`
@@ -350,7 +369,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 postSpread3s = @postSpread3s,
                 postFlowCombined3s = @postFlowCombined3s,
                 postFlowStrength3s = @postFlowStrength3s,
-                postFlowRegime3s = @postFlowRegime3s
+                postFlowRegime3s = @postFlowRegime3s,
+                postSignal3s = @postSignal3s
             WHERE id = @id
         `),
         insertSnapshot: db.prepare(`
@@ -503,6 +523,11 @@ export function insertTradeEvent(event: TradeEventRecord): void {
             postFlowCombined3s: event.postFlowCombined3s,
             postFlowStrength3s: event.postFlowStrength3s,
             postFlowRegime3s: event.postFlowRegime3s,
+            entryMid: event.entryMid,
+            entrySignalStrength: event.entrySignalStrength,
+            entryLocalExtreme: event.entryLocalExtreme,
+            postSignal1s: event.postSignal1s,
+            postSignal3s: event.postSignal3s,
         });
     } catch (err) {
         logger.warn({ err, eventId: event.id }, 'Failed to insert trade event');
@@ -519,6 +544,7 @@ export function updateTradeEventPostFill1s(input: {
     postFlowCombined1s: number | null;
     postFlowStrength1s: number | null;
     postFlowRegime1s: FlowRegime | null;
+    postSignal1s: number | null;
 }): void {
     try {
         const stmt = getStatements().updateTradeEventPostFill1s;
@@ -529,6 +555,7 @@ export function updateTradeEventPostFill1s(input: {
             postFlowCombined1s: input.postFlowCombined1s,
             postFlowStrength1s: input.postFlowStrength1s,
             postFlowRegime1s: input.postFlowRegime1s,
+            postSignal1s: input.postSignal1s,
         });
     } catch (err) {
         logger.warn({ err, eventId: input.id }, 'Failed to update post-fill 1s snapshot');
@@ -542,6 +569,7 @@ export function updateTradeEventPostFill3s(input: {
     postFlowCombined3s: number | null;
     postFlowStrength3s: number | null;
     postFlowRegime3s: FlowRegime | null;
+    postSignal3s: number | null;
 }): void {
     try {
         const stmt = getStatements().updateTradeEventPostFill3s;
@@ -552,6 +580,7 @@ export function updateTradeEventPostFill3s(input: {
             postFlowCombined3s: input.postFlowCombined3s,
             postFlowStrength3s: input.postFlowStrength3s,
             postFlowRegime3s: input.postFlowRegime3s,
+            postSignal3s: input.postSignal3s,
         });
     } catch (err) {
         logger.warn({ err, eventId: input.id }, 'Failed to update post-fill 3s snapshot');
@@ -643,6 +672,11 @@ export function insertBatch(events: TradeEventRecord[], snapshot?: MarketSnapsho
                     postFlowCombined3s: event.postFlowCombined3s,
                     postFlowStrength3s: event.postFlowStrength3s,
                     postFlowRegime3s: event.postFlowRegime3s,
+                    entryMid: event.entryMid,
+                    entrySignalStrength: event.entrySignalStrength,
+                    entryLocalExtreme: event.entryLocalExtreme,
+                    postSignal1s: event.postSignal1s,
+                    postSignal3s: event.postSignal3s,
                 });
             }
             if (snapshot) {

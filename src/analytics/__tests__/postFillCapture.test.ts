@@ -68,6 +68,11 @@ describe('feedbackDb post-fill updates', () => {
             postFlowCombined3s: null,
             postFlowStrength3s: null,
             postFlowRegime3s: null,
+            entryMid: 1,
+            entrySignalStrength: 0.2,
+            entryLocalExtreme: 0,
+            postSignal1s: null,
+            postSignal3s: null,
         });
 
         updateTradeEventPostFill1s({
@@ -77,6 +82,7 @@ describe('feedbackDb post-fill updates', () => {
             postFlowCombined1s: 0.15,
             postFlowStrength1s: 0.25,
             postFlowRegime1s: 'normal',
+            postSignal1s: 0.25,
         });
 
         updateTradeEventPostFill3s({
@@ -86,6 +92,7 @@ describe('feedbackDb post-fill updates', () => {
             postFlowCombined3s: 0.18,
             postFlowStrength3s: 0.3,
             postFlowRegime3s: 'normal',
+            postSignal3s: 0.3,
         });
 
         const events = queryTradeEvents();
@@ -94,9 +101,11 @@ describe('feedbackDb post-fill updates', () => {
         expect(event?.postSpread1s).toBe(11);
         expect(event?.postFlowCombined1s).toBeCloseTo(0.15);
         expect(event?.postFlowStrength1s).toBeCloseTo(0.25);
+        expect(event?.postSignal1s).toBeCloseTo(0.25);
         expect(event?.postMid3s).toBeCloseTo(1.02);
         expect(event?.postSpread3s).toBe(10);
         expect(event?.postFlowCombined3s).toBeCloseTo(0.18);
         expect(event?.postFlowStrength3s).toBeCloseTo(0.3);
+        expect(event?.postSignal3s).toBeCloseTo(0.3);
     });
 });

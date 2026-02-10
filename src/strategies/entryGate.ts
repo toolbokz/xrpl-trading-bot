@@ -1,6 +1,7 @@
 import { FlowMetrics, FlowRegime } from '../market/flowMetrics';
 import { OrderBookState } from '../utils/types';
 import { logger } from '../analytics/logger';
+import { tradeHistory } from '../analytics/tradeHistory';
 
 export interface EntryGateConfig {
     enabled: boolean;
@@ -11,6 +12,14 @@ export interface EntryGateConfig {
     localExtremeThreshold: number;
     localExtremeDecay: number;
     maxBookStaleMs: number;
+    rejectThrottleEnabled: boolean;
+    rejectThrottleMaxRate: number;
+    rejectThrottleMinSamples: number;
+    rejectThrottleLookbackMs: number;
+    rejectThrottleCooldownMs: number;
+    rejectThrottleMinSpreadBps: number;
+    rejectThrottleBlock: boolean;
+    rejectThrottleCheckMs: number;
 }
 
 export interface EntryGateMetrics {
@@ -37,6 +46,14 @@ const DEFAULT_CONFIG: EntryGateConfig = {
     localExtremeThreshold: 0.6,
     localExtremeDecay: 0.25,
     maxBookStaleMs: 8_000,
+    rejectThrottleEnabled: false,
+    rejectThrottleMaxRate: 0.7,
+    rejectThrottleMinSamples: 20,
+    rejectThrottleLookbackMs: 60 * 60 * 1000,
+    rejectThrottleCooldownMs: 10 * 60 * 1000,
+    rejectThrottleMinSpreadBps: 25,
+    rejectThrottleBlock: false,
+    rejectThrottleCheckMs: 60 * 1000,
 };
 
 export function loadEntryGateConfig(): EntryGateConfig {
@@ -49,6 +66,14 @@ export function loadEntryGateConfig(): EntryGateConfig {
         localExtremeThreshold: Number(process.env.ENTRY_GATE_LOCAL_EXTREME_THRESHOLD) || DEFAULT_CONFIG.localExtremeThreshold,
         localExtremeDecay: Number(process.env.ENTRY_GATE_LOCAL_EXTREME_DECAY) || DEFAULT_CONFIG.localExtremeDecay,
         maxBookStaleMs: Number(process.env.ENTRY_GATE_MAX_BOOK_STALE_MS) || DEFAULT_CONFIG.maxBookStaleMs,
+        rejectThrottleEnabled: process.env.ENTRY_GATE_REJECT_THROTTLE_ENABLED === 'true',
+        rejectThrottleMaxRate: Number(process.env.ENTRY_GATE_REJECT_THROTTLE_MAX_RATE) || DEFAULT_CONFIG.rejectThrottleMaxRate,
+        rejectThrottleMinSamples: Number(process.env.ENTRY_GATE_REJECT_THROTTLE_MIN_SAMPLES) || DEFAULT_CONFIG.rejectThrottleMinSamples,
+        rejectThrottleLookbackMs: Number(process.env.ENTRY_GATE_REJECT_THROTTLE_LOOKBACK_MS) || DEFAULT_CONFIG.rejectThrottleLookbackMs,
+        rejectThrottleCooldownMs: Number(process.env.ENTRY_GATE_REJECT_THROTTLE_COOLDOWN_MS) || DEFAULT_CONFIG.rejectThrottleCooldownMs,
+        rejectThrottleMinSpreadBps: Number(process.env.ENTRY_GATE_REJECT_THROTTLE_MIN_SPREAD_BPS) || DEFAULT_CONFIG.rejectThrottleMinSpreadBps,
+        rejectThrottleBlock: process.env.ENTRY_GATE_REJECT_THROTTLE_BLOCK === 'true',
+        rejectThrottleCheckMs: Number(process.env.ENTRY_GATE_REJECT_THROTTLE_CHECK_MS) || DEFAULT_CONFIG.rejectThrottleCheckMs,
     };
 }
 
@@ -66,6 +91,8 @@ function computeDepthImbalance(levels: number, bids: OrderBookState['bids'], ask
 export class EntryGate {
     private readonly config: EntryGateConfig;
     private localExtremeEma: number | null = null;
+    private rejectThrottleUntilMs: number | null = null;
+    private lastRejectCheckMs = 0;
     private lastMetrics: EntryGateMetrics = {
         spreadBps: null,
         signalStrength: null,
@@ -113,6 +140,17 @@ export class EntryGate {
             flowRegime,
             bookAgeMs,
         };
+
+        this.evaluateRejectThrottle(nowMs);
+    }
+
+    getMetrics(): EntryGateMetrics {
+        return this.lastMetrics;
+    }
+
+    isLocalExtreme(): boolean {
+        const score = this.lastMetrics.localExtremeEma ?? this.lastMetrics.localExtremeScore;
+        return score != null && score >= this.config.localExtremeThreshold;
     }
 
     shouldEnter(options?: { minSpreadBps?: number; minSignalStrength?: number }): EntryGateDecision {
@@ -130,7 +168,10 @@ export class EntryGate {
             reasons.push('missing-flow');
         }
 
-        const minSpreadBps = options?.minSpreadBps ?? this.config.minSpreadBps;
+        const minSpreadBps = Math.max(
+            options?.minSpreadBps ?? this.config.minSpreadBps,
+            this.getThrottleMinSpreadBps(),
+        );
         if (metrics.spreadBps != null && metrics.spreadBps < minSpreadBps) {
             reasons.push('spread-too-narrow');
         }
@@ -140,11 +181,12 @@ export class EntryGate {
             reasons.push('signal-too-weak');
         }
 
-        if (this.config.blockLocalExtreme) {
-            const score = metrics.localExtremeEma ?? metrics.localExtremeScore;
-            if (score != null && score >= this.config.localExtremeThreshold) {
-                reasons.push('local-extreme');
-            }
+        if (this.config.blockLocalExtreme && this.isLocalExtreme()) {
+            reasons.push('local-extreme');
+        }
+
+        if (this.isRejectThrottleActive() && this.config.rejectThrottleBlock) {
+            reasons.push('reject-throttle');
         }
 
         return {
@@ -161,5 +203,53 @@ export class EntryGate {
             reasons: decision.reasons,
             metrics: decision.metrics,
         }, 'EntryGate: blocked entry');
+    }
+
+    private isRejectThrottleActive(nowMs: number = Date.now()): boolean {
+        return this.rejectThrottleUntilMs != null && nowMs < this.rejectThrottleUntilMs;
+    }
+
+    private getThrottleMinSpreadBps(): number {
+        if (!this.isRejectThrottleActive()) return 0;
+        return this.config.rejectThrottleMinSpreadBps;
+    }
+
+    private evaluateRejectThrottle(nowMs: number): void {
+        if (!this.config.rejectThrottleEnabled) return;
+        if (nowMs - this.lastRejectCheckMs < this.config.rejectThrottleCheckMs) return;
+        this.lastRejectCheckMs = nowMs;
+
+        const trades = tradeHistory.getAllTrades().filter((t: any) => t && t.paper === false);
+        const lookbackStart = nowMs - this.config.rejectThrottleLookbackMs;
+        const recent = trades.filter((t: any) => t.timestamp >= lookbackStart);
+        const attempts = recent.filter((t: any) => t.status === 'REJECTED' || t.status === 'FILLED' || t.status === 'PARTIAL');
+        const rejects = attempts.filter((t: any) => t.status === 'REJECTED');
+
+        if (attempts.length < this.config.rejectThrottleMinSamples) {
+            return;
+        }
+
+        const rate = attempts.length > 0 ? rejects.length / attempts.length : 0;
+
+        if (rate >= this.config.rejectThrottleMaxRate) {
+            const until = nowMs + this.config.rejectThrottleCooldownMs;
+            if (!this.rejectThrottleUntilMs || until > this.rejectThrottleUntilMs) {
+                this.rejectThrottleUntilMs = until;
+                logger.warn({
+                    rejectRate: Number(rate.toFixed(3)),
+                    attempts: attempts.length,
+                    rejects: rejects.length,
+                    throttleUntil: new Date(until).toISOString(),
+                    minSpreadBps: this.config.rejectThrottleMinSpreadBps,
+                    block: this.config.rejectThrottleBlock,
+                }, 'EntryGate: reject-rate throttle engaged');
+            }
+            return;
+        }
+
+        if (this.rejectThrottleUntilMs && nowMs >= this.rejectThrottleUntilMs) {
+            this.rejectThrottleUntilMs = null;
+            logger.info({ rejectRate: Number(rate.toFixed(3)) }, 'EntryGate: reject-rate throttle relaxed');
+        }
     }
 }

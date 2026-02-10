@@ -942,6 +942,8 @@ export class TradingRuntime {
             this.currentFlowMetrics = flowMetrics;
             this.perfTracer?.phaseEnd(7); // flowMetrics
 
+            this.entryGate.ingestTick(orderBookState, flowMetrics);
+
             if (this.executor) {
                 const bestBid = orderBookState.bids[0]?.price ?? 0;
                 const bestAsk = orderBookState.asks[0]?.price ?? 0;
@@ -952,10 +954,9 @@ export class TradingRuntime {
                     flowCombined: flowMetrics.combinedSignal,
                     flowStrength: flowMetrics.signalStrength,
                     flowRegime: flowMetrics.regime,
+                    localExtreme: this.entryGate.isLocalExtreme(),
                 });
             }
-
-            this.entryGate.ingestTick(orderBookState, flowMetrics);
 
             // Compute liquidity intelligence
             const allTrades = this.tradeTape?.getAll() ?? [];
