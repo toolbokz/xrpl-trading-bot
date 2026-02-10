@@ -108,6 +108,7 @@ import { enforceSafetyPolicy } from '../security/safetyPolicy';
 import { LiquidityIntelligence, LiquiditySnapshot, loadLiquidityConfig } from '../market/liquidityIntelligence';
 import { ExecutionPairResolver, loadExecutionPairResolverConfig } from '../market/executionPairResolver';
 import { AvailabilityScanner, loadAvailabilityScannerConfig, type AvailabilityScannerSnapshot, type PairAvailability } from '../market/availabilityScanner';
+import { EntryGate, loadEntryGateConfig } from '../strategies/entryGate';
 import { getInstruments, findInstrument, isValidPairKey } from '../market/instrumentRegistry';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
@@ -208,6 +209,8 @@ export class TradingRuntime {
     private readonly cacheRegistry = new RuntimeCacheRegistry();
     /** Execution quality analytics — per-fill tracing and aggregation. */
     private readonly executionQualityCollector = new ExecutionQualityCollector();
+    /** Shared entry gate for consistent entry filtering across strategies. */
+    private readonly entryGate = new EntryGate(loadEntryGateConfig());
     /** Hard risk guard — deterministic 7-condition capital safety gate. */
     private readonly hardRiskGuard = new HardRiskGuard(loadHardRiskConfig());
     /** Exposure tracker — lightweight position tracking from fills. */
@@ -939,6 +942,21 @@ export class TradingRuntime {
             this.currentFlowMetrics = flowMetrics;
             this.perfTracer?.phaseEnd(7); // flowMetrics
 
+            if (this.executor) {
+                const bestBid = orderBookState.bids[0]?.price ?? 0;
+                const bestAsk = orderBookState.asks[0]?.price ?? 0;
+                const midPrice = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : (bestBid || bestAsk || 0);
+                this.executor.setCurrentMarketContext({
+                    midPrice: midPrice > 0 ? midPrice : null,
+                    spreadBps: Number.isFinite(orderBookState.spread) ? orderBookState.spread : null,
+                    flowCombined: flowMetrics.combinedSignal,
+                    flowStrength: flowMetrics.signalStrength,
+                    flowRegime: flowMetrics.regime,
+                });
+            }
+
+            this.entryGate.ingestTick(orderBookState, flowMetrics);
+
             // Compute liquidity intelligence
             const allTrades = this.tradeTape?.getAll() ?? [];
             this.liquidityIntelligence?.ingestTick(orderBookState, allTrades, nowMs);
@@ -1086,6 +1104,7 @@ export class TradingRuntime {
                 governance: governanceDecision,
                 globalSizeMultiplier,
                 globalCooldownMs,
+                entryGate: this.entryGate,
                 // regimePolicy will be set per-strategy below
             };
 

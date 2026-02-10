@@ -1124,5 +1124,19 @@
     "status": "REJECTED",
     "id": "1770636990883-mhcf0if",
     "timestamp": 1770636990883
+  },
+  {
+    "pair": "XRP/524C555344000000000000000000000000000000",
+    "side": "BUY",
+    "price": 1.447985639,
+    "amount": 0.059375000000000004,
+    "filled": 0,
+    "fee": 0,
+    "pnl": 0,
+    "hash": "680FDD10D76305A1B46492C4DED2B792920E2A47B8D54AEBAE1D3C4D18BDCA4E",
+    "paper": false,
+    "status": "REJECTED",
+    "id": "1770686913705-n1d2kkm",
+    "timestamp": 1770686913705
   }
 ]

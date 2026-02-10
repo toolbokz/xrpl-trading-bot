@@ -159,6 +159,16 @@ export class ScalperStrategy implements Strategy {
         const bestAsk = state.asks[0]?.price ?? 0;
         const spreadBps = state.spread;
 
+        if (ctx.entryGate) {
+            const decision = ctx.entryGate.shouldEnter({
+                minSpreadBps: this.config.minSpreadBps,
+            });
+            if (!decision.allowed) {
+                ctx.entryGate.logDecision(this.name, decision);
+                return;
+            }
+        }
+
         // ─────────────────────────────────────────────────────────────────────
         // Quote Skew (adjust prices based on flow imbalance)
         // ─────────────────────────────────────────────────────────────────────

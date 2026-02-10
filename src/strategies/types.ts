@@ -3,6 +3,7 @@ import { Trade, TradeAggression } from '../market/tradeTape';
 import { FlowMetrics, FlowRegime } from '../market/flowMetrics';
 import { CapitalProtectionDecision } from '../risk/capitalProtection';
 import { RegimePolicy, RegimeSizePolicy } from '../analytics/regimePolicy';
+import { EntryGate } from './entryGate';
 
 /**
  * Regime policy context for a specific strategy
@@ -43,6 +44,8 @@ export interface StrategyContext {
     globalCooldownMs?: number | undefined;
     /** Regime policy context for this strategy (if regime policy is enabled) */
     regimePolicy?: StrategyRegimePolicyContext | undefined;
+    /** Entry gate helper (shared across strategies) */
+    entryGate?: EntryGate | undefined;
 }
 
 import { TradingPair } from '../config';

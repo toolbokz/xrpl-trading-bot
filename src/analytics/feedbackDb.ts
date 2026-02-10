@@ -58,6 +58,22 @@ export interface TradeEventRecord {
     ammFeeBps: number | null;
     fillRatio: number | null;
     isPartial: number | null; // 1 = true, 0 = false
+    // Entry snapshot (captured at decision time)
+    entrySpreadBps: number | null;
+    entryFlowCombined: number | null;
+    entryFlowStrength: number | null;
+    entryFlowRegime: FlowRegime | null;
+    // Post-fill snapshots (captured after fill)
+    postMid1s: number | null;
+    postSpread1s: number | null;
+    postFlowCombined1s: number | null;
+    postFlowStrength1s: number | null;
+    postFlowRegime1s: FlowRegime | null;
+    postMid3s: number | null;
+    postSpread3s: number | null;
+    postFlowCombined3s: number | null;
+    postFlowStrength3s: number | null;
+    postFlowRegime3s: FlowRegime | null;
 }
 
 /**
@@ -124,6 +140,8 @@ let preparedStatements: PreparedStatements | null = null;
 interface PreparedStatements {
     insertTradeEvent: Statement;
     insertSnapshot: Statement;
+    updateTradeEventPostFill1s: Statement;
+    updateTradeEventPostFill3s: Statement;
     pruneTradeEvents: Statement;
     pruneSnapshots: Statement;
 }
@@ -172,7 +190,21 @@ function initSchema(db: DatabaseType): void {
             txFeeXrp REAL,
             ammFeeBps REAL,
             fillRatio REAL,
-            isPartial INTEGER
+            isPartial INTEGER,
+            entrySpreadBps REAL,
+            entryFlowCombined REAL,
+            entryFlowStrength REAL,
+            entryFlowRegime TEXT,
+            postMid1s REAL,
+            postSpread1s REAL,
+            postFlowCombined1s REAL,
+            postFlowStrength1s REAL,
+            postFlowRegime1s TEXT,
+            postMid3s REAL,
+            postSpread3s REAL,
+            postFlowCombined3s REAL,
+            postFlowStrength3s REAL,
+            postFlowRegime3s TEXT
         )
     `);
 
@@ -227,6 +259,20 @@ const TRADE_EVENT_EXTRA_COLUMNS = {
     ammFeeBps: 'REAL',
     fillRatio: 'REAL',
     isPartial: 'INTEGER',
+    entrySpreadBps: 'REAL',
+    entryFlowCombined: 'REAL',
+    entryFlowStrength: 'REAL',
+    entryFlowRegime: 'TEXT',
+    postMid1s: 'REAL',
+    postSpread1s: 'REAL',
+    postFlowCombined1s: 'REAL',
+    postFlowStrength1s: 'REAL',
+    postFlowRegime1s: 'TEXT',
+    postMid3s: 'REAL',
+    postSpread3s: 'REAL',
+    postFlowCombined3s: 'REAL',
+    postFlowStrength3s: 'REAL',
+    postFlowRegime3s: 'TEXT',
 } as const;
 
 /**
@@ -273,15 +319,39 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 fillPrice, fillSizeBase, fillSizeQuote,
                 txHash, ledgerIndex, resultCode, error, isBotTrade, midPriceAtDecision,
                 slippageBpsVsIntent, slippageBpsVsMid, spreadPaidBps,
-                edgeBpsVsMid, netEdgeBpsVsMid, txFeeXrp, ammFeeBps, fillRatio, isPartial
+                edgeBpsVsMid, netEdgeBpsVsMid, txFeeXrp, ammFeeBps, fillRatio, isPartial,
+                entrySpreadBps, entryFlowCombined, entryFlowStrength, entryFlowRegime,
+                postMid1s, postSpread1s, postFlowCombined1s, postFlowStrength1s, postFlowRegime1s,
+                postMid3s, postSpread3s, postFlowCombined3s, postFlowStrength3s, postFlowRegime3s
             ) VALUES (
                 @id, @ts, @pairKey, @strategy, @action, @side,
                 @intentPrice, @intentSizeBase, @intentSizeQuote,
                 @fillPrice, @fillSizeBase, @fillSizeQuote,
                 @txHash, @ledgerIndex, @resultCode, @error, @isBotTrade, @midPriceAtDecision,
                 @slippageBpsVsIntent, @slippageBpsVsMid, @spreadPaidBps,
-                @edgeBpsVsMid, @netEdgeBpsVsMid, @txFeeXrp, @ammFeeBps, @fillRatio, @isPartial
+                @edgeBpsVsMid, @netEdgeBpsVsMid, @txFeeXrp, @ammFeeBps, @fillRatio, @isPartial,
+                @entrySpreadBps, @entryFlowCombined, @entryFlowStrength, @entryFlowRegime,
+                @postMid1s, @postSpread1s, @postFlowCombined1s, @postFlowStrength1s, @postFlowRegime1s,
+                @postMid3s, @postSpread3s, @postFlowCombined3s, @postFlowStrength3s, @postFlowRegime3s
             )
+        `),
+        updateTradeEventPostFill1s: db.prepare(`
+            UPDATE trade_events
+            SET postMid1s = @postMid1s,
+                postSpread1s = @postSpread1s,
+                postFlowCombined1s = @postFlowCombined1s,
+                postFlowStrength1s = @postFlowStrength1s,
+                postFlowRegime1s = @postFlowRegime1s
+            WHERE id = @id
+        `),
+        updateTradeEventPostFill3s: db.prepare(`
+            UPDATE trade_events
+            SET postMid3s = @postMid3s,
+                postSpread3s = @postSpread3s,
+                postFlowCombined3s = @postFlowCombined3s,
+                postFlowStrength3s = @postFlowStrength3s,
+                postFlowRegime3s = @postFlowRegime3s
+            WHERE id = @id
         `),
         insertSnapshot: db.prepare(`
             INSERT INTO market_snapshots (
@@ -419,9 +489,72 @@ export function insertTradeEvent(event: TradeEventRecord): void {
             ammFeeBps: event.ammFeeBps,
             fillRatio: event.fillRatio,
             isPartial: event.isPartial,
+            entrySpreadBps: event.entrySpreadBps,
+            entryFlowCombined: event.entryFlowCombined,
+            entryFlowStrength: event.entryFlowStrength,
+            entryFlowRegime: event.entryFlowRegime,
+            postMid1s: event.postMid1s,
+            postSpread1s: event.postSpread1s,
+            postFlowCombined1s: event.postFlowCombined1s,
+            postFlowStrength1s: event.postFlowStrength1s,
+            postFlowRegime1s: event.postFlowRegime1s,
+            postMid3s: event.postMid3s,
+            postSpread3s: event.postSpread3s,
+            postFlowCombined3s: event.postFlowCombined3s,
+            postFlowStrength3s: event.postFlowStrength3s,
+            postFlowRegime3s: event.postFlowRegime3s,
         });
     } catch (err) {
         logger.warn({ err, eventId: event.id }, 'Failed to insert trade event');
+    }
+}
+
+/**
+ * Update post-fill snapshot fields on a trade event.
+ */
+export function updateTradeEventPostFill1s(input: {
+    id: string;
+    postMid1s: number | null;
+    postSpread1s: number | null;
+    postFlowCombined1s: number | null;
+    postFlowStrength1s: number | null;
+    postFlowRegime1s: FlowRegime | null;
+}): void {
+    try {
+        const stmt = getStatements().updateTradeEventPostFill1s;
+        stmt.run({
+            id: input.id,
+            postMid1s: input.postMid1s,
+            postSpread1s: input.postSpread1s,
+            postFlowCombined1s: input.postFlowCombined1s,
+            postFlowStrength1s: input.postFlowStrength1s,
+            postFlowRegime1s: input.postFlowRegime1s,
+        });
+    } catch (err) {
+        logger.warn({ err, eventId: input.id }, 'Failed to update post-fill 1s snapshot');
+    }
+}
+
+export function updateTradeEventPostFill3s(input: {
+    id: string;
+    postMid3s: number | null;
+    postSpread3s: number | null;
+    postFlowCombined3s: number | null;
+    postFlowStrength3s: number | null;
+    postFlowRegime3s: FlowRegime | null;
+}): void {
+    try {
+        const stmt = getStatements().updateTradeEventPostFill3s;
+        stmt.run({
+            id: input.id,
+            postMid3s: input.postMid3s,
+            postSpread3s: input.postSpread3s,
+            postFlowCombined3s: input.postFlowCombined3s,
+            postFlowStrength3s: input.postFlowStrength3s,
+            postFlowRegime3s: input.postFlowRegime3s,
+        });
+    } catch (err) {
+        logger.warn({ err, eventId: input.id }, 'Failed to update post-fill 3s snapshot');
     }
 }
 
@@ -496,6 +629,20 @@ export function insertBatch(events: TradeEventRecord[], snapshot?: MarketSnapsho
                     ammFeeBps: event.ammFeeBps,
                     fillRatio: event.fillRatio,
                     isPartial: event.isPartial,
+                    entrySpreadBps: event.entrySpreadBps,
+                    entryFlowCombined: event.entryFlowCombined,
+                    entryFlowStrength: event.entryFlowStrength,
+                    entryFlowRegime: event.entryFlowRegime,
+                    postMid1s: event.postMid1s,
+                    postSpread1s: event.postSpread1s,
+                    postFlowCombined1s: event.postFlowCombined1s,
+                    postFlowStrength1s: event.postFlowStrength1s,
+                    postFlowRegime1s: event.postFlowRegime1s,
+                    postMid3s: event.postMid3s,
+                    postSpread3s: event.postSpread3s,
+                    postFlowCombined3s: event.postFlowCombined3s,
+                    postFlowStrength3s: event.postFlowStrength3s,
+                    postFlowRegime3s: event.postFlowRegime3s,
                 });
             }
             if (snapshot) {

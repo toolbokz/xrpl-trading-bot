@@ -23,6 +23,8 @@ import {
     insertTradeEvent,
     insertMarketSnapshot,
     insertBatch,
+    updateTradeEventPostFill1s,
+    updateTradeEventPostFill3s,
     queryTradeEvents,
     getSnapshotNear,
     pruneOldData,
@@ -78,6 +80,22 @@ export interface TradeEventInput {
     ammFeeBps?: number | null;
     fillRatio?: number | null;
     isPartial?: boolean | null;
+    // Entry snapshot (captured at decision time)
+    entrySpreadBps?: number | null;
+    entryFlowCombined?: number | null;
+    entryFlowStrength?: number | null;
+    entryFlowRegime?: FlowRegime | null;
+    // Post-fill snapshots (captured after fill)
+    postMid1s?: number | null;
+    postSpread1s?: number | null;
+    postFlowCombined1s?: number | null;
+    postFlowStrength1s?: number | null;
+    postFlowRegime1s?: FlowRegime | null;
+    postMid3s?: number | null;
+    postSpread3s?: number | null;
+    postFlowCombined3s?: number | null;
+    postFlowStrength3s?: number | null;
+    postFlowRegime3s?: FlowRegime | null;
     /** Execution source: AMM pool, DEX order book, mixed, or unknown. */
     executionSource?: 'amm' | 'orderbook' | 'mixed' | 'unknown' | null;
 }
@@ -334,8 +352,8 @@ class FeedbackEngine {
     /**
      * Record a trade event
      */
-    recordTradeEvent(input: TradeEventInput): void {
-        if (!this.ensureInitialized()) return;
+    recordTradeEvent(input: TradeEventInput): string | null {
+        if (!this.ensureInitialized()) return null;
 
         try {
             const event: TradeEventRecord = {
@@ -367,11 +385,62 @@ class FeedbackEngine {
                 ammFeeBps: input.ammFeeBps ?? null,
                 fillRatio: input.fillRatio ?? null,
                 isPartial: input.isPartial != null ? (input.isPartial ? 1 : 0) : null,
+                entrySpreadBps: input.entrySpreadBps ?? null,
+                entryFlowCombined: input.entryFlowCombined ?? null,
+                entryFlowStrength: input.entryFlowStrength ?? null,
+                entryFlowRegime: input.entryFlowRegime ?? null,
+                postMid1s: input.postMid1s ?? null,
+                postSpread1s: input.postSpread1s ?? null,
+                postFlowCombined1s: input.postFlowCombined1s ?? null,
+                postFlowStrength1s: input.postFlowStrength1s ?? null,
+                postFlowRegime1s: input.postFlowRegime1s ?? null,
+                postMid3s: input.postMid3s ?? null,
+                postSpread3s: input.postSpread3s ?? null,
+                postFlowCombined3s: input.postFlowCombined3s ?? null,
+                postFlowStrength3s: input.postFlowStrength3s ?? null,
+                postFlowRegime3s: input.postFlowRegime3s ?? null,
             };
 
             insertTradeEvent(event);
+            return event.id;
         } catch (err) {
             logger.warn({ err, action: input.action }, 'Failed to record trade event');
+        }
+        return null;
+    }
+
+    /**
+     * Update post-fill snapshot fields for a trade event.
+     */
+    recordPostFillSnapshot1s(input: {
+        id: string;
+        postMid1s: number | null;
+        postSpread1s: number | null;
+        postFlowCombined1s: number | null;
+        postFlowStrength1s: number | null;
+        postFlowRegime1s: FlowRegime | null;
+    }): void {
+        if (!this.ensureInitialized()) return;
+        try {
+            updateTradeEventPostFill1s(input);
+        } catch (err) {
+            logger.warn({ err, eventId: input.id }, 'Failed to record post-fill 1s snapshot');
+        }
+    }
+
+    recordPostFillSnapshot3s(input: {
+        id: string;
+        postMid3s: number | null;
+        postSpread3s: number | null;
+        postFlowCombined3s: number | null;
+        postFlowStrength3s: number | null;
+        postFlowRegime3s: FlowRegime | null;
+    }): void {
+        if (!this.ensureInitialized()) return;
+        try {
+            updateTradeEventPostFill3s(input);
+        } catch (err) {
+            logger.warn({ err, eventId: input.id }, 'Failed to record post-fill 3s snapshot');
         }
     }
 
@@ -411,6 +480,20 @@ class FeedbackEngine {
                 ammFeeBps: input.ammFeeBps ?? null,
                 fillRatio: input.fillRatio ?? null,
                 isPartial: input.isPartial != null ? (input.isPartial ? 1 : 0) : null,
+                entrySpreadBps: input.entrySpreadBps ?? null,
+                entryFlowCombined: input.entryFlowCombined ?? null,
+                entryFlowStrength: input.entryFlowStrength ?? null,
+                entryFlowRegime: input.entryFlowRegime ?? null,
+                postMid1s: input.postMid1s ?? null,
+                postSpread1s: input.postSpread1s ?? null,
+                postFlowCombined1s: input.postFlowCombined1s ?? null,
+                postFlowStrength1s: input.postFlowStrength1s ?? null,
+                postFlowRegime1s: input.postFlowRegime1s ?? null,
+                postMid3s: input.postMid3s ?? null,
+                postSpread3s: input.postSpread3s ?? null,
+                postFlowCombined3s: input.postFlowCombined3s ?? null,
+                postFlowStrength3s: input.postFlowStrength3s ?? null,
+                postFlowRegime3s: input.postFlowRegime3s ?? null,
             }));
 
             let snapshotRecord: MarketSnapshotRecord | undefined;

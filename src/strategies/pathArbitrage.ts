@@ -241,6 +241,14 @@ export class PathArbitrageStrategy implements Strategy {
             return;
         }
 
+        if (ctx.entryGate) {
+            const decision = ctx.entryGate.shouldEnter();
+            if (!decision.allowed) {
+                ctx.entryGate.logDecision(this.name, decision);
+                return;
+            }
+        }
+
         // ─────────────────────────────────────────────────────────────────────
         // Position Sizing (scale based on regime)
         // ─────────────────────────────────────────────────────────────────────

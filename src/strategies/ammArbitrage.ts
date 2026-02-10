@@ -63,6 +63,14 @@ export class AMMArbitrageStrategy implements Strategy {
             }
         }
 
+        if (ctx.entryGate) {
+            const decision = ctx.entryGate.shouldEnter();
+            if (!decision.allowed) {
+                ctx.entryGate.logDecision(this.name, decision);
+                return;
+            }
+        }
+
         const firstBid = orderBook.bids[0];
         const firstAsk = orderBook.asks[0];
         if (!firstBid || !firstAsk) return;

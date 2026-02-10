@@ -10,6 +10,7 @@ import { isAdaptiveEnabled } from '../analytics/adaptiveConfig';
 import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './offerBuilder';
 import { ExecutionQualityCollector, InFlightTrace } from '../analytics/executionQuality';
 import { ExposureTracker } from '../risk/exposureTracker';
+import { FlowRegime } from '../market/flowMetrics';
 
 export interface OfferParams {
     side: 'buy' | 'sell';
@@ -33,6 +34,10 @@ export interface SlippageCheckResult {
 export class OfferExecutor {
     private currentStrategy: string = 'unknown';
     private currentMidPrice: number | null = null;
+    private currentSpreadBps: number | null = null;
+    private currentFlowCombined: number | null = null;
+    private currentFlowStrength: number | null = null;
+    private currentFlowRegime: FlowRegime | null = null;
 
     // Execution quality analytics collector (injected by TradingRuntime)
     private executionQualityCollector: ExecutionQualityCollector | null = null;
@@ -82,6 +87,24 @@ export class OfferExecutor {
      */
     setCurrentMidPrice(midPrice: number | null): void {
         this.currentMidPrice = midPrice;
+    }
+
+    /**
+     * Set current market context for entry/post-fill attribution.
+     * Called each tick by TradingRuntime.
+     */
+    setCurrentMarketContext(input: {
+        midPrice: number | null;
+        spreadBps: number | null;
+        flowCombined: number | null;
+        flowStrength: number | null;
+        flowRegime: FlowRegime | null;
+    }): void {
+        this.currentMidPrice = input.midPrice;
+        this.currentSpreadBps = input.spreadBps;
+        this.currentFlowCombined = input.flowCombined;
+        this.currentFlowStrength = input.flowStrength;
+        this.currentFlowRegime = input.flowRegime;
     }
 
     /**
@@ -1025,7 +1048,7 @@ export class OfferExecutor {
 
                 // Record feedback for successful fill
                 try {
-                    feedbackEngine.recordTradeEvent({
+                    const eventId = feedbackEngine.recordTradeEvent({
                         pairKey: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
                         strategy: this.currentStrategy,
                         action: 'fill',
@@ -1050,7 +1073,42 @@ export class OfferExecutor {
                         fillRatio: fillResult.fillRatio,
                         isPartial: fillResult.fillRatio < 1,
                         executionSource: fillExecutionSource,
+                        entrySpreadBps: this.currentSpreadBps,
+                        entryFlowCombined: this.currentFlowCombined,
+                        entryFlowStrength: this.currentFlowStrength,
+                        entryFlowRegime: this.currentFlowRegime,
                     });
+
+                    if (eventId) {
+                        const capturePostFill = (delayMs: number) => {
+                            setTimeout(() => {
+                                feedbackEngine.recordPostFillSnapshot1s({
+                                    id: eventId,
+                                    postMid1s: this.currentMidPrice,
+                                    postSpread1s: this.currentSpreadBps,
+                                    postFlowCombined1s: this.currentFlowCombined,
+                                    postFlowStrength1s: this.currentFlowStrength,
+                                    postFlowRegime1s: this.currentFlowRegime,
+                                });
+                            }, delayMs);
+                        };
+
+                        const capturePostFill3s = (delayMs: number) => {
+                            setTimeout(() => {
+                                feedbackEngine.recordPostFillSnapshot3s({
+                                    id: eventId,
+                                    postMid3s: this.currentMidPrice,
+                                    postSpread3s: this.currentSpreadBps,
+                                    postFlowCombined3s: this.currentFlowCombined,
+                                    postFlowStrength3s: this.currentFlowStrength,
+                                    postFlowRegime3s: this.currentFlowRegime,
+                                });
+                            }, delayMs);
+                        };
+
+                        capturePostFill(1000);
+                        capturePostFill3s(3000);
+                    }
                 } catch { /* feedback should never crash trading */ }
             }
 
