@@ -11,6 +11,7 @@ import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './off
 import { ExecutionQualityCollector, InFlightTrace } from '../analytics/executionQuality';
 import { ExposureTracker } from '../risk/exposureTracker';
 import { FlowRegime } from '../market/flowMetrics';
+import { toXrplCurrency } from '../xrpl/currency';
 
 export interface OfferParams {
     side: 'buy' | 'sell';
@@ -94,6 +95,8 @@ export class OfferExecutor {
         private pair: TradingPair,
         private readonly strategyConfig?: StrategyConfig
     ) { }
+
+    private readonly depthCheckLevels: number = Math.max(1, Math.min(20, parseInt(process.env.EXECUTION_DEPTH_LEVELS ?? '5', 10) || 5));
 
     /**
      * Update the trading pair (called by TradingRuntime on pair switch).
@@ -616,6 +619,18 @@ export class OfferExecutor {
             return { accepted: false, reason: 'invalid-params' };
         }
 
+        const hasDepth = await this.hasSufficientDepthAtPrice(intent.side, intent.price, intent.amount);
+        if (!hasDepth) {
+            logger.warn({
+                side: intent.side,
+                price: intent.price,
+                amount: intent.amount,
+                levels: this.depthCheckLevels,
+                pair: pairSymbol,
+            }, 'Skipped FOK: insufficient depth at price');
+            return { accepted: false, reason: 'insufficient-depth-at-price' };
+        }
+
         const normalized = normalizeIntent(intent);
         const txCore = buildOfferCreate(normalized);
 
@@ -686,6 +701,76 @@ export class OfferExecutor {
         if (flags?.fillOrKill) f |= 0x00040000;
         if (flags?.passive) f |= 0x00010000;
         return f;
+    }
+
+    private toBookCurrency(currency: string, issuer?: string): { currency: 'XRP' } | { currency: string; issuer: string } {
+        if (currency.toUpperCase() === 'XRP') {
+            return { currency: 'XRP' };
+        }
+        if (!issuer) {
+            throw new Error(`Issuer is required for non-XRP currency: ${currency}`);
+        }
+        return toXrplCurrency({ currency, issuer });
+    }
+
+    private async hasSufficientDepthAtPrice(side: TradeSide, intendedPrice: number, requiredBaseAmount: number): Promise<boolean> {
+        if (!Number.isFinite(intendedPrice) || intendedPrice <= 0 || !Number.isFinite(requiredBaseAmount) || requiredBaseAmount <= 0) {
+            return false;
+        }
+
+        try {
+            const baseIssuerRaw = this.pair.baseIssuer ?? this.pair.issuer;
+            const quoteIssuerRaw = this.pair.quoteIssuer ?? this.pair.issuer;
+            const base = this.toBookCurrency(this.pair.baseCurrency, baseIssuerRaw);
+            const quote = this.toBookCurrency(this.pair.quoteCurrency, quoteIssuerRaw);
+
+            const req = side === 'BUY'
+                ? {
+                    command: 'book_offers' as const,
+                    ledger_index: 'validated' as const,
+                    limit: this.depthCheckLevels,
+                    // consume asks (makers sell base)
+                    taker_gets: base,
+                    taker_pays: quote,
+                }
+                : {
+                    command: 'book_offers' as const,
+                    ledger_index: 'validated' as const,
+                    limit: this.depthCheckLevels,
+                    // consume bids (makers buy base)
+                    taker_gets: quote,
+                    taker_pays: base,
+                };
+
+            const res = await this.client.request(req as any);
+            const offers = ((res as any).result?.offers ?? []) as Array<{ TakerGets: Amount; TakerPays: Amount }>;
+
+            let fillableBase = 0;
+            for (const offer of offers.slice(0, this.depthCheckLevels)) {
+                const gets = this.amountToNumber(offer.TakerGets);
+                const pays = this.amountToNumber(offer.TakerPays);
+                if (gets <= 0 || pays <= 0) continue;
+
+                if (side === 'BUY') {
+                    const askPrice = pays / gets; // quote/base
+                    if (askPrice <= intendedPrice) {
+                        fillableBase += gets;
+                    }
+                } else {
+                    const bidPrice = gets / pays; // quote/base
+                    if (bidPrice >= intendedPrice) {
+                        fillableBase += pays;
+                    }
+                }
+
+                if (fillableBase >= requiredBaseAmount) return true;
+            }
+
+            return false;
+        } catch (err) {
+            logger.warn({ err, side, intendedPrice, requiredBaseAmount }, 'Depth preflight failed');
+            return false;
+        }
     }
 
     private redactAmount(val: any): any {
