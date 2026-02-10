@@ -87,7 +87,8 @@ export function DrawdownGaugePanel({ pollInterval = 10000 }: DrawdownGaugePanelP
 
     const fetchData = useCallback(async () => {
         try {
-            const res = await fetch('/api/analytics/summary');
+            const url = '/api/analytics/summary';
+            const res = await fetch(url);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
 

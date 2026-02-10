@@ -113,15 +113,27 @@ export default function Page() {
 
     const currentPair = useMemo(() => findPair(selectedPairKey), [selectedPairKey]);
 
-    // Auto-select first pair on mount (pair is configured via .env)
+    // Auto-select pair on mount: ask server for configured pair (reads .env),
+    // fall back to first seed instrument.
     useEffect(() => {
-        if (!selectedPairKey) {
-            const instruments = getInstruments();
-            const first = instruments[0];
-            if (first) {
-                setSelectedPairKey(first.key);
-            }
-        }
+        if (selectedPairKey) return;
+        (async () => {
+            try {
+                const res = await fetch('/api/bot/wallet');
+                const data = await res.json();
+                const base = data?.baseCurrency || 'XRP';
+                const quote = data?.quoteCurrency;
+                if (quote) {
+                    const envKey = `${base}/${quote}`;
+                    if (findPair(envKey)) {
+                        setSelectedPairKey(envKey);
+                        return;
+                    }
+                }
+            } catch { /* ignore — fall through to first instrument */ }
+            const first = getInstruments()[0];
+            if (first) setSelectedPairKey(first.key);
+        })();
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -219,8 +231,8 @@ export default function Page() {
                     xrpBalance: data.balance ?? 0,
                     usdRate: data.usdRate ?? null,
                     network: (data.network === 'MAINNET' || data.network === 'TESTNET') ? data.network : prev.network,
-                    baseCurrency: data.tradingPair?.base || pair?.base.currency || 'XRP',
-                    quoteCurrency: data.tradingPair?.quote || pair?.quote.currency || data.quoteCurrency || '',
+                    baseCurrency: data.baseCurrency || data.tradingPair?.base || pair?.base.currency || 'XRP',
+                    quoteCurrency: data.quoteCurrency || data.tradingPair?.quote || pair?.quote.currency || '',
                     baseBalance: data.baseBalance ?? data.balance ?? 0,
                     quoteBalance: data.quoteBalance ?? 0,
                 }));
@@ -400,9 +412,9 @@ export default function Page() {
     // ─────────────────────────────────────────────────────────────────────────
     //
     //  Row 1 (auto):  [ Health + Stats ··················· col-span-4 ]
-    //  Row 2 (1fr):   [ CapProtect ] [ Flow Metrics ·· col-span-2 ] [ Bot Logs (row-span-2) ]
-    //  Row 3 (1fr):   [ Adverse   ] [ Trade Tape ] [ Bot Orders (row-span-2) ] [ Bot Logs (cont.) ]
-    //  Row 4 (auto):  [ Drawdown  ] [ Order Book ] [ Bot Orders (cont.) ] [ RegimePerf ]
+    //  Row 2 (1fr):   [ Adverse | Drawdown ] [ Flow Metrics ·· col-span-2 ] [ Bot Logs (row-span-3) ]
+    //  Row 3 (1fr):   [ CapProtect ] [ Trade Tape ] [ Bot Orders (row-span-2) ] [ Bot Logs (cont.) ]
+    //  Row 4 (auto):  [ RegimePerf ] [ Order Book ] [ Bot Orders (cont.) ]     [ Bot Logs (cont.) ]
     //
 
     return (
@@ -427,12 +439,13 @@ export default function Page() {
                     />
                 </div>
 
-                {/* ── ROW 2, COL 1: Capital Protection ── */}
+                {/* ── ROW 2, COL 1: Adverse Selection + Drawdown side by side ── */}
                 <div
-                    className="min-h-0 overflow-hidden"
+                    className="min-h-0 overflow-hidden grid grid-cols-2 gap-2"
                     style={{ gridColumn: '1', gridRow: '2', height: '30vh' }}
                 >
-                    <GovernancePanel />
+                    <AdverseSelectionPanel pollInterval={5000} />
+                    <DrawdownGaugePanel pollInterval={10000} />
                 </div>
 
                 {/* ── ROW 2, COL 2-3: Flow Metrics ── */}
@@ -443,20 +456,20 @@ export default function Page() {
                     <FlowMetricsPanel pollInterval={2000} />
                 </div>
 
-                {/* ── ROW 2-3, COL 4: Bot Logs (span 2 rows) ── */}
+                {/* ── ROW 2-4, COL 4: Bot Logs (span 3 rows) ── */}
                 <div
                     className="min-h-0 overflow-hidden"
-                    style={{ gridColumn: '4', gridRow: '2 / 4', height: '60vh' }}
+                    style={{ gridColumn: '4', gridRow: '2 / 5' }}
                 >
                     <LogsPanel maxRows={50} />
                 </div>
 
-                {/* ── ROW 3, COL 1: Adverse Selection ── */}
+                {/* ── ROW 3, COL 1: Capital Protection ── */}
                 <div
                     className="min-h-0 overflow-hidden"
-                    style={{ gridColumn: '1', gridRow: '3' }}
+                    style={{ gridColumn: '1', gridRow: '3', height: '30vh' }}
                 >
-                    <AdverseSelectionPanel pollInterval={5000} />
+                    <GovernancePanel />
                 </div>
 
                 {/* ── ROW 3, COL 2: Trade Tape ── */}
@@ -475,12 +488,12 @@ export default function Page() {
                     <BotOrdersPanel pollInterval={5000} />
                 </div>
 
-                {/* ── ROW 4, COL 1: Drawdown ── */}
+                {/* ── ROW 4, COL 1: Regime Heatmap ── */}
                 <div
                     className="min-h-0 overflow-hidden"
-                    style={{ gridColumn: '1', gridRow: '4' }}
+                    style={{ gridColumn: '1', gridRow: '4', height: '30vh' }}
                 >
-                    <DrawdownGaugePanel pollInterval={10000} />
+                    <RegimeHeatmapPanel />
                 </div>
 
                 {/* ── ROW 4, COL 2: Order Book ── */}
@@ -496,14 +509,6 @@ export default function Page() {
                         loading={orderBookLoading}
                         error={orderBookError}
                     />
-                </div>
-
-                {/* ── ROW 4, COL 4: Regime Heatmap ── */}
-                <div
-                    className="min-h-0 overflow-visible self-end"
-                    style={{ gridColumn: '4', gridRow: '4', height: '30vh' }}
-                >
-                    <RegimeHeatmapPanel />
                 </div>
             </div>
         </AppShell>

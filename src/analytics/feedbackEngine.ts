@@ -723,10 +723,11 @@ class FeedbackEngine {
                 if (pnl > 0) {
                     wins++;
                     totalGain += pnl;
-                } else {
+                } else if (pnl < 0) {
                     losses++;
                     totalLoss += Math.abs(pnl);
                 }
+                // pnl === 0: skip — neither win nor loss
 
                 if (edge !== null) {
                     sumEdgeBps += edge;
@@ -752,7 +753,8 @@ class FeedbackEngine {
                 }
             }
 
-            const winRate = trades > 0 ? wins / trades : 0;
+            const classifiable = wins + losses;
+            const winRate = classifiable > 0 ? wins / classifiable : 0;
             const avgTradeSize = trades > 0 ? totalTradeSize / trades : 1;
             const profitFactor = totalLoss > 0 ? totalGain / totalLoss : (totalGain > 0 ? 10 : 1);
 
@@ -981,10 +983,11 @@ class FeedbackEngine {
                 if (pnl > 0) {
                     wins++;
                     totalGain += pnl;
-                } else {
+                } else if (pnl < 0) {
                     losses++;
                     totalLoss += Math.abs(pnl);
                 }
+                // pnl === 0: skip — neither win nor loss (no price data to classify)
 
                 if (slippage !== null) {
                     totalSlippageBps += Math.abs(slippage);
@@ -1001,7 +1004,8 @@ class FeedbackEngine {
             }
 
             const tradesCount = lookback.length;
-            const winRate = tradesCount > 0 ? wins / tradesCount : 0;
+            const classifiable = wins + losses;
+            const winRate = classifiable > 0 ? wins / classifiable : 0;
             const avgTradeSize = tradesCount > 0 ? totalTradeSize / tradesCount : 1;
 
             // Profit factor
@@ -1223,10 +1227,11 @@ class FeedbackEngine {
             if (pnl > 0) {
                 wins++;
                 totalGain += pnl;
-            } else {
+            } else if (pnl < 0) {
                 losses++;
                 totalLoss += Math.abs(pnl);
             }
+            // pnl === 0: skip — neither win nor loss
 
             if (slippage !== null) {
                 totalSlippageBps += slippage;
