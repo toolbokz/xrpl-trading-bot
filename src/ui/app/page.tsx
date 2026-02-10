@@ -459,7 +459,7 @@ export default function Page() {
                 {/* ── ROW 2-4, COL 4: Bot Logs (span 3 rows) ── */}
                 <div
                     className="min-h-0 overflow-hidden"
-                    style={{ gridColumn: '4', gridRow: '2 / 5' }}
+                    style={{ gridColumn: '4', gridRow: '2 / 5', height: '90vh' }}
                 >
                     <LogsPanel maxRows={50} />
                 </div>
