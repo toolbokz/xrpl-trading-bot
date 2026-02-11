@@ -63,6 +63,12 @@ function makeUpdateInput(overrides: Partial<CacheUpdateInput> = {}): CacheUpdate
             lastUpdated: Date.now(),
         } as any,
         lastTrade: { price: 2.05, quantity: 100, side: 'buy', timestamp: Date.now() } as any,
+        spreadDistribution: {
+            pair: 'XRP/RLUSD',
+            updatedAtMs: Date.now(),
+            lookback24h: { sampleCount: 3, medianBps: 10, p75Bps: 12, p90Bps: 15 },
+            baselineMultiDay: { days: 3, sampleCount: 5, medianBps: 11, p75Bps: 13, p90Bps: 16 },
+        },
         ...overrides,
     };
 }
@@ -161,6 +167,8 @@ describe('RuntimeCacheRegistry', () => {
             expect(snapshot.balance).toBeNull();
             expect(snapshot.executionQuality).toBeNull();
             expect(snapshot.spreadRegime).toBeNull();
+            expect(snapshot.spreadDistribution).toBeNull();
+            expect(snapshot.background).toBeNull();
         });
 
         it('reset() clears execution quality counters', () => {
@@ -225,6 +233,34 @@ describe('RuntimeCacheRegistry', () => {
             const bal = registry.getFeed('balance');
             expect(bal).not.toBeNull();
             expect(bal!.data.xrpBalance).toBe(100);
+        });
+
+        it('updateBackground rejects data with different pairKey', () => {
+            registry.update(makeUpdateInput({ pairKey: 'XRP/RLUSD' }));
+
+            registry.updateBackground('XRP/USD', {
+                asOfMs: Date.now(),
+                health: { score: 90, lastOkAtMs: Date.now(), lastErrorAtMs: null, consecutiveFailures: 0 },
+                fairValue: { xrpMid: 1.0, confidence: 80, sourcesUsed: [], divergenceBpsVsXrpRlusd: 0 },
+                crossMarket: { liquidityScore: 60, volatilityScore: 20, notes: [] },
+                markets: {},
+            });
+
+            expect(registry.getSnapshot().background).toBeNull();
+        });
+
+        it('updateBackground accepts pre-tick writes for matching pair', () => {
+            registry.updateBackground('XRP/RLUSD', {
+                asOfMs: Date.now(),
+                health: { score: 100, lastOkAtMs: Date.now(), lastErrorAtMs: null, consecutiveFailures: 0 },
+                fairValue: { xrpMid: 1.0, confidence: 90, sourcesUsed: [], divergenceBpsVsXrpRlusd: null },
+                crossMarket: { liquidityScore: 70, volatilityScore: 10, notes: ['pre-tick'] },
+                markets: {},
+            });
+
+            const snapshot = registry.getSnapshot();
+            expect(snapshot.pairKey).toBe('XRP/RLUSD');
+            expect(snapshot.background?.fairValue.xrpMid).toBe(1.0);
         });
     });
 

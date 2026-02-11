@@ -99,6 +99,14 @@ export interface AppConfig {
     risk: RiskConfig;
     strategy: StrategyConfig;
     flow: FlowConfig;
+    backgroundScanner: {
+        enabled: boolean;
+        maxMarkets: number;
+        maxRps: number;
+        tier1IntervalMs: number;
+        tier2IntervalMs: number;
+        maxStalenessMs: number;
+    };
     analytics: {
         logLevel: 'info' | 'debug' | 'warn' | 'error';
         csvExportPath: string;
@@ -215,6 +223,14 @@ export const loadConfig = (): AppConfig => {
         risk,
         strategy,
         flow,
+        backgroundScanner: {
+            enabled: toBool(process.env.SCANNER_ENABLED as EnvBool, true),
+            maxMarkets: toNumber(process.env.SCANNER_MAX_MARKETS, 30),
+            maxRps: toNumber(process.env.SCANNER_MAX_RPS, 2),
+            tier1IntervalMs: toNumber(process.env.SCANNER_TIER1_INTERVAL_MS, 3_000),
+            tier2IntervalMs: toNumber(process.env.SCANNER_TIER2_INTERVAL_MS, 15_000),
+            maxStalenessMs: toNumber(process.env.SCANNER_MAX_STALENESS_MS, 20_000),
+        },
         analytics: {
             logLevel: (process.env.LOG_LEVEL as AppConfig['analytics']['logLevel']) || 'info',
             csvExportPath: process.env.CSV_EXPORT_PATH || 'pnl.csv',

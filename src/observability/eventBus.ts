@@ -49,6 +49,9 @@ export const OBSERVABILITY_EVENT_TYPES = [
     'RESOLVER_CACHE_MISS',
     'AVAILABILITY_SCAN_COMPLETE',
     'TRUSTLINE_GOVERNANCE',
+    'SCANNER_DEGRADED',
+    'SCANNER_RECOVERED',
+    'FAIR_VALUE_UPDATED',
 ] as const;
 
 export type ObservabilityEventType = typeof OBSERVABILITY_EVENT_TYPES[number];
@@ -490,6 +493,70 @@ export class ObservabilityBus {
                 decision: params.decision,
                 blockReasons: params.blockReasons,
                 created: params.created,
+            },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit SCANNER_DEGRADED when background scanner health drops.
+     */
+    emitScannerDegraded(params: {
+        pairKey: string;
+        runtimeState: string;
+        score: number;
+        consecutiveFailures: number;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'SCANNER_DEGRADED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: {
+                score: params.score,
+                consecutiveFailures: params.consecutiveFailures,
+            },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit SCANNER_RECOVERED when background scanner health recovers.
+     */
+    emitScannerRecovered(params: {
+        pairKey: string;
+        runtimeState: string;
+        score: number;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'SCANNER_RECOVERED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: { score: params.score },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit FAIR_VALUE_UPDATED when external fair value is recomputed.
+     */
+    emitFairValueUpdated(params: {
+        pairKey: string;
+        runtimeState: string;
+        confidence: number;
+        sourcesUsed: number;
+        divergenceBpsVsXrpRlusd: number | null;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'FAIR_VALUE_UPDATED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: {
+                confidence: params.confidence,
+                sourcesUsed: params.sourcesUsed,
+                divergenceBpsVsXrpRlusd: params.divergenceBpsVsXrpRlusd,
             },
             nowMs: params.nowMs,
         });

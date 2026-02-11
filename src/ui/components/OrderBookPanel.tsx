@@ -19,6 +19,8 @@ interface OrderBookPanelProps {
     error?: string | null;
     onRefresh?: () => void;
     maxRows?: number;
+    /** Unix ms timestamp of last order book snapshot */
+    lastUpdated?: number | null;
 }
 
 export function OrderBookPanel({
@@ -30,6 +32,7 @@ export function OrderBookPanel({
     error,
     onRefresh,
     maxRows = 12,
+    lastUpdated,
 }: OrderBookPanelProps) {
     // Limit rows displayed
     const displayBids = useMemo(() => bids.slice(0, maxRows), [bids, maxRows]);
@@ -43,6 +46,11 @@ export function OrderBookPanel({
 
     const formatPrice = (p: number | null | undefined) => p == null ? '—' : p >= 1 ? p.toFixed(4) : p.toFixed(6);
     const formatSize = (s: number | null | undefined) => s == null ? '—' : s.toFixed(2);
+    const formatTime = (ts: number | null | undefined) => {
+        if (ts == null) return '—';
+        return new Date(ts).toLocaleTimeString('en-US', { hour12: false });
+    };
+    const snapshotTime = formatTime(lastUpdated);
 
     const isEmpty = bids.length === 0 && asks.length === 0;
 
@@ -101,7 +109,8 @@ export function OrderBookPanel({
             )}
 
             {/* Column headers */}
-            <div className="grid grid-cols-3 gap-1 px-2.5 py-1 text-[9px] text-slate-500 uppercase tracking-wider border-b border-white/5">
+            <div className="grid grid-cols-[46px_1fr_1fr_1fr] gap-1 px-2.5 py-1 text-[9px] text-slate-500 uppercase tracking-wider border-b border-white/5">
+                <div>Time</div>
                 <div>Price</div>
                 <div className="text-right">Size</div>
                 <div className="text-right">Total</div>
@@ -112,13 +121,14 @@ export function OrderBookPanel({
                 {displayAsks.map((entry, i) => (
                     <div
                         key={`ask-${i}`}
-                        className="relative grid grid-cols-3 gap-1 px-2.5 py-0.5 text-[11px] font-mono items-center"
+                        className="relative grid grid-cols-[46px_1fr_1fr_1fr] gap-1 px-2.5 py-0.5 text-[11px] font-mono items-center"
                     >
                         {/* Depth bar */}
                         <div
                             className="absolute inset-y-0 right-0 bg-red-500/10"
                             style={{ width: `${(entry.total / maxTotal) * 100}%` }}
                         />
+                        <div className="relative text-[9px] text-slate-600">{snapshotTime}</div>
                         <div className="relative text-red-400">{formatPrice(entry.price)}</div>
                         <div className="relative text-right text-slate-300">{formatSize(entry.size)}</div>
                         <div className="relative text-right text-slate-500">{formatSize(entry.total)}</div>
@@ -141,13 +151,14 @@ export function OrderBookPanel({
                 {displayBids.map((entry, i) => (
                     <div
                         key={`bid-${i}`}
-                        className="relative grid grid-cols-3 gap-1 px-2.5 py-0.5 text-[11px] font-mono items-center"
+                        className="relative grid grid-cols-[46px_1fr_1fr_1fr] gap-1 px-2.5 py-0.5 text-[11px] font-mono items-center"
                     >
                         {/* Depth bar */}
                         <div
                             className="absolute inset-y-0 right-0 bg-emerald-500/10"
                             style={{ width: `${(entry.total / maxTotal) * 100}%` }}
                         />
+                        <div className="relative text-[9px] text-slate-600">{snapshotTime}</div>
                         <div className="relative text-emerald-400">{formatPrice(entry.price)}</div>
                         <div className="relative text-right text-slate-300">{formatSize(entry.size)}</div>
                         <div className="relative text-right text-slate-500">{formatSize(entry.total)}</div>

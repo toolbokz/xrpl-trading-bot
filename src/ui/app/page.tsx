@@ -15,6 +15,7 @@ import { LogsPanel } from '../components/LogsPanel';
 import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
 import { AnalyticsPanel } from '../components/AnalyticsPanel';
 import { GovernancePanel } from '../components/GovernancePanel';
+import { SpreadDistributionPanel } from '../components/SpreadDistributionPanel';
 import { AdaptivePanel } from '../components/AdaptivePanel';
 import { BotOrdersPanel } from '../components/BotOrdersPanel';
 import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
@@ -381,6 +382,7 @@ export default function Page() {
                             spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
                             loading={orderBookLoading}
                             error={orderBookError}
+                            lastUpdated={orderBookData.lastUpdated}
                         />
                         <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={50} />
                     </MobileSection>
@@ -388,6 +390,7 @@ export default function Page() {
                 tradingContent={
                     <MobileSection>
                         <GovernancePanel />
+                        <SpreadDistributionPanel />
                         <LogsPanel maxRows={50} />
                     </MobileSection>
                 }
@@ -401,6 +404,7 @@ export default function Page() {
                 governanceContent={
                     <MobileSection>
                         <GovernancePanel />
+                        <SpreadDistributionPanel />
                     </MobileSection>
                 }
             />
@@ -408,20 +412,21 @@ export default function Page() {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Desktop Layout - 4×4 terminal grid with tall side columns
+    // Desktop Layout - 4×5 terminal grid with tall side columns
     // ─────────────────────────────────────────────────────────────────────────
     //
-    //  Row 1 (auto):  [ Health + Stats ··················· col-span-4 ]
-    //  Row 2 (1fr):   [ Adverse | Drawdown ] [ Flow Metrics ·· col-span-2 ] [ Bot Logs (row-span-3) ]
-    //  Row 3 (1fr):   [ CapProtect ] [ Trade Tape ] [ Bot Orders (row-span-2) ] [ Bot Logs (cont.) ]
-    //  Row 4 (auto):  [ RegimePerf ] [ Order Book ] [ Bot Orders (cont.) ]     [ Bot Logs (cont.) ]
+    //  Row 1 (auto):  [ Health + Stats ··················· col-span-4        ]
+    //  Row 2 (1fr):   [ Adverse+Drawdown ] [ Flow Metrics (col2-3)          ] [ Bot Orders (rows 2-3) ]
+    //  Row 3 (1fr):   [ Governance       ] [ Trade Tape (rows 3-4) ] [ Order Book (rows 3-4) ] [ Bot Orders cont.     ]
+    //  Row 4 (1fr):   [ Regime Heatmap   ] [ Trade Tape cont.      ] [ Order Book cont.      ] [ Bot Logs (rows 4-5)  ]
+    //  Row 5 (1fr):   [                  ] [                       ] [                       ] [ Bot Logs cont.       ]
     //
 
     return (
         <AppShell header={headerComponent}>
             <div
                 className="w-full grid grid-cols-4 gap-2 pb-2"
-                style={{ gridTemplateRows: 'auto 1fr 1fr auto' }}
+                style={{ gridTemplateRows: 'auto 1fr 1fr 1fr' }}
             >
                 {/* ── ROW 1: Health + Stats (span all 4 columns) ── */}
                 <div className="col-span-4 grid grid-cols-2 gap-2">
@@ -456,36 +461,50 @@ export default function Page() {
                     <FlowMetricsPanel pollInterval={2000} />
                 </div>
 
-                {/* ── ROW 2-4, COL 4: Bot Logs (span 3 rows) ── */}
+                {/* ── ROW 2-4, COL 4: Bot Orders + Bot Logs stacked ── */}
                 <div
-                    className="min-h-0 overflow-hidden"
-                    style={{ gridColumn: '4', gridRow: '2 / 5', height: '90vh' }}
+                    className="min-h-0 overflow-hidden flex flex-col gap-2"
+                    style={{ gridColumn: '4', gridRow: '2 / 5', height: 'calc(90vh + 1rem)' }}
                 >
-                    <LogsPanel maxRows={50} />
+                    <div className="flex-1 min-h-0 h-full">
+                        <BotOrdersPanel pollInterval={5000} />
+                    </div>
+                    <div className="flex-1 min-h-0 h-full">
+                        <LogsPanel maxRows={50} />
+                    </div>
                 </div>
 
-                {/* ── ROW 3, COL 1: Capital Protection ── */}
+                {/* ── ROW 3, COL 1: Capital Protection + Spread Distribution ── */}
                 <div
-                    className="min-h-0 overflow-hidden"
+                    className="min-h-0 overflow-hidden grid grid-cols-2 gap-2"
                     style={{ gridColumn: '1', gridRow: '3', height: '30vh' }}
                 >
-                    <GovernancePanel />
+                    <GovernancePanel compact />
+                    <SpreadDistributionPanel />
                 </div>
 
-                {/* ── ROW 3, COL 2: Trade Tape ── */}
+                {/* ── ROW 3-4, COL 2: Trade Tape (span 2 rows, below Flow) ── */}
                 <div
                     className="min-h-0 overflow-hidden"
-                    style={{ gridColumn: '2', gridRow: '3', height: '30vh' }}
+                    style={{ gridColumn: '2', gridRow: '3 / 5', height: 'calc(60vh + 0.5rem)' }}
                 >
                     <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={100} />
                 </div>
 
-                {/* ── ROW 3-4, COL 3: Bot Orders (span 2 rows) ── */}
+                {/* ── ROW 3-4, COL 3: Order Book (span 2 rows, below Flow) ── */}
                 <div
                     className="min-h-0 overflow-hidden"
-                    style={{ gridColumn: '3', gridRow: '3 / 5', height: '60vh' }}
+                    style={{ gridColumn: '3', gridRow: '3 / 5', height: 'calc(60vh + 0.5rem)' }}
                 >
-                    <BotOrdersPanel pollInterval={5000} />
+                    <OrderBookPanel
+                        bids={orderBookBids}
+                        asks={orderBookAsks}
+                        midPrice={midPrice}
+                        spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                        loading={orderBookLoading}
+                        error={orderBookError}
+                        lastUpdated={orderBookData.lastUpdated}
+                    />
                 </div>
 
                 {/* ── ROW 4, COL 1: Regime Heatmap ── */}
@@ -496,20 +515,7 @@ export default function Page() {
                     <RegimeHeatmapPanel />
                 </div>
 
-                {/* ── ROW 4, COL 2: Order Book ── */}
-                <div
-                    className="min-h-0 overflow-hidden"
-                    style={{ gridColumn: '2', gridRow: '4', height: '30vh' }}
-                >
-                    <OrderBookPanel
-                        bids={orderBookBids}
-                        asks={orderBookAsks}
-                        midPrice={midPrice}
-                        spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
-                        loading={orderBookLoading}
-                        error={orderBookError}
-                    />
-                </div>
+
             </div>
         </AppShell>
     );

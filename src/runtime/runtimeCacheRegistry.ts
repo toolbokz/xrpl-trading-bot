@@ -18,6 +18,8 @@ import { OrderBookSnapshot, NormalizedTrade } from '../market/models';
 import { Trade } from '../market/tradeTape';
 import { RuntimeState } from './runtimeFsm';
 import type { LiquiditySnapshot as LiquidityIntelligenceSnapshot } from '../market/liquidityIntelligence';
+import type { SpreadDistributionSnapshot } from '../analytics/spreadDistribution';
+import type { BackgroundScannerSnapshot } from '../market/backgroundScanner/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Feed types (used as cache partition keys)
@@ -123,6 +125,8 @@ export interface RuntimeCacheSnapshot {
     executionQuality: CacheEntry<ExecutionQualitySnapshot> | null;
     spreadRegime: CacheEntry<SpreadRegimeSnapshot> | null;
     liquidity: CacheEntry<LiquidityCacheSnapshot> | null;
+    spreadDistribution?: SpreadDistributionSnapshot | null;
+    background?: BackgroundScannerSnapshot | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -140,6 +144,7 @@ export interface CacheUpdateInput {
     orderbook: OrderBookSnapshot | null;
     lastTrade: NormalizedTrade | null;
     liquidity: LiquidityIntelligenceSnapshot | null;
+    spreadDistribution?: SpreadDistributionSnapshot | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,6 +166,8 @@ export class RuntimeCacheRegistry {
     private executionQuality: CacheEntry<ExecutionQualitySnapshot> | null = null;
     private spreadRegime: CacheEntry<SpreadRegimeSnapshot> | null = null;
     private liquidity: CacheEntry<LiquidityCacheSnapshot> | null = null;
+    private spreadDistribution: SpreadDistributionSnapshot | null = null;
+    private background: BackgroundScannerSnapshot | null = null;
 
     // Execution quality counters (accumulated across ticks, reset on pair switch)
     private allowedTicks = 0;
@@ -245,6 +252,11 @@ export class RuntimeCacheRegistry {
                 snapshot: input.liquidity,
             });
         }
+
+        // Spread distribution (optional, observability-only)
+        if (input.spreadDistribution) {
+            this.spreadDistribution = input.spreadDistribution;
+        }
     }
 
     /**
@@ -254,6 +266,20 @@ export class RuntimeCacheRegistry {
     updateBalance(pairKey: string, data: BalanceSnapshot): void {
         if (pairKey !== this.pairKey) return; // reject cross-pair updates
         this.balance = this.entry('balance', data);
+    }
+
+    /**
+     * Update background scanner cache.
+     * Called from background scanner callbacks (outside tick loop).
+     */
+    updateBackground(pairKey: string, data: BackgroundScannerSnapshot): void {
+        if (this.pairKey && pairKey !== this.pairKey) return; // reject cross-pair updates
+        if (!this.pairKey) {
+            // Allow pre-tick scanner writes for the active pair.
+            this.pairKey = pairKey;
+            this.asOfMs = Date.now();
+        }
+        this.background = data;
     }
 
     /**
@@ -274,6 +300,8 @@ export class RuntimeCacheRegistry {
         this.executionQuality = null;
         this.spreadRegime = null;
         this.liquidity = null;
+        this.spreadDistribution = null;
+        this.background = null;
         this.allowedTicks = 0;
         this.blockedTicks = 0;
     }
@@ -297,6 +325,8 @@ export class RuntimeCacheRegistry {
             executionQuality: this.executionQuality,
             spreadRegime: this.spreadRegime,
             liquidity: this.liquidity,
+            spreadDistribution: this.spreadDistribution,
+            background: this.background,
         };
     }
 

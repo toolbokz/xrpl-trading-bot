@@ -106,10 +106,13 @@ import { ObservabilityBus } from '../observability/eventBus';
 import { EventLoopLagTracker, loadEventLoopLagConfig, type EventLoopLagState } from '../monitoring/eventLoopLag';
 import { enforceSafetyPolicy } from '../security/safetyPolicy';
 import { LiquidityIntelligence, LiquiditySnapshot, loadLiquidityConfig } from '../market/liquidityIntelligence';
-import { ExecutionPairResolver, loadExecutionPairResolverConfig } from '../market/executionPairResolver';
+import { ExecutionPairResolver, loadExecutionPairResolverConfig, resolveToNormalizedPair } from '../market/executionPairResolver';
 import { AvailabilityScanner, loadAvailabilityScannerConfig, type AvailabilityScannerSnapshot, type PairAvailability } from '../market/availabilityScanner';
 import { EntryGate, loadEntryGateConfig } from '../strategies/entryGate';
 import { getInstruments, findInstrument, isValidPairKey } from '../market/instrumentRegistry';
+import { SpreadDistributionSampler, type SpreadDistributionSnapshot } from '../analytics/spreadDistribution';
+import { BackgroundMarketScanner } from '../market/backgroundScanner/backgroundMarketScanner';
+import type { BackgroundScannerSnapshot } from '../market/backgroundScanner/types';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -122,6 +125,7 @@ const cloneConfig = (cfg: AppConfig): AppConfig => ({
     risk: { ...cfg.risk, issuerBlacklist: new Set(cfg.risk.issuerBlacklist) },
     strategy: { ...cfg.strategy },
     flow: { ...cfg.flow },
+    backgroundScanner: { ...cfg.backgroundScanner },
     analytics: { ...cfg.analytics },
 });
 
@@ -219,14 +223,22 @@ export class TradingRuntime {
     private readonly observabilityBus = new ObservabilityBus();
     /** Liquidity intelligence engine — dynamic liquidity scoring per tick. */
     private liquidityIntelligence: LiquidityIntelligence | null = null;
+    /** Spread distribution sampler — rolling percentiles for observability. */
+    private readonly spreadDistributionSampler = new SpreadDistributionSampler();
     /** Execution pair resolver — centralized issuer resolution with caching. */
     private readonly pairResolver: ExecutionPairResolver;
+    /** Cached XRPL-normalized pair key (hex-encoded currency codes) for feedback DB queries. */
+    private resolvedPairKey: string | null = null;
     /** Availability scanner — periodic issuer/trustline/orderbook probes. */
     private availabilityScanner: AvailabilityScanner | null = null;
     /** Per-tick performance tracer — lightweight phase timing + event-loop lag. */
     private perfTracer: PerfTracer | null = null;
     /** Event loop lag tracker — infra safety auto-pause. */
     private eventLoopLagTracker: EventLoopLagTracker | null = null;
+    /** Background scanner — best-effort cross-market intelligence. */
+    private backgroundScanner: BackgroundMarketScanner | null = null;
+    /** Edge-detection flag for scanner degraded/recovered observability. */
+    private scannerWasDegraded = false;
     /** Whether the last snapshot passed structural validation. */
     private lastDataValid = true;
     /** Reasons the last snapshot failed validation (empty when valid). */
@@ -267,6 +279,7 @@ export class TradingRuntime {
         this.baseConfig = config ?? loadConfig();
         this.fsm = new RuntimeFSM();
         this.pairResolver = new ExecutionPairResolver(loadExecutionPairResolverConfig());
+        this.spreadDistributionSampler.setPairKey(this.getActivePair());
 
         // Wire resolver cache miss → observability bus
         this.pairResolver.setOnCacheMiss((pairKey, reason) => {
@@ -367,6 +380,9 @@ export class TradingRuntime {
         this.exposureTracker.reset();
         // Reset liquidity intelligence for new pair
         this.liquidityIntelligence?.reset();
+        // Reset spread distribution sampling for new pair
+        this.spreadDistributionSampler.reset();
+        this.spreadDistributionSampler.setPairKey(this.getActivePair());
         // Invalidate pair resolver cache to force re-resolution for new pair
         this.pairResolver.invalidate();
     }
@@ -508,6 +524,11 @@ export class TradingRuntime {
             this.executor = executor;
             executor.setExecutionQualityCollector(this.executionQualityCollector);
             executor.setExposureTracker(this.exposureTracker);
+            // Wire exposure tracker into risk engine so risk checks can
+            // account for current notional exposure.
+            try {
+                risk.setExposureTracker(this.exposureTracker);
+            } catch { /* best-effort */ }
             this.walletAddress = wallet?.classicAddress ?? null;
             this.started = true;
 
@@ -603,6 +624,29 @@ export class TradingRuntime {
             // Start lightweight per-tick performance tracer
             this.perfTracer = getPerfTracer();
             this.perfTracer.start();
+
+            // Start background market scanner (best-effort, never blocks tick loop)
+            if (config.backgroundScanner.enabled && this.xrpl?.isConnected()) {
+                const scannerClient = this.xrpl.getClient();
+                this.backgroundScanner = new BackgroundMarketScanner({
+                    client: scannerClient,
+                    getCurrentPairKey: () => this.getCurrentPairKey(),
+                    getCurrentMidPrice: () => this.getActivePairMidPrice(),
+                    getAvailabilitySnapshot: () => this.availabilityScanner?.getSnapshot() ?? null,
+                    isPaused: () => (this.eventLoopLagTracker?.isAutoPaused() ?? false) || !isCpuHealthy(),
+                    onSnapshot: (pairKey: string, snapshot: BackgroundScannerSnapshot) => {
+                        this.handleBackgroundScannerSnapshot(pairKey, snapshot);
+                    },
+                }, {
+                    enabled: config.backgroundScanner.enabled,
+                    maxMarkets: config.backgroundScanner.maxMarkets,
+                    maxRps: config.backgroundScanner.maxRps,
+                    tier1IntervalMs: config.backgroundScanner.tier1IntervalMs,
+                    tier2IntervalMs: config.backgroundScanner.tier2IntervalMs,
+                    maxStalenessMs: config.backgroundScanner.maxStalenessMs,
+                });
+                this.backgroundScanner.start();
+            }
 
             logger.info('Trading runtime started');
         } catch (err) {
@@ -706,6 +750,11 @@ export class TradingRuntime {
             const pairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
             const nowMs = Date.now();
             this.marketSnapshotSequence += 1;
+
+            const bestBid = orderBookState.bids[0]?.price ?? 0;
+            const bestAsk = orderBookState.asks[0]?.price ?? 0;
+            this.spreadDistributionSampler.ingest(bestBid, bestAsk, nowMs);
+            const spreadDistribution = this.spreadDistributionSampler.maybeCompute(nowMs);
 
             this.currentOrderBookSnapshot = normalizeOrderBookSnapshot(
                 pairKey,
@@ -933,7 +982,7 @@ export class TradingRuntime {
                     ? 'EXECUTION_BLOCKED_BAD_DATA: gate denied tick — snapshot structural validation failed'
                     : 'EXECUTION_BLOCKED: gate denied tick execution');
                 // Update cache even on BLOCK so API reflects latest state
-                this.updateCacheSnapshot(pairKey, gateResult, null);
+                this.updateCacheSnapshot(pairKey, gateResult, null, spreadDistribution);
                 return;
             }
 
@@ -985,7 +1034,7 @@ export class TradingRuntime {
             }
 
             // Update cache registry with full tick data
-            this.updateCacheSnapshot(pairKey, gateResult, flowMetrics);
+            this.updateCacheSnapshot(pairKey, gateResult, flowMetrics, spreadDistribution);
 
             this.perfTracer?.phaseEnd(8); // cacheUpdate
 
@@ -1006,8 +1055,6 @@ export class TradingRuntime {
             // Hard Risk Guard — deterministic capital safety gate
             // ─────────────────────────────────────────────────────────────────
             // Update exposure tracker with latest mid-price
-            const bestBid = orderBookState.bids[0]?.price ?? 0;
-            const bestAsk = orderBookState.asks[0]?.price ?? 0;
             const tickMid = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : bestBid || bestAsk;
             if (tickMid > 0) this.exposureTracker.updateMidPrice(tickMid);
 
@@ -1050,7 +1097,10 @@ export class TradingRuntime {
             let globalCooldownMs = 0;
 
             if (this.capitalProtection) {
-                governanceDecision = this.capitalProtection.evaluate(pairKey);
+                // Use XRPL-normalized pair key (hex currency codes) to match
+                // what OfferExecutor records in the feedback DB.
+                const feedbackPairKey = this.getResolvedPairKey();
+                governanceDecision = this.capitalProtection.evaluate(feedbackPairKey);
                 this.lastGovernanceDecision = governanceDecision;
 
                 // Handle SHUTDOWN - initiate graceful shutdown
@@ -1339,12 +1389,38 @@ export class TradingRuntime {
     }
 
     /**
+     * Get the XRPL-normalized pair key (hex-encoded currency codes).
+     *
+     * This matches the format used by OfferExecutor when recording trade events
+     * in the feedback DB (e.g. "XRP/524C555344000000000000000000000000000000"
+     * instead of "XRP/RLUSD"). Used for governance/feedback queries.
+     */
+    private getResolvedPairKey(pair?: TradingPair): string {
+        if (!pair && this.resolvedPairKey) {
+            return this.resolvedPairKey;
+        }
+        const target = pair ?? this.baseConfig.tradingPair;
+        try {
+            const resolved = resolveToNormalizedPair(target);
+            const key = resolved.symbol;
+            if (!pair) {
+                this.resolvedPairKey = key;
+            }
+            return key;
+        } catch {
+            // Fallback to human-readable if resolution fails
+            return `${target.baseCurrency}/${target.quoteCurrency}`;
+        }
+    }
+
+    /**
      * Push latest tick data into the cache registry.
      */
     private updateCacheSnapshot(
         pairKey: string,
         gate: ExecutionGateResult,
         flow: FlowMetrics | null,
+        spreadDistribution: SpreadDistributionSnapshot | null,
     ): void {
         const tapeData = this.tradeTape ? (() => {
             const trades = this.tradeTape!.getAll();
@@ -1363,7 +1439,58 @@ export class TradingRuntime {
             orderbook: this.currentOrderBookSnapshot,
             lastTrade: this.currentNormalizedTrade,
             liquidity: this.liquidityIntelligence?.getSnapshot() ?? null,
+            spreadDistribution,
         });
+    }
+
+    /**
+     * Best-effort background scanner callback.
+     * Updates cache + observability only; never affects execution gate.
+     */
+    private handleBackgroundScannerSnapshot(pairKey: string, snapshot: BackgroundScannerSnapshot): void {
+        try {
+            this.cacheRegistry.updateBackground(pairKey, snapshot);
+        } catch (err) {
+            logger.warn({ err, pairKey }, 'Background scanner cache update rejected');
+            return;
+        }
+
+        const degraded = snapshot.health.score < 60 || snapshot.health.consecutiveFailures > 0;
+        if (degraded && !this.scannerWasDegraded) {
+            this.scannerWasDegraded = true;
+            this.observabilityBus.emitScannerDegraded({
+                pairKey,
+                runtimeState: this.fsm.getState(),
+                score: snapshot.health.score,
+                consecutiveFailures: snapshot.health.consecutiveFailures,
+            });
+        } else if (!degraded && this.scannerWasDegraded) {
+            this.scannerWasDegraded = false;
+            this.observabilityBus.emitScannerRecovered({
+                pairKey,
+                runtimeState: this.fsm.getState(),
+                score: snapshot.health.score,
+            });
+        }
+
+        if (snapshot.fairValue.xrpMid !== null) {
+            this.observabilityBus.emitFairValueUpdated({
+                pairKey,
+                runtimeState: this.fsm.getState(),
+                confidence: snapshot.fairValue.confidence,
+                sourcesUsed: snapshot.fairValue.sourcesUsed.length,
+                divergenceBpsVsXrpRlusd: snapshot.fairValue.divergenceBpsVsXrpRlusd,
+            });
+        }
+    }
+
+    private getActivePairMidPrice(): number | null {
+        const bestBid = this.currentOrderBookSnapshot?.bestBid ?? 0;
+        const bestAsk = this.currentOrderBookSnapshot?.bestAsk ?? 0;
+        if (bestBid > 0 && bestAsk > 0) {
+            return (bestBid + bestAsk) / 2;
+        }
+        return null;
     }
 
     getMarketHealth(): {
@@ -1507,7 +1634,7 @@ export class TradingRuntime {
             this.fsm.forceHalt('graceful-shutdown');
         }
 
-        const totalSteps = 6;
+        const totalSteps = 7;
         let currentStep = 0;
 
         const logStep = (description: string) => {
@@ -1578,13 +1705,21 @@ export class TradingRuntime {
             logger.warn({ err }, 'Failed to stop adaptive scheduler');
         }
 
-        // Step 5: Disconnect XRPL cleanly
+        // Step 5: Stop background scanner before XRPL disconnect
+        logStep('Stopping background market scanner');
+        try {
+            this.backgroundScanner?.stop();
+        } catch (err) {
+            logger.warn({ err }, 'Failed to stop background market scanner');
+        }
+
+        // Step 6: Disconnect XRPL cleanly
         logStep('Disconnecting XRPL client');
         if (this.xrpl) {
             await this.xrpl.disconnect().catch((err) => logger.warn({ err }, 'XRPL disconnect failed during shutdown'));
         }
 
-        // Step 6: Reset state
+        // Step 7: Reset state
         logStep('Resetting runtime state');
         this.reset();
 
@@ -1768,6 +1903,9 @@ export class TradingRuntime {
                 this.baseConfig.tradingPair = { ...newPair };
                 this.baseConfig.tradingPairs = [{ ...newPair }];
 
+                // Invalidate resolved pair key cache so governance uses the new pair
+                this.resolvedPairKey = null;
+
                 // 2. Market data layer
                 this.tradeTape?.setPair(newPair);
                 this.tradeTapeService?.setPair(newPair);
@@ -1782,6 +1920,9 @@ export class TradingRuntime {
                     `${newPair.baseCurrency}/${newPair.quoteCurrency}`,
                 );
                 this.exposureTracker.setPairKey(
+                    `${newPair.baseCurrency}/${newPair.quoteCurrency}`,
+                );
+                this.spreadDistributionSampler.setPairKey(
                     `${newPair.baseCurrency}/${newPair.quoteCurrency}`,
                 );
 
@@ -2059,6 +2200,11 @@ export class TradingRuntime {
             this.eventLoopLagTracker.stop();
             this.eventLoopLagTracker = null;
         }
+
+        // Stop background scanner (idempotent)
+        this.backgroundScanner?.stop();
+        this.backgroundScanner = null;
+        this.scannerWasDegraded = false;
 
         // Clear global trade tape reference
         setGlobalTradeTape(null);

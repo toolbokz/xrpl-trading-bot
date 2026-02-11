@@ -118,7 +118,7 @@ function MetricBar({
     );
 }
 
-export function GovernancePanel() {
+export function GovernancePanel({ compact = false }: { compact?: boolean }) {
     const [state, setState] = useState<GovernanceState | null>(null);
     const [available, setAvailable] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -206,95 +206,177 @@ export function GovernancePanel() {
                 </div>
             </div>
 
-            {/* Scrollable body */}
-            <div className="flex-1 min-h-0 overflow-y-auto px-2.5 pb-2 scrollbar-thin">
-
-                {/* Reasons */}
-                {state.reasons.length > 0 && (
-                    <div className="mb-2 p-2 rounded bg-black/20 space-y-0.5">
-                        {state.reasons.map((reason, i) => (
-                            <div key={i} className="flex items-start gap-1 text-[10px]">
-                                <AlertTriangle size={9} className={clsx('mt-0.5 flex-shrink-0', config.textClass)} />
-                                <span className="text-slate-300">{reason}</span>
-                            </div>
-                        ))}
-                    </div>
+            {/* Body */}
+            <div
+                className={clsx(
+                    'flex-1 min-h-0 px-2.5 pb-2',
+                    compact ? 'overflow-hidden' : 'overflow-y-auto scrollbar-thin'
                 )}
-
-                {/* Metrics */}
-                {state.metrics && state.thresholds && state.metrics.tradesCount >= state.thresholds.minTrades && (
+            >
+                {compact ? (
                     <div className="space-y-2">
-                        <div className="text-[9px] text-slate-500 uppercase tracking-wider">
-                            Metrics ({state.metrics.tradesCount} trades)
-                        </div>
-
-                        <MetricBar
-                            label="Drawdown"
-                            value={state.metrics.drawdownPct}
-                            threshold={state.thresholds.maxDrawdownPct}
-                            format={(v) => `${v.toFixed(1)}%`}
-                            inverse={true}
-                            icon={TrendingDown}
-                        />
-
-                        <MetricBar
-                            label="Profit Factor"
-                            value={state.metrics.profitFactor}
-                            threshold={state.thresholds.minProfitFactor}
-                            format={(v) => v.toFixed(2)}
-                            inverse={false}
-                            icon={Target}
-                        />
-
-                        <MetricBar
-                            label="Expectancy"
-                            value={state.metrics.expectancyBps}
-                            threshold={state.thresholds.minExpectancyBps}
-                            format={(v) => `${v.toFixed(1)} bps`}
-                            inverse={false}
-                            icon={BarChart3}
-                        />
-
-                        <MetricBar
-                            label="Avg Slippage"
-                            value={state.metrics.avgSlippageBps}
-                            threshold={state.thresholds.maxAvgSlippageBps}
-                            format={(v) => `${v.toFixed(1)} bps`}
-                            inverse={true}
-                            icon={Clock}
-                        />
-
-                        <div className="grid grid-cols-3 gap-2 pt-1.5 border-t border-white/5">
-                            <div className="text-center">
-                                <div className="text-[9px] text-slate-500">Win</div>
-                                <div className="text-[11px] text-slate-200 font-mono">{(state.metrics.winRate * 100).toFixed(1)}%</div>
+                        {state.reasons.length > 0 && (
+                            <div className="flex items-start gap-1 text-[10px] text-slate-300 min-w-0">
+                                <AlertTriangle size={9} className={clsx('mt-0.5 flex-shrink-0', config.textClass)} />
+                                <span className="truncate flex-1">{state.reasons[0]}{state.reasons.length > 1 ? ` (+${state.reasons.length - 1})` : ''}</span>
                             </div>
-                            <div className="text-center">
-                                <div className="text-[9px] text-slate-500">Partials</div>
-                                <div className={clsx(
-                                    'text-[11px] font-mono',
-                                    state.metrics.partialFillRate > state.thresholds.maxPartialFillRate ? 'text-danger' : 'text-slate-200'
-                                )}>
-                                    {(state.metrics.partialFillRate * 100).toFixed(1)}%
+                        )}
+
+                        {state.metrics && state.thresholds && state.metrics.tradesCount >= state.thresholds.minTrades && (
+                            <div className="space-y-1.5">
+                                <div className="flex items-center justify-between text-[9px] uppercase tracking-wider text-slate-500">
+                                    <span>Metrics</span>
+                                    <span>{state.metrics.tradesCount}t</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                                    <div className="flex items-center justify-between text-slate-300">
+                                        <span className="text-slate-500">DD</span>
+                                        <span className={clsx(state.metrics.drawdownPct > state.thresholds.maxDrawdownPct && 'text-danger')}>
+                                            {state.metrics.drawdownPct.toFixed(1)}%
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-slate-300">
+                                        <span className="text-slate-500">PF</span>
+                                        <span className={clsx(state.metrics.profitFactor < state.thresholds.minProfitFactor && 'text-danger')}>
+                                            {state.metrics.profitFactor.toFixed(2)}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-slate-300">
+                                        <span className="text-slate-500">Exp</span>
+                                        <span className={clsx(state.metrics.expectancyBps < state.thresholds.minExpectancyBps && 'text-danger')}>
+                                            {state.metrics.expectancyBps.toFixed(1)}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-slate-300">
+                                        <span className="text-slate-500">Slip</span>
+                                        <span className={clsx(state.metrics.avgSlippageBps > state.thresholds.maxAvgSlippageBps && 'text-danger')}>
+                                            {state.metrics.avgSlippageBps.toFixed(1)}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-white/5 text-[10px]">
+                                    <div className="text-center">
+                                        <div className="text-[9px] text-slate-500">Win</div>
+                                        <div className="text-slate-200 font-mono">{(state.metrics.winRate * 100).toFixed(0)}%</div>
+                                    </div>
+                                    <div className="text-center">
+                                        <div className="text-[9px] text-slate-500">Part</div>
+                                        <div className={clsx(
+                                            'font-mono',
+                                            state.metrics.partialFillRate > state.thresholds.maxPartialFillRate ? 'text-danger' : 'text-slate-200'
+                                        )}>
+                                            {(state.metrics.partialFillRate * 100).toFixed(0)}%
+                                        </div>
+                                    </div>
+                                    <div className="text-center">
+                                        <div className="text-[9px] text-slate-500">Fail</div>
+                                        <div className={clsx(
+                                            'font-mono',
+                                            state.metrics.consecutiveFailures >= state.thresholds.consecFailShutdown ? 'text-danger' : 'text-slate-200'
+                                        )}>
+                                            {state.metrics.consecutiveFailures}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            <div className="text-center">
-                                <div className="text-[9px] text-slate-500">Fails</div>
-                                <div className={clsx(
-                                    'text-[11px] font-mono',
-                                    state.metrics.consecutiveFailures >= state.thresholds.consecFailShutdown ? 'text-danger' : 'text-slate-200'
-                                )}>
-                                    {state.metrics.consecutiveFailures}
+                        )}
+
+                        {state.metrics && state.thresholds && state.metrics.tradesCount < state.thresholds.minTrades && (
+                            <div className="text-[10px] text-slate-500 text-center">
+                                Collecting… {state.metrics.tradesCount}/{state.thresholds.minTrades}
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <>
+                        {/* Reasons */}
+                        {state.reasons.length > 0 && (
+                            <div className="mb-2 p-2 rounded bg-black/20 space-y-0.5">
+                                {state.reasons.map((reason, i) => (
+                                    <div key={i} className="flex items-start gap-1 text-[10px]">
+                                        <AlertTriangle size={9} className={clsx('mt-0.5 flex-shrink-0', config.textClass)} />
+                                        <span className="text-slate-300">{reason}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Metrics */}
+                        {state.metrics && state.thresholds && state.metrics.tradesCount >= state.thresholds.minTrades && (
+                            <div className="space-y-2">
+                                <div className="text-[9px] text-slate-500 uppercase tracking-wider">
+                                    Metrics ({state.metrics.tradesCount} trades)
+                                </div>
+
+                                <MetricBar
+                                    label="Drawdown"
+                                    value={state.metrics.drawdownPct}
+                                    threshold={state.thresholds.maxDrawdownPct}
+                                    format={(v) => `${v.toFixed(1)}%`}
+                                    inverse={true}
+                                    icon={TrendingDown}
+                                />
+
+                                <MetricBar
+                                    label="Profit Factor"
+                                    value={state.metrics.profitFactor}
+                                    threshold={state.thresholds.minProfitFactor}
+                                    format={(v) => v.toFixed(2)}
+                                    inverse={false}
+                                    icon={Target}
+                                />
+
+                                <MetricBar
+                                    label="Expectancy"
+                                    value={state.metrics.expectancyBps}
+                                    threshold={state.thresholds.minExpectancyBps}
+                                    format={(v) => `${v.toFixed(1)} bps`}
+                                    inverse={false}
+                                    icon={BarChart3}
+                                />
+
+                                <MetricBar
+                                    label="Avg Slippage"
+                                    value={state.metrics.avgSlippageBps}
+                                    threshold={state.thresholds.maxAvgSlippageBps}
+                                    format={(v) => `${v.toFixed(1)} bps`}
+                                    inverse={true}
+                                    icon={Clock}
+                                />
+
+                                <div className="grid grid-cols-3 gap-2 pt-1.5 border-t border-white/5">
+                                    <div className="text-center">
+                                        <div className="text-[9px] text-slate-500">Win</div>
+                                        <div className="text-[11px] text-slate-200 font-mono">{(state.metrics.winRate * 100).toFixed(1)}%</div>
+                                    </div>
+                                    <div className="text-center">
+                                        <div className="text-[9px] text-slate-500">Partials</div>
+                                        <div className={clsx(
+                                            'text-[11px] font-mono',
+                                            state.metrics.partialFillRate > state.thresholds.maxPartialFillRate ? 'text-danger' : 'text-slate-200'
+                                        )}>
+                                            {(state.metrics.partialFillRate * 100).toFixed(1)}%
+                                        </div>
+                                    </div>
+                                    <div className="text-center">
+                                        <div className="text-[9px] text-slate-500">Fails</div>
+                                        <div className={clsx(
+                                            'text-[11px] font-mono',
+                                            state.metrics.consecutiveFailures >= state.thresholds.consecFailShutdown ? 'text-danger' : 'text-slate-200'
+                                        )}>
+                                            {state.metrics.consecutiveFailures}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                )}
+                        )}
 
-                {state.metrics && state.thresholds && state.metrics.tradesCount < state.thresholds.minTrades && (
-                    <div className="text-[10px] text-slate-500 text-center py-2">
-                        Collecting… {state.metrics.tradesCount}/{state.thresholds.minTrades}
-                    </div>
+                        {state.metrics && state.thresholds && state.metrics.tradesCount < state.thresholds.minTrades && (
+                            <div className="text-[10px] text-slate-500 text-center py-2">
+                                Collecting… {state.metrics.tradesCount}/{state.thresholds.minTrades}
+                            </div>
+                        )}
+                    </>
                 )}
             </div>
 

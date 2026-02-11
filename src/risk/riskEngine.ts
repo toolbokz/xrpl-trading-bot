@@ -1,5 +1,6 @@
 import { Client } from 'xrpl';
 import { RiskConfig, TradingPair } from '../config';
+import { ExposureTracker } from './exposureTracker';
 import { riskLog as logger } from '../analytics/logger';
 import { hasAdequateReserves, loadReserveConfig, type ReserveConfig } from '../xrpl/reserve';
 
@@ -14,12 +15,21 @@ export class RiskEngine {
     private dailyLoss = 0;
     private lastResetDate: string;
     private reserveConfig: ReserveConfig;
+    private exposureTracker: ExposureTracker | null = null;
 
     constructor(private readonly risk: RiskConfig, private readonly client: Client) {
         // Initialize to current UTC date
         this.lastResetDate = this.getCurrentDateUTC();
         // Load reserve buffer config from env
         this.reserveConfig = loadReserveConfig();
+    }
+
+    /**
+     * Optionally inject an ExposureTracker so risk checks can account for
+     * current notional exposure before approving intents.
+     */
+    setExposureTracker(tracker: ExposureTracker): void {
+        this.exposureTracker = tracker;
     }
 
     /**
@@ -112,6 +122,20 @@ export class RiskEngine {
         if (intent.potentialLoss > this.risk.maxDailyLoss) return false;
         const allowedIssuers = new Set([pair.baseIssuer, pair.quoteIssuer, pair.issuer].filter(Boolean) as string[]);
         if (!allowedIssuers.has(intent.issuer)) return false;
+        // Conservative exposure guard: if current notional exposure already
+        // exceeds configured max, deny new intents.
+        try {
+            if (this.exposureTracker) {
+                const currentNotional = this.exposureTracker.getNotionalExposure();
+                if (Number.isFinite(currentNotional) && currentNotional >= this.risk.maxExposurePerIssuer) {
+                    logger.warn({ currentNotional }, 'RiskEngine: deny intent due to existing notional exposure');
+                    return false;
+                }
+            }
+        } catch (e) {
+            // Fail-safe: do not block trading if exposure check errors
+            logger.debug({ err: e }, 'RiskEngine: exposure check failed, proceeding');
+        }
         return true;
     }
 
@@ -134,7 +158,7 @@ export class RiskEngine {
     } {
         return {
             maxExposure: this.risk.maxExposurePerIssuer,
-            currentExposure: 0, // TODO: track open position value
+            currentExposure: this.exposureTracker ? this.exposureTracker.getNotionalExposure() : 0,
             dailyLossLimit: this.risk.maxDailyLoss,
             dailyLossCurrent: this.dailyLoss,
             killSwitch: this.risk.emergencyShutdown,

@@ -21,3 +21,6 @@ export type { BalanceData, UseBalancesState, UseBalancesOptions } from './useBal
 
 export { useFlowMetrics } from './useFlowMetrics';
 export type { FlowMetricsState, UseFlowMetricsOptions } from './useFlowMetrics';
+
+export { useSpreadDistribution } from './useSpreadDistribution';
+export type { SpreadDistributionState, UseSpreadDistributionOptions } from './useSpreadDistribution';
