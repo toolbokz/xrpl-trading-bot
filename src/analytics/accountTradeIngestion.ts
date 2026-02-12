@@ -5,7 +5,7 @@ import { tradeHistory } from './tradeHistory';
 import { canonicalizePairKey } from '../xrpl/currency';
 import { quarantineTradeRecord, validateTradeIntegrity } from './tradeIntegrity';
 import { feedbackEngine } from './feedbackEngine';
-import { hasExecutionQualityTxHash } from './feedbackDb';
+import { hasEdgeAttributionTxHash, hasExecutionQualityTxHash } from './feedbackDb';
 
 interface XRPLAmount {
     currency: string;
@@ -172,6 +172,19 @@ export class AccountTradeIngestionService {
                     filledQuote: fill.quoteAmount,
                     fillRatio,
                     status,
+                });
+            }
+            if (!hasEdgeAttributionTxHash(hash)) {
+                feedbackEngine.recordEdgeAttributionEvent({
+                    txHash: hash,
+                    pairKey,
+                    side: side === 'BUY' ? 'buy' : 'sell',
+                    strategy: 'account-ingestion',
+                    source,
+                    fillPrice: priceQuotePerBase,
+                    baseFilled: fill.baseAmount,
+                    filledQuote: fill.quoteAmount,
+                    midFill: priceQuotePerBase,
                 });
             }
         } catch (err) {

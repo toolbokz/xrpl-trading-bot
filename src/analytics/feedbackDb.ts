@@ -158,6 +158,43 @@ export interface ExecutionQualityEventRecord {
     decisionToValidatedMs: number | null;
 }
 
+export interface EdgeAttributionEventRecord {
+    id: string;
+    ts: number;
+    eventId: string | null;
+    txHash: string | null;
+    pairKeyCanonical: string;
+    pairAliases: string | null; // JSON array
+    side: 'buy' | 'sell' | null;
+    strategy: string | null;
+    regime: FlowRegime | null;
+    source: 'bot' | 'manual' | 'unknown';
+    midDecision: number | null;
+    bidDecision: number | null;
+    askDecision: number | null;
+    fillPrice: number | null;
+    midFill: number | null;
+    mid1m: number | null;
+    mid5m: number | null;
+    baseFilled: number | null;
+    filledQuote: number | null;
+    signalEdgeBpsExAnte: number | null;
+    signalEdgeBpsExPost1m: number | null;
+    signalEdgeBpsExPost5m: number | null;
+    executionEdgeBpsVsMid: number | null;
+    executionEdgeBpsVsBbo: number | null;
+    driftBps1m: number | null;
+    driftBps5m: number | null;
+    pnlExecQuote: number | null;
+    pnlDriftQuote1m: number | null;
+    pnlTotalQuote1m: number | null;
+    pnlDriftQuote5m: number | null;
+    pnlTotalQuote5m: number | null;
+    hasDecisionSnapshot: number | null;
+    hasHorizon1m: number | null;
+    hasHorizon5m: number | null;
+}
+
 /**
  * Database configuration
  */
@@ -197,11 +234,14 @@ interface PreparedStatements {
     insertSnapshot: Statement;
     insertExecutionQualityEvent: Statement;
     updateExecutionQualityHorizons: Statement;
+    insertEdgeAttributionEvent: Statement;
+    updateEdgeAttributionHorizons: Statement;
     updateTradeEventPostFill1s: Statement;
     updateTradeEventPostFill3s: Statement;
     pruneTradeEvents: Statement;
     pruneSnapshots: Statement;
     pruneExecutionQualityEvents: Statement;
+    pruneEdgeAttributionEvents: Statement;
 }
 
 /**
@@ -346,6 +386,45 @@ function initSchema(db: DatabaseType): void {
         )
     `);
 
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS edge_attribution_events (
+            id TEXT PRIMARY KEY,
+            ts INTEGER NOT NULL,
+            eventId TEXT,
+            txHash TEXT,
+            pairKeyCanonical TEXT NOT NULL,
+            pairAliases TEXT,
+            side TEXT,
+            strategy TEXT,
+            regime TEXT,
+            source TEXT,
+            midDecision REAL,
+            bidDecision REAL,
+            askDecision REAL,
+            fillPrice REAL,
+            midFill REAL,
+            mid1m REAL,
+            mid5m REAL,
+            baseFilled REAL,
+            filledQuote REAL,
+            signalEdgeBpsExAnte REAL,
+            signalEdgeBpsExPost1m REAL,
+            signalEdgeBpsExPost5m REAL,
+            executionEdgeBpsVsMid REAL,
+            executionEdgeBpsVsBbo REAL,
+            driftBps1m REAL,
+            driftBps5m REAL,
+            pnlExecQuote REAL,
+            pnlDriftQuote1m REAL,
+            pnlTotalQuote1m REAL,
+            pnlDriftQuote5m REAL,
+            pnlTotalQuote5m REAL,
+            hasDecisionSnapshot INTEGER,
+            hasHorizon1m INTEGER,
+            hasHorizon5m INTEGER
+        )
+    `);
+
     // Create indices for efficient queries
     db.exec(`
         CREATE INDEX IF NOT EXISTS idx_trade_events_pair_ts ON trade_events(pairKey, ts);
@@ -360,6 +439,12 @@ function initSchema(db: DatabaseType): void {
         CREATE INDEX IF NOT EXISTS idx_eq_events_source_ts ON execution_quality_events(source, ts);
         CREATE INDEX IF NOT EXISTS idx_eq_events_regime_ts ON execution_quality_events(regime, ts);
         CREATE INDEX IF NOT EXISTS idx_eq_events_txhash ON execution_quality_events(txHash);
+        CREATE INDEX IF NOT EXISTS idx_edge_attr_pair_ts ON edge_attribution_events(pairKeyCanonical, ts);
+        CREATE INDEX IF NOT EXISTS idx_edge_attr_strategy_ts ON edge_attribution_events(strategy, ts);
+        CREATE INDEX IF NOT EXISTS idx_edge_attr_side_ts ON edge_attribution_events(side, ts);
+        CREATE INDEX IF NOT EXISTS idx_edge_attr_regime_ts ON edge_attribution_events(regime, ts);
+        CREATE INDEX IF NOT EXISTS idx_edge_attr_source_ts ON edge_attribution_events(source, ts);
+        CREATE INDEX IF NOT EXISTS idx_edge_attr_txhash ON edge_attribution_events(txHash);
     `);
 
     logger.debug('Feedback database schema initialized');
@@ -453,6 +538,41 @@ const EXECUTION_QUALITY_EXTRA_COLUMNS = {
     decisionToSubmitMs: 'INTEGER',
     submitToValidatedMs: 'INTEGER',
     decisionToValidatedMs: 'INTEGER',
+} as const;
+
+const EDGE_ATTRIBUTION_EXTRA_COLUMNS = {
+    eventId: 'TEXT',
+    txHash: 'TEXT',
+    pairKeyCanonical: 'TEXT',
+    pairAliases: 'TEXT',
+    side: 'TEXT',
+    strategy: 'TEXT',
+    regime: 'TEXT',
+    source: 'TEXT',
+    midDecision: 'REAL',
+    bidDecision: 'REAL',
+    askDecision: 'REAL',
+    fillPrice: 'REAL',
+    midFill: 'REAL',
+    mid1m: 'REAL',
+    mid5m: 'REAL',
+    baseFilled: 'REAL',
+    filledQuote: 'REAL',
+    signalEdgeBpsExAnte: 'REAL',
+    signalEdgeBpsExPost1m: 'REAL',
+    signalEdgeBpsExPost5m: 'REAL',
+    executionEdgeBpsVsMid: 'REAL',
+    executionEdgeBpsVsBbo: 'REAL',
+    driftBps1m: 'REAL',
+    driftBps5m: 'REAL',
+    pnlExecQuote: 'REAL',
+    pnlDriftQuote1m: 'REAL',
+    pnlTotalQuote1m: 'REAL',
+    pnlDriftQuote5m: 'REAL',
+    pnlTotalQuote5m: 'REAL',
+    hasDecisionSnapshot: 'INTEGER',
+    hasHorizon1m: 'INTEGER',
+    hasHorizon5m: 'INTEGER',
 } as const;
 
 /**
@@ -549,6 +669,47 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 impactBps5m = COALESCE(@impactBps5m, impactBps5m)
             WHERE id = @id
         `),
+        insertEdgeAttributionEvent: db.prepare(`
+            INSERT INTO edge_attribution_events (
+                id, ts, eventId, txHash, pairKeyCanonical, pairAliases,
+                side, strategy, regime, source,
+                midDecision, bidDecision, askDecision, fillPrice,
+                midFill, mid1m, mid5m,
+                baseFilled, filledQuote,
+                signalEdgeBpsExAnte, signalEdgeBpsExPost1m, signalEdgeBpsExPost5m,
+                executionEdgeBpsVsMid, executionEdgeBpsVsBbo,
+                driftBps1m, driftBps5m,
+                pnlExecQuote, pnlDriftQuote1m, pnlTotalQuote1m, pnlDriftQuote5m, pnlTotalQuote5m,
+                hasDecisionSnapshot, hasHorizon1m, hasHorizon5m
+            ) VALUES (
+                @id, @ts, @eventId, @txHash, @pairKeyCanonical, @pairAliases,
+                @side, @strategy, @regime, @source,
+                @midDecision, @bidDecision, @askDecision, @fillPrice,
+                @midFill, @mid1m, @mid5m,
+                @baseFilled, @filledQuote,
+                @signalEdgeBpsExAnte, @signalEdgeBpsExPost1m, @signalEdgeBpsExPost5m,
+                @executionEdgeBpsVsMid, @executionEdgeBpsVsBbo,
+                @driftBps1m, @driftBps5m,
+                @pnlExecQuote, @pnlDriftQuote1m, @pnlTotalQuote1m, @pnlDriftQuote5m, @pnlTotalQuote5m,
+                @hasDecisionSnapshot, @hasHorizon1m, @hasHorizon5m
+            )
+        `),
+        updateEdgeAttributionHorizons: db.prepare(`
+            UPDATE edge_attribution_events
+            SET mid1m = COALESCE(@mid1m, mid1m),
+                mid5m = COALESCE(@mid5m, mid5m),
+                signalEdgeBpsExPost1m = COALESCE(@signalEdgeBpsExPost1m, signalEdgeBpsExPost1m),
+                signalEdgeBpsExPost5m = COALESCE(@signalEdgeBpsExPost5m, signalEdgeBpsExPost5m),
+                driftBps1m = COALESCE(@driftBps1m, driftBps1m),
+                driftBps5m = COALESCE(@driftBps5m, driftBps5m),
+                pnlDriftQuote1m = COALESCE(@pnlDriftQuote1m, pnlDriftQuote1m),
+                pnlTotalQuote1m = COALESCE(@pnlTotalQuote1m, pnlTotalQuote1m),
+                pnlDriftQuote5m = COALESCE(@pnlDriftQuote5m, pnlDriftQuote5m),
+                pnlTotalQuote5m = COALESCE(@pnlTotalQuote5m, pnlTotalQuote5m),
+                hasHorizon1m = COALESCE(@hasHorizon1m, hasHorizon1m),
+                hasHorizon5m = COALESCE(@hasHorizon5m, hasHorizon5m)
+            WHERE id = @id
+        `),
         updateTradeEventPostFill1s: db.prepare(`
             UPDATE trade_events
             SET postMid1s = @postMid1s,
@@ -593,6 +754,9 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
         pruneExecutionQualityEvents: db.prepare(`
             DELETE FROM execution_quality_events WHERE ts < ?
         `),
+        pruneEdgeAttributionEvents: db.prepare(`
+            DELETE FROM edge_attribution_events WHERE ts < ?
+        `),
     };
 }
 
@@ -627,6 +791,7 @@ export function getFeedbackDb(): DatabaseType {
 
         // Ensure execution quality columns exist
         ensureColumns(dbInstance, 'execution_quality_events', EXECUTION_QUALITY_EXTRA_COLUMNS);
+        ensureColumns(dbInstance, 'edge_attribution_events', EDGE_ATTRIBUTION_EXTRA_COLUMNS);
 
         preparedStatements = createPreparedStatements(dbInstance);
 
@@ -814,6 +979,91 @@ export function updateExecutionQualityHorizons(input: {
         return result.changes;
     } catch (err) {
         logger.warn({ err, eventId: input.id }, 'Failed to update execution quality horizons');
+    }
+    return 0;
+}
+
+export function insertEdgeAttributionEvent(event: EdgeAttributionEventRecord): string | null {
+    try {
+        const stmt = getStatements().insertEdgeAttributionEvent;
+        stmt.run({
+            id: event.id,
+            ts: event.ts,
+            eventId: event.eventId,
+            txHash: event.txHash,
+            pairKeyCanonical: event.pairKeyCanonical,
+            pairAliases: event.pairAliases,
+            side: event.side,
+            strategy: event.strategy,
+            regime: event.regime,
+            source: event.source,
+            midDecision: event.midDecision,
+            bidDecision: event.bidDecision,
+            askDecision: event.askDecision,
+            fillPrice: event.fillPrice,
+            midFill: event.midFill,
+            mid1m: event.mid1m,
+            mid5m: event.mid5m,
+            baseFilled: event.baseFilled,
+            filledQuote: event.filledQuote,
+            signalEdgeBpsExAnte: event.signalEdgeBpsExAnte,
+            signalEdgeBpsExPost1m: event.signalEdgeBpsExPost1m,
+            signalEdgeBpsExPost5m: event.signalEdgeBpsExPost5m,
+            executionEdgeBpsVsMid: event.executionEdgeBpsVsMid,
+            executionEdgeBpsVsBbo: event.executionEdgeBpsVsBbo,
+            driftBps1m: event.driftBps1m,
+            driftBps5m: event.driftBps5m,
+            pnlExecQuote: event.pnlExecQuote,
+            pnlDriftQuote1m: event.pnlDriftQuote1m,
+            pnlTotalQuote1m: event.pnlTotalQuote1m,
+            pnlDriftQuote5m: event.pnlDriftQuote5m,
+            pnlTotalQuote5m: event.pnlTotalQuote5m,
+            hasDecisionSnapshot: event.hasDecisionSnapshot,
+            hasHorizon1m: event.hasHorizon1m,
+            hasHorizon5m: event.hasHorizon5m,
+        });
+        return event.id;
+    } catch (err) {
+        logger.warn({ err, eventId: event.id }, 'Failed to insert edge attribution event');
+    }
+    return null;
+}
+
+export function updateEdgeAttributionHorizons(input: {
+    id: string;
+    mid1m?: number | null;
+    mid5m?: number | null;
+    signalEdgeBpsExPost1m?: number | null;
+    signalEdgeBpsExPost5m?: number | null;
+    driftBps1m?: number | null;
+    driftBps5m?: number | null;
+    pnlDriftQuote1m?: number | null;
+    pnlTotalQuote1m?: number | null;
+    pnlDriftQuote5m?: number | null;
+    pnlTotalQuote5m?: number | null;
+    hasHorizon1m?: number | null;
+    hasHorizon5m?: number | null;
+}): number {
+    try {
+        const stmt = getStatements().updateEdgeAttributionHorizons;
+        const result = stmt.run({
+            id: input.id,
+            mid1m: input.mid1m ?? null,
+            mid5m: input.mid5m ?? null,
+            signalEdgeBpsExPost1m: input.signalEdgeBpsExPost1m ?? null,
+            signalEdgeBpsExPost5m: input.signalEdgeBpsExPost5m ?? null,
+            driftBps1m: input.driftBps1m ?? null,
+            driftBps5m: input.driftBps5m ?? null,
+            pnlDriftQuote1m: input.pnlDriftQuote1m ?? null,
+            pnlTotalQuote1m: input.pnlTotalQuote1m ?? null,
+            pnlDriftQuote5m: input.pnlDriftQuote5m ?? null,
+            pnlTotalQuote5m: input.pnlTotalQuote5m ?? null,
+            hasHorizon1m: input.hasHorizon1m ?? null,
+            hasHorizon5m: input.hasHorizon5m ?? null,
+        });
+        return result.changes;
+    } catch (err) {
+        logger.warn({ err, eventId: input.id }, 'Failed to update edge attribution horizons');
     }
     return 0;
 }
@@ -1015,6 +1265,7 @@ export function pruneOldData(retentionDays?: number): { eventsDeleted: number; s
         const eventsResult = stmts.pruneTradeEvents.run(cutoffTs);
         const snapshotsResult = stmts.pruneSnapshots.run(cutoffTs);
         stmts.pruneExecutionQualityEvents.run(cutoffTs);
+        stmts.pruneEdgeAttributionEvents.run(cutoffTs);
 
         const result = {
             eventsDeleted: eventsResult.changes,
@@ -1044,6 +1295,14 @@ export interface QueryFilters {
 }
 
 export interface ExecutionQualityQueryFilters {
+    pairKey?: string;
+    sinceMs?: number;
+    strategy?: string;
+    side?: 'buy' | 'sell';
+    source?: 'bot' | 'manual' | 'unknown';
+}
+
+export interface EdgeAttributionQueryFilters {
     pairKey?: string;
     sinceMs?: number;
     strategy?: string;
@@ -1123,6 +1382,38 @@ export function queryExecutionQualityEvents(filters: ExecutionQualityQueryFilter
     }
 }
 
+export function queryEdgeAttributionEvents(filters: EdgeAttributionQueryFilters = {}): EdgeAttributionEventRecord[] {
+    const db = getFeedbackDb();
+    let sql = 'SELECT * FROM edge_attribution_events WHERE 1=1';
+    const params: any[] = [];
+
+    sql = appendPairFilter(sql, params, filters.pairKey ? canonicalizePairKey(filters.pairKey) : undefined, 'pairKeyCanonical');
+    if (filters.sinceMs) {
+        sql += ' AND ts >= ?';
+        params.push(filters.sinceMs);
+    }
+    if (filters.strategy) {
+        sql += ' AND strategy = ?';
+        params.push(filters.strategy);
+    }
+    if (filters.side) {
+        sql += ' AND side = ?';
+        params.push(filters.side);
+    }
+    if (filters.source) {
+        sql += ' AND source = ?';
+        params.push(filters.source);
+    }
+
+    sql += ' ORDER BY ts DESC';
+    try {
+        return db.prepare(sql).all(...params) as EdgeAttributionEventRecord[];
+    } catch (err) {
+        logger.warn({ err, filters }, 'Failed to query edge attribution events');
+        return [];
+    }
+}
+
 export function hasExecutionQualityTxHash(txHash: string): boolean {
     if (!txHash) return false;
     const db = getFeedbackDb();
@@ -1131,6 +1422,18 @@ export function hasExecutionQualityTxHash(txHash: string): boolean {
         return row?.found === 1;
     } catch (err) {
         logger.warn({ err, txHash }, 'Failed to query execution quality hash existence');
+        return false;
+    }
+}
+
+export function hasEdgeAttributionTxHash(txHash: string): boolean {
+    if (!txHash) return false;
+    const db = getFeedbackDb();
+    try {
+        const row = db.prepare('SELECT 1 as found FROM edge_attribution_events WHERE txHash = ? LIMIT 1').get(txHash) as { found?: number } | undefined;
+        return row?.found === 1;
+    } catch (err) {
+        logger.warn({ err, txHash }, 'Failed to query edge attribution hash existence');
         return false;
     }
 }
@@ -1210,19 +1513,26 @@ export function getSnapshotNear(pairKey: string, ts: number, toleranceMs: number
 /**
  * Count records for statistics
  */
-export function countRecords(): { tradeEvents: number; snapshots: number; executionQualityEvents: number } {
+export function countRecords(): {
+    tradeEvents: number;
+    snapshots: number;
+    executionQualityEvents: number;
+    edgeAttributionEvents: number;
+} {
     const db = getFeedbackDb();
     try {
         const events = db.prepare('SELECT COUNT(*) as count FROM trade_events').get() as { count: number };
         const snapshots = db.prepare('SELECT COUNT(*) as count FROM market_snapshots').get() as { count: number };
         const executionQualityEvents = db.prepare('SELECT COUNT(*) as count FROM execution_quality_events').get() as { count: number };
+        const edgeAttributionEvents = db.prepare('SELECT COUNT(*) as count FROM edge_attribution_events').get() as { count: number };
         return {
             tradeEvents: events.count,
             snapshots: snapshots.count,
             executionQualityEvents: executionQualityEvents.count,
+            edgeAttributionEvents: edgeAttributionEvents.count,
         };
     } catch (err) {
         logger.warn({ err }, 'Failed to count records');
-        return { tradeEvents: 0, snapshots: 0, executionQualityEvents: 0 };
+        return { tradeEvents: 0, snapshots: 0, executionQualityEvents: 0, edgeAttributionEvents: 0 };
     }
 }

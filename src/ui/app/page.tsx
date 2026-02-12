@@ -26,6 +26,7 @@ import { AdaptivePanel } from '../components/AdaptivePanel';
 import { BackgroundFairValuePanel } from '../components/BackgroundFairValuePanel';
 import { MarketRadarPanel } from '../components/MarketRadarPanel';
 import { ExecutionQualityPanel } from '../components/ExecutionQualityPanel';
+import { EdgeAttributionPanel } from '../components/EdgeAttributionPanel';
 import { useOrderBook } from '../lib/hooks/useOrderBook';
 import { RuntimeCacheProvider, useRuntimeCache } from '../lib/hooks/useRuntimeCache';
 import { useMarketHealth } from '../lib/hooks/useMarketHealth';
@@ -534,6 +535,11 @@ export default function Page() {
                 {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
                 strategy={bot.strategy}
                 pollInterval={15_000}
+            />
+            <EdgeAttributionPanel
+                {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                strategy={bot.strategy}
+                pollInterval={20_000}
             />
             <div className="grid gap-4 md:grid-cols-3 md:items-stretch">
                 <div className="space-y-4 min-w-0">

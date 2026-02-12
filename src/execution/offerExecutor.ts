@@ -1671,6 +1671,24 @@ export class OfferExecutor {
                     submitToValidatedMs: latency.submitToValidatedMs,
                     decisionToValidatedMs: latency.decisionToValidatedMs,
                 });
+                const edgeAttributionEventId = feedbackEngine.recordEdgeAttributionEvent({
+                    txHash: res.result.hash ?? null,
+                    pairKey: canonicalPair,
+                    side,
+                    strategy: this.currentStrategy,
+                    regime: this.currentFlowRegime,
+                    source: 'bot',
+                    midDecision: this.currentMidPrice,
+                    bidDecision: this.currentBestBid,
+                    askDecision: this.currentBestAsk,
+                    fillPrice: actualFillPrice,
+                    midFill: this.currentMidPrice,
+                    baseFilled: filledBase,
+                    filledQuote,
+                    strategyFair: intent.expectedPrice ?? null,
+                    decisionTs,
+                    fillTs: validatedTs,
+                });
 
                 if (
                     executionQualityEventId
@@ -1699,6 +1717,49 @@ export class OfferExecutor {
                             fillPrice: actualFillPrice,
                             decisionMid: decisionMidForHorizon,
                             fillTs,
+                        });
+                    }, 305_000);
+                }
+
+                if (
+                    edgeAttributionEventId
+                    && Number.isFinite(actualFillPrice)
+                    && actualFillPrice > 0
+                    && Number.isFinite(this.currentMidPrice)
+                    && (this.currentMidPrice ?? 0) > 0
+                    && Number.isFinite(filledBase)
+                    && filledBase > 0
+                ) {
+                    const fillTs = validatedTs;
+                    const decisionTsForHorizon = decisionTs ?? validatedTs;
+                    const decisionMidForHorizon = this.currentMidPrice as number;
+                    const fillPriceForHorizon = actualFillPrice;
+                    const baseFilledForHorizon = filledBase;
+                    const strategyFairForHorizon = intent.expectedPrice ?? null;
+                    setTimeout(() => {
+                        feedbackEngine.updateEdgeAttributionHorizons({
+                            id: edgeAttributionEventId,
+                            pairKey: canonicalPair,
+                            side,
+                            midDecision: decisionMidForHorizon,
+                            fillPrice: fillPriceForHorizon,
+                            baseFilled: baseFilledForHorizon,
+                            decisionTs: decisionTsForHorizon,
+                            fillTs,
+                            strategyFair: strategyFairForHorizon,
+                        });
+                    }, 65_000);
+                    setTimeout(() => {
+                        feedbackEngine.updateEdgeAttributionHorizons({
+                            id: edgeAttributionEventId,
+                            pairKey: canonicalPair,
+                            side,
+                            midDecision: decisionMidForHorizon,
+                            fillPrice: fillPriceForHorizon,
+                            baseFilled: baseFilledForHorizon,
+                            decisionTs: decisionTsForHorizon,
+                            fillTs,
+                            strategyFair: strategyFairForHorizon,
                         });
                     }, 305_000);
                 }

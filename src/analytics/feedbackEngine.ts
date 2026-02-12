@@ -19,14 +19,18 @@ import {
     TradeEventRecord,
     MarketSnapshotRecord,
     ExecutionQualityEventRecord,
+    EdgeAttributionEventRecord,
     TradeAction,
     generateId,
     insertTradeEvent,
     insertExecutionQualityEvent,
+    insertEdgeAttributionEvent,
     insertMarketSnapshot,
     insertBatch,
     updateExecutionQualityHorizons as updateExecutionQualityHorizonsDb,
+    updateEdgeAttributionHorizons as updateEdgeAttributionHorizonsDb,
     queryExecutionQualityEvents,
+    queryEdgeAttributionEvents,
     updateTradeEventPostFill1s,
     updateTradeEventPostFill3s,
     queryTradeEvents,
@@ -35,6 +39,7 @@ import {
     closeFeedbackDb,
     QueryFilters,
     ExecutionQualityQueryFilters,
+    EdgeAttributionQueryFilters,
     getFeedbackDb,
 } from './feedbackDb';
 import { FlowMetrics, FlowRegime, hasAdverseSelectionRisk } from '../market/flowMetrics';
@@ -47,6 +52,10 @@ import {
     computeRealizedSpreadBps,
 } from './executionQualityMetrics';
 import { computeCanonicalSlippageBps, warnInvalidSlippageInputs } from './slippageMath';
+import {
+    buildEdgeAttributionMetrics,
+    validatePnlIdentity,
+} from './edgeAttributionMetrics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -241,6 +250,109 @@ export interface ExecutionQualityAnalytics {
         byRegime: ExecutionQualityBreakdownRow[];
     };
     anomalies: ExecutionQualityAnomalies;
+}
+
+export interface EdgeAttributionEventInput {
+    eventId?: string | null;
+    txHash?: string | null;
+    ts?: number;
+    pairKey: string;
+    side: 'buy' | 'sell';
+    strategy?: string | null;
+    regime?: FlowRegime | null;
+    source?: 'bot' | 'manual' | 'unknown';
+    midDecision?: number | null;
+    bidDecision?: number | null;
+    askDecision?: number | null;
+    fillPrice?: number | null;
+    midFill?: number | null;
+    baseFilled?: number | null;
+    filledQuote?: number | null;
+    strategyFair?: number | null;
+    decisionTs?: number | null;
+    fillTs?: number | null;
+}
+
+export interface EdgeAttributionFilters {
+    pairKey?: string;
+    sinceMs?: number;
+    strategy?: string;
+    side?: 'buy' | 'sell';
+    source?: 'bot' | 'manual' | 'unknown';
+    bucketMs?: number;
+}
+
+export interface EdgeAttributionSummary {
+    events: number;
+    coverageDecision: number;
+    coverage1m: number;
+    coverage5m: number;
+    avgSignalEdgeBpsExAnte: number | null;
+    avgSignalEdgeBpsExPost1m: number | null;
+    avgSignalEdgeBpsExPost5m: number | null;
+    avgExecutionEdgeBpsVsMid: number | null;
+    avgExecutionEdgeBpsVsBbo: number | null;
+    avgDriftBps1m: number | null;
+    avgDriftBps5m: number | null;
+    avgPnlExecQuote: number | null;
+    avgPnlTotalQuote1m: number | null;
+    avgPnlTotalQuote5m: number | null;
+}
+
+export interface EdgeAttributionBucket {
+    ts: number;
+    count: number;
+    avgExecutionEdgeBpsVsMid: number | null;
+    avgDriftBps1m: number | null;
+    avgSignalEdgeBpsExPost1m: number | null;
+    avgPnlTotalQuote1m: number | null;
+}
+
+export interface EdgeAttributionHistogramBin {
+    min: number;
+    max: number;
+    count: number;
+}
+
+export interface EdgeAttributionBreakdownRow {
+    key: string;
+    count: number;
+    avgExecutionEdgeBpsVsMid: number | null;
+    avgDriftBps1m: number | null;
+    avgPnlTotalQuote1m: number | null;
+}
+
+export interface EdgeAttributionTopTrade {
+    txHash: string | null;
+    ts: number;
+    pairKey: string;
+    strategy: string | null;
+    side: 'buy' | 'sell' | null;
+    executionEdgeBpsVsMid: number | null;
+    driftBps1m: number | null;
+    pnlTotalQuote1m: number | null;
+    fillPrice: number | null;
+    midDecision: number | null;
+    baseFilled: number | null;
+}
+
+export interface EdgeAttributionAnalytics {
+    summary: EdgeAttributionSummary;
+    series: EdgeAttributionBucket[];
+    histograms: {
+        executionEdgeBps: EdgeAttributionHistogramBin[];
+        driftBps: EdgeAttributionHistogramBin[];
+    };
+    breakdowns: {
+        byPair: EdgeAttributionBreakdownRow[];
+        byStrategy: EdgeAttributionBreakdownRow[];
+        bySide: EdgeAttributionBreakdownRow[];
+        byRegime: EdgeAttributionBreakdownRow[];
+    };
+    topTrades: {
+        worstExecution: EdgeAttributionTopTrade[];
+        adverseSelection: EdgeAttributionTopTrade[];
+    };
 }
 
 /**
@@ -804,6 +916,129 @@ class FeedbackEngine {
             });
         } catch (err) {
             logger.warn({ err, id: input.id }, 'Failed to update execution quality horizons');
+        }
+    }
+
+    recordEdgeAttributionEvent(input: EdgeAttributionEventInput): string | null {
+        if (!this.ensureInitialized()) return null;
+
+        try {
+            const canonicalPair = canonicalizePairKey(input.pairKey);
+            const aliases = getPairKeyAliases(canonicalPair);
+            const metrics = buildEdgeAttributionMetrics({
+                side: input.side,
+                midDecision: input.midDecision ?? null,
+                bidDecision: input.bidDecision ?? null,
+                askDecision: input.askDecision ?? null,
+                fillPrice: input.fillPrice ?? null,
+                baseFilled: input.baseFilled ?? null,
+                strategyFair: input.strategyFair ?? null,
+                midDecision1m: null,
+                midDecision5m: null,
+                midFill1m: null,
+                midFill5m: null,
+            });
+
+            const event: EdgeAttributionEventRecord = {
+                id: generateId(),
+                ts: input.ts ?? Date.now(),
+                eventId: input.eventId ?? null,
+                txHash: input.txHash ?? null,
+                pairKeyCanonical: canonicalPair,
+                pairAliases: JSON.stringify(aliases),
+                side: input.side,
+                strategy: input.strategy ?? null,
+                regime: input.regime ?? null,
+                source: input.source ?? 'unknown',
+                midDecision: input.midDecision ?? null,
+                bidDecision: input.bidDecision ?? null,
+                askDecision: input.askDecision ?? null,
+                fillPrice: input.fillPrice ?? null,
+                midFill: input.midFill ?? null,
+                mid1m: null,
+                mid5m: null,
+                baseFilled: input.baseFilled ?? null,
+                filledQuote: input.filledQuote ?? null,
+                signalEdgeBpsExAnte: metrics.signalEdgeBpsExAnte,
+                signalEdgeBpsExPost1m: null,
+                signalEdgeBpsExPost5m: null,
+                executionEdgeBpsVsMid: metrics.executionEdgeBpsVsMid,
+                executionEdgeBpsVsBbo: metrics.executionEdgeBpsVsBbo,
+                driftBps1m: null,
+                driftBps5m: null,
+                pnlExecQuote: metrics.pnlExecQuote,
+                pnlDriftQuote1m: null,
+                pnlTotalQuote1m: null,
+                pnlDriftQuote5m: null,
+                pnlTotalQuote5m: null,
+                hasDecisionSnapshot: metrics.hasDecisionSnapshot ? 1 : 0,
+                hasHorizon1m: 0,
+                hasHorizon5m: 0,
+            };
+
+            return insertEdgeAttributionEvent(event);
+        } catch (err) {
+            logger.warn({ err, pairKey: input.pairKey, txHash: input.txHash }, 'Failed to record edge attribution event');
+            return null;
+        }
+    }
+
+    updateEdgeAttributionHorizons(input: {
+        id: string;
+        pairKey: string;
+        side: 'buy' | 'sell';
+        midDecision: number;
+        fillPrice: number;
+        baseFilled: number;
+        decisionTs: number;
+        fillTs: number;
+        strategyFair?: number | null;
+    }): void {
+        if (!this.ensureInitialized()) return;
+
+        try {
+            const pair = canonicalizePairKey(input.pairKey);
+            const decision1m = getSnapshotNear(pair, input.decisionTs + 60_000, 120_000);
+            const decision5m = getSnapshotNear(pair, input.decisionTs + 300_000, 180_000);
+            const fill1m = getSnapshotNear(pair, input.fillTs + 60_000, 120_000);
+            const fill5m = getSnapshotNear(pair, input.fillTs + 300_000, 180_000);
+
+            const metrics = buildEdgeAttributionMetrics({
+                side: input.side,
+                midDecision: input.midDecision,
+                fillPrice: input.fillPrice,
+                baseFilled: input.baseFilled,
+                strategyFair: input.strategyFair ?? null,
+                midDecision1m: decision1m?.midPrice ?? null,
+                midDecision5m: decision5m?.midPrice ?? null,
+                midFill1m: fill1m?.midPrice ?? null,
+                midFill5m: fill5m?.midPrice ?? null,
+            });
+
+            if (!validatePnlIdentity(metrics.pnlExecQuote, metrics.pnlDriftQuote1m, metrics.pnlTotalQuote1m)) {
+                logger.warn({ id: input.id }, 'Edge attribution pnl identity mismatch at 1m horizon');
+            }
+            if (!validatePnlIdentity(metrics.pnlExecQuote, metrics.pnlDriftQuote5m, metrics.pnlTotalQuote5m)) {
+                logger.warn({ id: input.id }, 'Edge attribution pnl identity mismatch at 5m horizon');
+            }
+
+            updateEdgeAttributionHorizonsDb({
+                id: input.id,
+                mid1m: fill1m?.midPrice ?? null,
+                mid5m: fill5m?.midPrice ?? null,
+                signalEdgeBpsExPost1m: metrics.signalEdgeBpsExPost1m,
+                signalEdgeBpsExPost5m: metrics.signalEdgeBpsExPost5m,
+                driftBps1m: metrics.driftBps1m,
+                driftBps5m: metrics.driftBps5m,
+                pnlDriftQuote1m: metrics.pnlDriftQuote1m,
+                pnlTotalQuote1m: metrics.pnlTotalQuote1m,
+                pnlDriftQuote5m: metrics.pnlDriftQuote5m,
+                pnlTotalQuote5m: metrics.pnlTotalQuote5m,
+                hasHorizon1m: metrics.hasHorizon1m ? 1 : 0,
+                hasHorizon5m: metrics.hasHorizon5m ? 1 : 0,
+            });
+        } catch (err) {
+            logger.warn({ err, id: input.id }, 'Failed to update edge attribution horizons');
         }
     }
 
@@ -1381,6 +1616,78 @@ class FeedbackEngine {
         }
     }
 
+    getEdgeAttributionAnalytics(filters: EdgeAttributionFilters = {}): EdgeAttributionAnalytics {
+        if (!this.ensureInitialized()) {
+            return this.emptyEdgeAttributionAnalytics(filters.bucketMs ?? 60_000);
+        }
+
+        try {
+            const bucketMs = Math.max(1_000, Math.min(86_400_000, filters.bucketMs ?? 60_000));
+            const queryFilters: EdgeAttributionQueryFilters = {};
+            if (filters.pairKey) queryFilters.pairKey = filters.pairKey;
+            if (filters.sinceMs != null) queryFilters.sinceMs = filters.sinceMs;
+            if (filters.strategy) queryFilters.strategy = filters.strategy;
+            if (filters.side) queryFilters.side = filters.side;
+            if (filters.source) queryFilters.source = filters.source;
+
+            const events = queryEdgeAttributionEvents(queryFilters);
+
+            const summary: EdgeAttributionSummary = {
+                events: events.length,
+                coverageDecision: events.length > 0 ? events.filter((e) => e.hasDecisionSnapshot === 1).length / events.length : 0,
+                coverage1m: events.length > 0 ? events.filter((e) => e.hasHorizon1m === 1).length / events.length : 0,
+                coverage5m: events.length > 0 ? events.filter((e) => e.hasHorizon5m === 1).length / events.length : 0,
+                avgSignalEdgeBpsExAnte: this.avg(events.map((e) => e.signalEdgeBpsExAnte)),
+                avgSignalEdgeBpsExPost1m: this.avg(events.map((e) => e.signalEdgeBpsExPost1m)),
+                avgSignalEdgeBpsExPost5m: this.avg(events.map((e) => e.signalEdgeBpsExPost5m)),
+                avgExecutionEdgeBpsVsMid: this.avg(events.map((e) => e.executionEdgeBpsVsMid)),
+                avgExecutionEdgeBpsVsBbo: this.avg(events.map((e) => e.executionEdgeBpsVsBbo)),
+                avgDriftBps1m: this.avg(events.map((e) => e.driftBps1m)),
+                avgDriftBps5m: this.avg(events.map((e) => e.driftBps5m)),
+                avgPnlExecQuote: this.avg(events.map((e) => e.pnlExecQuote)),
+                avgPnlTotalQuote1m: this.avg(events.map((e) => e.pnlTotalQuote1m)),
+                avgPnlTotalQuote5m: this.avg(events.map((e) => e.pnlTotalQuote5m)),
+            };
+
+            const executionEdgeValues = events
+                .map((e) => e.executionEdgeBpsVsMid)
+                .filter((v): v is number => v != null && Number.isFinite(v));
+            const driftValues = events
+                .map((e) => e.driftBps1m)
+                .filter((v): v is number => v != null && Number.isFinite(v));
+
+            return {
+                summary,
+                series: this.buildEdgeAttributionSeries(events, bucketMs),
+                histograms: {
+                    executionEdgeBps: this.buildHistogram(executionEdgeValues),
+                    driftBps: this.buildHistogram(driftValues),
+                },
+                breakdowns: {
+                    byPair: this.buildEdgeAttributionBreakdown(events, (e) => e.pairKeyCanonical),
+                    byStrategy: this.buildEdgeAttributionBreakdown(events, (e) => e.strategy ?? 'unknown'),
+                    bySide: this.buildEdgeAttributionBreakdown(events, (e) => e.side ?? 'unknown'),
+                    byRegime: this.buildEdgeAttributionBreakdown(events, (e) => e.regime ?? 'unknown'),
+                },
+                topTrades: {
+                    worstExecution: events
+                        .filter((e) => e.executionEdgeBpsVsMid != null && Number.isFinite(e.executionEdgeBpsVsMid))
+                        .sort((a, b) => (a.executionEdgeBpsVsMid ?? 0) - (b.executionEdgeBpsVsMid ?? 0))
+                        .slice(0, 10)
+                        .map((e) => this.toEdgeTopTrade(e)),
+                    adverseSelection: events
+                        .filter((e) => e.driftBps1m != null && Number.isFinite(e.driftBps1m))
+                        .sort((a, b) => (a.driftBps1m ?? 0) - (b.driftBps1m ?? 0))
+                        .slice(0, 10)
+                        .map((e) => this.toEdgeTopTrade(e)),
+                },
+            };
+        } catch (err) {
+            logger.warn({ err, filters }, 'Failed to compute edge attribution analytics');
+            return this.emptyEdgeAttributionAnalytics(filters.bucketMs ?? 60_000);
+        }
+    }
+
     private emptyExecutionQualityAnalytics(bucketMs: number): ExecutionQualityAnalytics {
         return {
             summary: {
@@ -1419,6 +1726,42 @@ class FeedbackEngine {
                 suspiciousSlippageSpikes: 0,
                 partialFillAnomalies: 0,
                 quoteBaseIntegrityViolations: 0,
+            },
+        };
+    }
+
+    private emptyEdgeAttributionAnalytics(bucketMs: number): EdgeAttributionAnalytics {
+        return {
+            summary: {
+                events: 0,
+                coverageDecision: 0,
+                coverage1m: 0,
+                coverage5m: 0,
+                avgSignalEdgeBpsExAnte: null,
+                avgSignalEdgeBpsExPost1m: null,
+                avgSignalEdgeBpsExPost5m: null,
+                avgExecutionEdgeBpsVsMid: null,
+                avgExecutionEdgeBpsVsBbo: null,
+                avgDriftBps1m: null,
+                avgDriftBps5m: null,
+                avgPnlExecQuote: null,
+                avgPnlTotalQuote1m: null,
+                avgPnlTotalQuote5m: null,
+            },
+            series: this.buildEdgeAttributionSeries([], bucketMs),
+            histograms: {
+                executionEdgeBps: this.buildHistogram([]),
+                driftBps: this.buildHistogram([]),
+            },
+            breakdowns: {
+                byPair: [],
+                byStrategy: [],
+                bySide: [],
+                byRegime: [],
+            },
+            topTrades: {
+                worstExecution: [],
+                adverseSelection: [],
             },
         };
     }
@@ -1490,6 +1833,45 @@ class FeedbackEngine {
             }));
     }
 
+    private buildEdgeAttributionSeries(events: EdgeAttributionEventRecord[], bucketMs: number): EdgeAttributionBucket[] {
+        const buckets = new Map<number, {
+            count: number;
+            executionEdge: Array<number | null>;
+            drift1m: Array<number | null>;
+            signal1m: Array<number | null>;
+            pnlTotal1m: Array<number | null>;
+        }>();
+
+        for (const event of events) {
+            const bucketTs = Math.floor(event.ts / bucketMs) * bucketMs;
+            const bucket = buckets.get(bucketTs) ?? {
+                count: 0,
+                executionEdge: [],
+                drift1m: [],
+                signal1m: [],
+                pnlTotal1m: [],
+            };
+
+            bucket.count += 1;
+            bucket.executionEdge.push(event.executionEdgeBpsVsMid);
+            bucket.drift1m.push(event.driftBps1m);
+            bucket.signal1m.push(event.signalEdgeBpsExPost1m);
+            bucket.pnlTotal1m.push(event.pnlTotalQuote1m);
+            buckets.set(bucketTs, bucket);
+        }
+
+        return Array.from(buckets.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(([ts, bucket]) => ({
+                ts,
+                count: bucket.count,
+                avgExecutionEdgeBpsVsMid: this.avg(bucket.executionEdge),
+                avgDriftBps1m: this.avg(bucket.drift1m),
+                avgSignalEdgeBpsExPost1m: this.avg(bucket.signal1m),
+                avgPnlTotalQuote1m: this.avg(bucket.pnlTotal1m),
+            }));
+    }
+
     private buildHistogram(values: number[]): ExecutionQualityHistogramBin[] {
         const edges = [-1000, -500, -200, -100, -50, -20, -10, 0, 10, 20, 50, 100, 200, 500, 1000, 2000];
         const bins: ExecutionQualityHistogramBin[] = [];
@@ -1529,6 +1911,45 @@ class FeedbackEngine {
                 avgFillRatio: this.avg(group.map((e) => e.fillRatio)),
             }))
             .sort((a, b) => b.count - a.count);
+    }
+
+    private buildEdgeAttributionBreakdown(
+        events: EdgeAttributionEventRecord[],
+        keySelector: (event: EdgeAttributionEventRecord) => string
+    ): EdgeAttributionBreakdownRow[] {
+        const groups = new Map<string, EdgeAttributionEventRecord[]>();
+        for (const event of events) {
+            const key = keySelector(event) || 'unknown';
+            const list = groups.get(key) ?? [];
+            list.push(event);
+            groups.set(key, list);
+        }
+
+        return Array.from(groups.entries())
+            .map(([key, group]) => ({
+                key,
+                count: group.length,
+                avgExecutionEdgeBpsVsMid: this.avg(group.map((e) => e.executionEdgeBpsVsMid)),
+                avgDriftBps1m: this.avg(group.map((e) => e.driftBps1m)),
+                avgPnlTotalQuote1m: this.avg(group.map((e) => e.pnlTotalQuote1m)),
+            }))
+            .sort((a, b) => b.count - a.count);
+    }
+
+    private toEdgeTopTrade(event: EdgeAttributionEventRecord): EdgeAttributionTopTrade {
+        return {
+            txHash: event.txHash ?? null,
+            ts: event.ts,
+            pairKey: event.pairKeyCanonical,
+            strategy: event.strategy ?? null,
+            side: event.side ?? null,
+            executionEdgeBpsVsMid: event.executionEdgeBpsVsMid,
+            driftBps1m: event.driftBps1m,
+            pnlTotalQuote1m: event.pnlTotalQuote1m,
+            fillPrice: event.fillPrice,
+            midDecision: event.midDecision,
+            baseFilled: event.baseFilled,
+        };
     }
 
     /**
