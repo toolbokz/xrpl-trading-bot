@@ -1,0 +1,2698 @@
+{
+  "generatedAt": "2026-02-12T22:16:26.229Z",
+  "sourceFile": "/home/linux-dev/Downloads/xrpl-trading-bot/trade_history.json",
+  "backupFile": "/home/linux-dev/Downloads/xrpl-trading-bot/trade_history.backup.2026-02-12T22-16-26-222Z.json",
+  "cleanedFile": "/home/linux-dev/Downloads/xrpl-trading-bot/trade_history.cleaned.2026-02-12T22-16-26-222Z.json",
+  "writeApplied": true,
+  "summary": {
+    "inputRecords": 87,
+    "outputRecords": 75,
+    "invertedPriceFixes": 19,
+    "unitMixFixes": 19,
+    "statusFixes": 23,
+    "duplicatesRemoved": 12,
+    "remainingReciprocalAnomalies": 0,
+    "pairCounts": {
+      "XRP/RLUSD": 75
+    }
+  },
+  "droppedDuplicates": [
+    {
+      "hash": "F3B9785609845CF700B5443335B1EE056B27071BD48CE4CE7F672C0373F72C87",
+      "droppedId": "1770893480888-p3hkxdo",
+      "keptId": "1770893480522-wzb2omw",
+      "reason": "duplicate-hash-lower-priority"
+    },
+    {
+      "hash": "FB3E6D9B10FDF1E8542A5506A1B815CBDFD25192B9F245E619456C62333212F3",
+      "droppedId": "1770910896771-76qckma",
+      "keptId": "1770910896793-oc8425i",
+      "reason": "duplicate-hash-lower-priority"
+    },
+    {
+      "hash": "EE252E991285D8116CCB6301BEF21D36C9B85D9B013000700EC9CEF5F2739891",
+      "droppedId": "1770912129928-8x9739u",
+      "keptId": "1770912130521-j7jyph0",
+      "reason": "duplicate-hash-lower-priority"
+    },
+    {
+      "hash": "C16AFEC6464B1D8F1A39A415478C3CF45ADC86F22B086DCDB03441F1452D2EA7",
+      "droppedId": "1770912259368-r7c5kyt",
+      "keptId": "1770912259534-ewrwyor",
+      "reason": "duplicate-hash-lower-priority"
+    },
+    {
+      "hash": "B5EECAF6102444B929C5AE40D2098B27FA00BB8FD0BEF7AB46DAD8EEBE0C9377",
+      "droppedId": "1770913114478-8ubvfvg",
+      "keptId": "1770913114605-en49ih3",
+      "reason": "duplicate-hash-lower-priority"
+    },
+    {
+      "hash": "1E83E55A1348E8F4F966694091CB62B14A8AB8A383C85E2AA8DD303E315505E1",
+      "droppedId": "1770914582882-2t2wcyd",
+      "keptId": "1770914583457-gw3wufk",
+      "reason": "duplicate-hash-lower-priority"
+    },
+    {
+      "hash": "17EB5E7658E7AE37F48AD12C8491459EA955B2DAD2B14A381C8346730BEF17BC",
+      "droppedId": "1770915565264-y48r02b",
+      "keptId": "1770915565449-06jgl4w",
+      "reason": "duplicate-hash-lower-priority"
+    },
+    {
+      "hash": "0B33C6C4BE3F75837576F728B107897AF03418EFE1E3EE24A0D6C3C46128FE1A",
+      "droppedId": "1770917180469-9n5q3bj",
+      "keptId": "1770917181290-25w36k3",
+      "reason": "duplicate-hash-lower-priority"
+    },
+    {
+      "hash": "2BE4AA6E5EA7338530676275AC47A585132A306B2BE446BD0C6159324810BB17",
+      "droppedId": "1770920424058-ghxa79f",
+      "keptId": "1770920425459-mh0tu2c",
+      "reason": "duplicate-hash-lower-priority"
+    },
+    {
+      "hash": "98D002ED5305DB9C8B5185235E97A6A1C3793CA6329CC8C5E327022BFF197A4E",
+      "droppedId": "1770920524608-vi8emd4",
+      "keptId": "1770920525612-4jxseo8",
+      "reason": "duplicate-hash-lower-priority"
+    },
+    {
+      "hash": "F70DD3D742CF7F9D3B0545327CBD0CB086DCF95EA23E49D9BBC39B0DF56B36FD",
+      "droppedId": "1770923537874-xkj01ym",
+      "keptId": "1770923539297-kljpppu",
+      "reason": "duplicate-hash-lower-priority"
+    },
+    {
+      "hash": "395630547EA13A433303B47963A707AFBDA5FF7D7BA1E5B5C5C596B2DCE0EEF8",
+      "droppedId": "1770929357815-5hod2f6",
+      "keptId": "1770929358412-h56lpqh",
+      "reason": "duplicate-hash-lower-priority"
+    }
+  ],
+  "repairedRecords": [
+    {
+      "id": "1770781513740-gc7snqp",
+      "hash": "24C6D8659A3964EDA4EAF2D6D216EB253509C557EE8EBE552A2EB2F301F29289",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.4088900000060676,
+        "amount": 0.125,
+        "filled": 0.125,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.4088900000060676,
+        "amount": 0.125,
+        "filled": 0.125,
+        "amountBase": 0.125,
+        "filledBase": 0.125,
+        "filledQuote": 0.17611125000075845,
+        "priceQuotePerBase": 1.4088900000060676,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770784642859-b4yyvns",
+      "hash": "FED85E26AED2B410CEE4CAB32E1F066303282B35B70703739DF8AC70CE9540A5",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7178288824031187,
+        "amount": 0.25,
+        "filled": 0.3481442529355263,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3930896687414418,
+        "amount": 0.25,
+        "filled": 0.24990799999977753,
+        "amountBase": 0.25,
+        "filledBase": 0.24990799999977753,
+        "filledQuote": 0.3481442529355263,
+        "priceQuotePerBase": 1.3930896687414418,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770784702075-do2pavh",
+      "hash": "83D5733BF5C3D311B4C0DF75AF09BEF2368FC97567D661D5A95B9F626F20F506",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3928000000014435,
+        "amount": 0.25,
+        "filled": 0.25,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3928000000014435,
+        "amount": 0.25,
+        "filled": 0.25,
+        "amountBase": 0.25,
+        "filledBase": 0.25,
+        "filledQuote": 0.3482000000003609,
+        "priceQuotePerBase": 1.3928000000014435,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770789269010-mem191y",
+      "hash": "CD5471E376E16AE2F2FB3E70EF2241E21250DE1570BADB6D625DA2419C73921D",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7261859360212439,
+        "amount": 0.25,
+        "filled": 0.34401519997663854,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3770577897431848,
+        "amount": 0.25,
+        "filled": 0.24981900000057067,
+        "amountBase": 0.25,
+        "filledBase": 0.24981900000057067,
+        "filledQuote": 0.34401519997663854,
+        "priceQuotePerBase": 1.3770577897431848,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770791592695-zcznpov",
+      "hash": "6B28B3DCC661D3A5A0248CA8BA8CABCBA747BAD4B58339EFEF8DBBADCCF6269F",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3705300000001444,
+        "amount": 0.125,
+        "filled": 0.125,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3705300000001444,
+        "amount": 0.125,
+        "filled": 0.125,
+        "amountBase": 0.125,
+        "filledBase": 0.125,
+        "filledQuote": 0.17131625000001804,
+        "priceQuotePerBase": 1.3705300000001444,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770808893382-r0mdn49",
+      "hash": "72F8E4B87E7D51E2BAAF55A102C5BEE12E56F1FAC3BD2F699810A1248E96F2F3",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7282865777624818,
+        "amount": 0.25,
+        "filled": 0.34318084066308074,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3730858573177396,
+        "amount": 0.25,
+        "filled": 0.24993400000016663,
+        "amountBase": 0.25,
+        "filledBase": 0.24993400000016663,
+        "filledQuote": 0.34318084066308074,
+        "priceQuotePerBase": 1.3730858573177396,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770809488655-ugjkixj",
+      "hash": "79DBEE5C9575A8F1FB019361B22D81D3DFCDF07C1A0579E2FB1BA8DA5BB36E44",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.373809997265198,
+        "amount": 0.125,
+        "filled": 0.125,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.373809997265198,
+        "amount": 0.125,
+        "filled": 0.125,
+        "amountBase": 0.125,
+        "filledBase": 0.125,
+        "filledQuote": 0.17172624965814975,
+        "priceQuotePerBase": 1.373809997265198,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770812604394-at3dw1x",
+      "hash": "7DD8FAC78D5D226413BE2734A53B41C3775E576EE7F34AAF3F09D8117D62C84A",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7266341205968333,
+        "amount": 0.25,
+        "filled": 0.34377548881820985,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3762084268471084,
+        "amount": 0.25,
+        "filled": 0.24979900000016642,
+        "amountBase": 0.25,
+        "filledBase": 0.24979900000016642,
+        "filledQuote": 0.34377548881820985,
+        "priceQuotePerBase": 1.3762084268471084,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770813395258-ch3uja1",
+      "hash": "B73ECD92DC33E7BEC0EB98B563F78EEE54ECBADE29BDB66AEE95568420B7BA7F",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3735592549999998,
+        "amount": 0.5,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3735592549999998,
+        "amount": 0.5,
+        "filled": 0,
+        "amountBase": 0.5,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3735592549999998,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770813588648-c6v8rpa",
+      "hash": "76B43B7F1806F2BD68E426FBE476596EE1F7BCC99BDCB7422689461DE9C6DBF7",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3733499999980268,
+        "amount": 0.5,
+        "filled": 0.5,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3733499999980268,
+        "amount": 0.5,
+        "filled": 0.5,
+        "amountBase": 0.5,
+        "filledBase": 0.5,
+        "filledQuote": 0.6866749999990134,
+        "priceQuotePerBase": 1.3733499999980268,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770816910542-i24p5zj",
+      "hash": "CCF667C01B6E65F36DF9F843C76C466927DF965F26AC44F9D07DF8809D401D4A",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7263333770143703,
+        "amount": 0.5,
+        "filled": 0.687963703463538,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3767782558892585,
+        "amount": 0.5,
+        "filled": 0.4996909999999844,
+        "amountBase": 0.5,
+        "filledBase": 0.4996909999999844,
+        "filledQuote": 0.687963703463538,
+        "priceQuotePerBase": 1.3767782558892585,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770819442344-zh2leg3",
+      "hash": "C0435099D8625878885F481CB4827ED4D03073FD6D279996C1538E09F45F326B",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.399307547714922,
+        "amount": 1,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.399307547714922,
+        "amount": 1,
+        "filled": 0,
+        "amountBase": 1,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.399307547714922,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770821291861-ata1jkp",
+      "hash": "A7C48DD9A4B469253EDE80D64AA323861E8F7E28E72D3747303293748EA4129D",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3690600000009,
+        "amount": 0.5,
+        "filled": 0.5,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3690600000009,
+        "amount": 0.5,
+        "filled": 0.5,
+        "amountBase": 0.5,
+        "filledBase": 0.5,
+        "filledQuote": 0.68453000000045,
+        "priceQuotePerBase": 1.3690600000009,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770823285461-9dhtc1n",
+      "hash": "65AC5F752CA11B402494301B11C5FC35FD4701898881298283A07DE2A02811C2",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7405217312334814,
+        "amount": 1,
+        "filled": 1.348045516959246,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3503992628741732,
+        "amount": 1,
+        "filled": 0.9982570000001943,
+        "amountBase": 1,
+        "filledBase": 0.9982570000001943,
+        "filledQuote": 1.348045516959246,
+        "priceQuotePerBase": 1.3503992628741732,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770824988372-9vnepqi",
+      "hash": "340D112B59C748B8F40278D73756BC061C2E38B7F7EDF178C6222061A0D9F6AA",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.351419998386973,
+        "amount": 0.5,
+        "filled": 0.5,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.351419998386973,
+        "amount": 0.5,
+        "filled": 0.5,
+        "amountBase": 0.5,
+        "filledBase": 0.5,
+        "filledQuote": 0.6757099991934865,
+        "priceQuotePerBase": 1.351419998386973,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770828139323-fzcrsla",
+      "hash": "0DAA3A8575B433064DD5BC2128E89889D320477C7F4BD0EDAF55F91B3044D069",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7381386925415088,
+        "amount": 0.5,
+        "filled": 0.6767048050005542,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3547589499161306,
+        "amount": 0.5,
+        "filled": 0.4995019999996657,
+        "amountBase": 0.5,
+        "filledBase": 0.4995019999996657,
+        "filledQuote": 0.6767048050005542,
+        "priceQuotePerBase": 1.3547589499161306,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770828425256-ui9ikjn",
+      "hash": "9B493891089B1BA587ED8D7DB29B93ED1A911DF11270402C968FA8ED6A2AC0C0",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3536212191899821,
+        "amount": 1,
+        "filled": 1,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3536212191899821,
+        "amount": 1,
+        "filled": 1,
+        "amountBase": 1,
+        "filledBase": 1,
+        "filledQuote": 1.3536212191899821,
+        "priceQuotePerBase": 1.3536212191899821,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770831293958-kxxp3vr",
+      "hash": "67F5A0CBCA4156B1F4D2E367652A3F1038144A73605194E5381B7A27597431C1",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7258212463414117,
+        "amount": 1,
+        "filled": 1.3774631220003357,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3777496939372043,
+        "amount": 1,
+        "filled": 0.9997919999996157,
+        "amountBase": 1,
+        "filledBase": 0.9997919999996157,
+        "filledQuote": 1.3774631220003357,
+        "priceQuotePerBase": 1.3777496939372043,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770833046319-lgmtykt",
+      "hash": "3736D3C71BFB1D772D84462C3B950DA8070A007C4A53B7EB67DCE828C09F651D",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3689200000007986,
+        "amount": 0.5,
+        "filled": 0.5,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3689200000007986,
+        "amount": 0.5,
+        "filled": 0.5,
+        "amountBase": 0.5,
+        "filledBase": 0.5,
+        "filledQuote": 0.6844600000003993,
+        "priceQuotePerBase": 1.3689200000007986,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770834836779-cc9y72w",
+      "hash": "62E47A8AD61FF98DCCE27FB0B5925F1C5CFEF71F0496ACD001ABE95C0AA01D1D",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7256107940800688,
+        "amount": 0.5,
+        "filled": 0.6890126278140087,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.378149289065914,
+        "amount": 0.5,
+        "filled": 0.49995499999931775,
+        "amountBase": 0.5,
+        "filledBase": 0.49995499999931775,
+        "filledQuote": 0.6890126278140087,
+        "priceQuotePerBase": 1.378149289065914,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770835149843-frpfd5m",
+      "hash": "7E129E495CF3017AAD6AFE37F23FD13FA3FF179CDCA00F8EB134BD90904AF3FB",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3797122272039986,
+        "amount": 0.5,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3797122272039986,
+        "amount": 0.5,
+        "filled": 0,
+        "amountBase": 0.5,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3797122272039986,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770837145342-tvk5jg5",
+      "hash": "830C206B00A814171A244BAAB883557B03FBBC60EC050482CAE13A6AC83C53C7",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3815100000010716,
+        "amount": 1,
+        "filled": 1,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3815100000010716,
+        "amount": 1,
+        "filled": 1,
+        "amountBase": 1,
+        "filledBase": 1,
+        "filledQuote": 1.3815100000010716,
+        "priceQuotePerBase": 1.3815100000010716,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770842966877-2yvxu8k",
+      "hash": "F502B292E723B429BF95B6B8D16412AD1A2D2BBCF7275D76855706754AE63841",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7227631992386176,
+        "amount": 0.5,
+        "filled": 0.6917563048682496,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3835790215293648,
+        "amount": 0.5,
+        "filled": 0.4999760000000606,
+        "amountBase": 0.5,
+        "filledBase": 0.4999760000000606,
+        "filledQuote": 0.6917563048682496,
+        "priceQuotePerBase": 1.3835790215293648,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770846255978-4928o4i",
+      "hash": "99A38B01367BAE830A1ED531217653D0DB6E8F202A315B9DC008C4494FA6CD09",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3884699999998702,
+        "amount": 1,
+        "filled": 1,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3884699999998702,
+        "amount": 1,
+        "filled": 1,
+        "amountBase": 1,
+        "filledBase": 1,
+        "filledQuote": 1.3884699999998702,
+        "priceQuotePerBase": 1.3884699999998702,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770855755836-ot1kc40",
+      "hash": "3D2381FEB91888FCE012D1D8000E9AA4F9C1882252DCC50B48E278F64BA87C0E",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3784122065727695,
+        "amount": 0.5,
+        "filled": 0.5,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3784122065727695,
+        "amount": 0.5,
+        "filled": 0.5,
+        "amountBase": 0.5,
+        "filledBase": 0.5,
+        "filledQuote": 0.6892061032863848,
+        "priceQuotePerBase": 1.3784122065727695,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770862247570-ui30vk0",
+      "hash": "2504BA92ABE65570138047C4147952DEF2E5A79B13F1416B77799F9DBFE75ED9",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3860597792636,
+        "amount": 0.5,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3860597792636,
+        "amount": 0.5,
+        "filled": 0,
+        "amountBase": 0.5,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3860597792636,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770868874073-hwme9ec",
+      "hash": "6A3E2017C01620C05E314458DC27CFE92C6B49942A9527EBBFC57A1178319683",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3750890191897664,
+        "amount": 1,
+        "filled": 0.9999999999999999,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3750890191897664,
+        "amount": 1,
+        "filled": 0.9999999999999999,
+        "amountBase": 1,
+        "filledBase": 0.9999999999999999,
+        "filledQuote": 1.3750890191897662,
+        "priceQuotePerBase": 1.3750890191897664,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770870398861-d1vgsd6",
+      "hash": "1B2D8E7A42289C9FE548AE99F346FE852210FF1EF3CE23647DC03911DF171A99",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7269618841389578,
+        "amount": 0.5,
+        "filled": 0.6877348192638237,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3755879390904233,
+        "amount": 0.5,
+        "filled": 0.4999569999999949,
+        "amountBase": 0.5,
+        "filledBase": 0.4999569999999949,
+        "filledQuote": 0.6877348192638237,
+        "priceQuotePerBase": 1.3755879390904233,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770870433929-91z3ejb",
+      "hash": "CCB7147B8EB31A2FF5E8C4C06A5F8421F37097C9FA94E37AFCB5BD29251B8912",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3771001335113489,
+        "amount": 0.5,
+        "filled": 0.4999999999999998,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3771001335113489,
+        "amount": 0.5,
+        "filled": 0.4999999999999998,
+        "amountBase": 0.5,
+        "filledBase": 0.4999999999999998,
+        "filledQuote": 0.6885500667556741,
+        "priceQuotePerBase": 1.3771001335113489,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770871569135-sv58p9p",
+      "hash": "055EC941BA917A6C18E4F32F1E8504FE00E76489A866DDB184FB126A19E1754F",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7257370384648661,
+        "amount": 0.5,
+        "filled": 0.6889189520461514,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3779095553883753,
+        "amount": 0.5,
+        "filled": 0.4999740000002931,
+        "amountBase": 0.5,
+        "filledBase": 0.4999740000002931,
+        "filledQuote": 0.6889189520461514,
+        "priceQuotePerBase": 1.3779095553883753,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770872000599-ujy45e3",
+      "hash": "796E4982D66FE95FC6A8C0E33059E8453CBD930A29BAF1AF506F0411AE8B0D44",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3770619333333443,
+        "amount": 0.5,
+        "filled": 0.5,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3770619333333443,
+        "amount": 0.5,
+        "filled": 0.5,
+        "amountBase": 0.5,
+        "filledBase": 0.5,
+        "filledQuote": 0.6885309666666721,
+        "priceQuotePerBase": 1.3770619333333443,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770874971088-7k6zbek",
+      "hash": "469029C992E8EE537F0EE84E028C9E482181BB62792FE006C191B4264CDD7D99",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3778277908450707,
+        "amount": 0.5,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3778277908450707,
+        "amount": 0.5,
+        "filled": 0,
+        "amountBase": 0.5,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3778277908450707,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770874983171-ts2jf5d",
+      "hash": "583FAE268879CA5FBD408D586DB4CB59C9AAE6723117155C4BF8AA39B8CAD52F",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7256422077142437,
+        "amount": 0.5,
+        "filled": 0.6889138954231839,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3780896278759431,
+        "amount": 0.5,
+        "filled": 0.49990499999989885,
+        "amountBase": 0.5,
+        "filledBase": 0.49990499999989885,
+        "filledQuote": 0.6889138954231839,
+        "priceQuotePerBase": 1.3780896278759431,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770875005611-rlwpju9",
+      "hash": "1E0299B110A34E3D7E72B6BC7F2B908834DBED09DBC97FF40CA1EB6E2A4E6469",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "FILLED_BASE_CLAMPED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 0.7249341098688331,
+        "amount": 0.5,
+        "filled": 0.689717856,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 0.7249341098688331,
+        "amount": 0.5,
+        "filled": 0.5,
+        "amountBase": 0.5,
+        "filledBase": 0.5,
+        "filledQuote": 0.5,
+        "priceQuotePerBase": 0.7249341098688331,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770877009806-rna73pm",
+      "hash": "AEE6632C0279A09BC1E337E2B38B3557B33ABD79AB7DA8B4D9BD5774725D8E6D",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7241341029040399,
+        "amount": 0.5,
+        "filled": 0.6902050296976086,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.380959681348576,
+        "amount": 0.5,
+        "filled": 0.49980099999993405,
+        "amountBase": 0.5,
+        "filledBase": 0.49980099999993405,
+        "filledQuote": 0.6902050296976086,
+        "priceQuotePerBase": 1.380959681348576,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770878925937-7mtg7el",
+      "hash": "ED102860971DDAB5493FAB61B5A4CFC87AD0144AC73914806E2DE4C3F070B772",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3813041370394332,
+        "amount": 0.5,
+        "filled": 0.5,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3813041370394332,
+        "amount": 0.5,
+        "filled": 0.5,
+        "amountBase": 0.5,
+        "filledBase": 0.5,
+        "filledQuote": 0.6906520685197166,
+        "priceQuotePerBase": 1.3813041370394332,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "manual-AD5645A4",
+      "hash": "AD5645A40888833848ACC1379B2CB79596EBBA2A63E68C10A0E4EC05C6168BDC",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.304692,
+        "amount": 6,
+        "filled": 6,
+        "source": "manual"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.304692,
+        "amount": 6,
+        "filled": 6,
+        "amountBase": 6,
+        "filledBase": 6,
+        "filledQuote": 7.828151999999999,
+        "priceQuotePerBase": 1.304692,
+        "source": "manual"
+      }
+    },
+    {
+      "id": "1770890390025-02jqznb",
+      "hash": "7189B9A99DADA5B4C393912BAE87AAB4C93174DCB742778BDE2DC10A23C3B2C4",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3950568702290076,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3950568702290076,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3950568702290076,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770893480522-wzb2omw",
+      "hash": "F3B9785609845CF700B5443335B1EE056B27071BD48CE4CE7F672C0373F72C87",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.39758891300718,
+        "amount": 0.149725,
+        "filled": 0.149725,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.39758891300718,
+        "amount": 0.149725,
+        "filled": 0.149725,
+        "amountBase": 0.149725,
+        "filledBase": 0.149725,
+        "filledQuote": 0.209254,
+        "priceQuotePerBase": 1.39758891300718,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770893480888-p3hkxdo",
+      "hash": "F3B9785609845CF700B5443335B1EE056B27071BD48CE4CE7F672C0373F72C87",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.39758891300718,
+        "amount": 0.15000000000000002,
+        "filled": 0.149725,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.39758891300718,
+        "amount": 0.15000000000000002,
+        "filled": 0.149725,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0.149725,
+        "filledQuote": 0.209254,
+        "priceQuotePerBase": 1.39758891300718,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770910873223-6d3voot",
+      "hash": "5F073482DF27143AB0FD63400FEEC9E244D3AC097854CCE482BA1725CE61AEA7",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3803999999999998,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3803999999999998,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3803999999999998,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770910896771-76qckma",
+      "hash": "FB3E6D9B10FDF1E8542A5506A1B815CBDFD25192B9F245E619456C62333212F3",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.380250000001979,
+        "amount": 0.075,
+        "filled": 0.075,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.380250000001979,
+        "amount": 0.075,
+        "filled": 0.075,
+        "amountBase": 0.075,
+        "filledBase": 0.075,
+        "filledQuote": 0.10351875000014843,
+        "priceQuotePerBase": 1.380250000001979,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770910896793-oc8425i",
+      "hash": "FB3E6D9B10FDF1E8542A5506A1B815CBDFD25192B9F245E619456C62333212F3",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7245064299917702,
+        "amount": 0.07500000000000001,
+        "filled": 0.10351875000014843,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3802500000053266,
+        "amount": 0.07500000000000001,
+        "filled": 0.0749999999998181,
+        "amountBase": 0.07500000000000001,
+        "filledBase": 0.0749999999998181,
+        "filledQuote": 0.10351875000014843,
+        "priceQuotePerBase": 1.3802500000053266,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770911453825-k0vrdg0",
+      "hash": "EDA8F2C811466FA41FDDBBD310A962A60BC36BDB427A0A06FE518B6BDC940EA9",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3832699998601448,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3832699998601448,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3832699998601448,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770911730321-gbpxp35",
+      "hash": "1924FD8A8D71237E239D5EA293A7A087DCDB4D352650A0C0CBBDFA8A0F2EF83A",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3768899994856993,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3768899994856993,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3768899994856993,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770912114954-nibdhiq",
+      "hash": "9E95725AAD3E0F24A3FBADB4208BF1CA1D78F8053FF43348419D1F1B459DBC34",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3749333189738706,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3749333189738706,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3749333189738706,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770912129928-8x9739u",
+      "hash": "EE252E991285D8116CCB6301BEF21D36C9B85D9B013000700EC9CEF5F2739891",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3734299999972186,
+        "amount": 0.15,
+        "filled": 0.15,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3734299999972186,
+        "amount": 0.15,
+        "filled": 0.15,
+        "amountBase": 0.15,
+        "filledBase": 0.15,
+        "filledQuote": 0.2060144999995828,
+        "priceQuotePerBase": 1.3734299999972186,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770912130521-j7jyph0",
+      "hash": "EE252E991285D8116CCB6301BEF21D36C9B85D9B013000700EC9CEF5F2739891",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3734300000005495,
+        "amount": 0.15000000000000002,
+        "filled": 0.1499999999996362,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3734300000005495,
+        "amount": 0.15000000000000002,
+        "filled": 0.1499999999996362,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0.1499999999996362,
+        "filledQuote": 0.20601449999958277,
+        "priceQuotePerBase": 1.3734300000005495,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770912259368-r7c5kyt",
+      "hash": "C16AFEC6464B1D8F1A39A415478C3CF45ADC86F22B086DCDB03441F1452D2EA7",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.375378368642637,
+        "amount": 0.149986,
+        "filled": 0.149986,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.375378368642637,
+        "amount": 0.149986,
+        "filled": 0.149986,
+        "amountBase": 0.149986,
+        "filledBase": 0.149986,
+        "filledQuote": 0.20628749999923457,
+        "priceQuotePerBase": 1.375378368642637,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770912259534-ewrwyor",
+      "hash": "C16AFEC6464B1D8F1A39A415478C3CF45ADC86F22B086DCDB03441F1452D2EA7",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7270726534613595,
+        "amount": 0.15000000000000002,
+        "filled": 0.20628749999923457,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.375378368639394,
+        "amount": 0.15000000000000002,
+        "filled": 0.14998600000035367,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0.14998600000035367,
+        "filledQuote": 0.20628749999923457,
+        "priceQuotePerBase": 1.375378368639394,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770912649697-xj7fjek",
+      "hash": "999A41762EEA1090442BBFA4B1B5C9893BA34B853DBB1F08A1CA2BF01DC29453",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3658314432437129,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3658314432437129,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "amountBase": 0.07500000000000001,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3658314432437129,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770912821125-ul8wakn",
+      "hash": "EC6C4A5409B1A83CFCF0F836B787FB2926E94F387BB3164A98DA08206608C7CB",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.35987,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.35987,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.35987,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770912918437-qhraf66",
+      "hash": "686CD8762D267B169F8E4617A156468993C935CA016DD151FEB1323692DEC0A0",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3563313417059508,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3563313417059508,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3563313417059508,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770913097428-rxi7sgt",
+      "hash": "860F52F779592CFDC61B68F6A83F9B2E187902ACC4EFE7C740AFE65F4AE9BD9F",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.36099,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.36099,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.36099,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770913114478-8ubvfvg",
+      "hash": "B5EECAF6102444B929C5AE40D2098B27FA00BB8FD0BEF7AB46DAD8EEBE0C9377",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.359279999996943,
+        "amount": 0.15,
+        "filled": 0.15,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.359279999996943,
+        "amount": 0.15,
+        "filled": 0.15,
+        "amountBase": 0.15,
+        "filledBase": 0.15,
+        "filledQuote": 0.20389199999954144,
+        "priceQuotePerBase": 1.359279999996943,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770913114605-en49ih3",
+      "hash": "B5EECAF6102444B929C5AE40D2098B27FA00BB8FD0BEF7AB46DAD8EEBE0C9377",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.359279999991998,
+        "amount": 0.15000000000000002,
+        "filled": 0.1500000000005457,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.359279999991998,
+        "amount": 0.15000000000000002,
+        "filled": 0.1500000000005457,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0.1500000000005457,
+        "filledQuote": 0.20389199999954147,
+        "priceQuotePerBase": 1.359279999991998,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770914265474-feoaq5p",
+      "hash": "AB86428F8DD4AB40F48EFDCEA925D64F1FBDBDBE58A6FC7145313318CEFA6DF1",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.36234,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.36234,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "amountBase": 0.07500000000000001,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.36234,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770914397544-6k5inr2",
+      "hash": "B6B75D23BAC45E11D0D91A8156AFC9CD084C7FB4D531D9A69A85D4E1C21FD763",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3622300010018475,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3622300010018475,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3622300010018475,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770914544223-ewml6bc",
+      "hash": "B8C9F4BD7FC06566E7CF5A8F48BBEC030B7CD54C2D20AAA5C9DFA75016C47C73",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7331764314887568,
+        "amount": 0.07500000000000001,
+        "filled": 0.10229325000000244,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3639281857021,
+        "amount": 0.07500000000000001,
+        "filled": 0.07499900000038906,
+        "amountBase": 0.07500000000000001,
+        "filledBase": 0.07499900000038906,
+        "filledQuote": 0.10229325000000244,
+        "priceQuotePerBase": 1.3639281857021,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770914582882-2t2wcyd",
+      "hash": "1E83E55A1348E8F4F966694091CB62B14A8AB8A383C85E2AA8DD303E315505E1",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3645899999998317,
+        "amount": 0.15,
+        "filled": 0.15,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3645899999998317,
+        "amount": 0.15,
+        "filled": 0.15,
+        "amountBase": 0.15,
+        "filledBase": 0.15,
+        "filledQuote": 0.20468849999997474,
+        "priceQuotePerBase": 1.3645899999998317,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770914583457-gw3wufk",
+      "hash": "1E83E55A1348E8F4F966694091CB62B14A8AB8A383C85E2AA8DD303E315505E1",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3645899999948672,
+        "amount": 0.15000000000000002,
+        "filled": 0.1500000000005457,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3645899999948672,
+        "amount": 0.15000000000000002,
+        "filled": 0.1500000000005457,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0.1500000000005457,
+        "filledQuote": 0.20468849999997474,
+        "priceQuotePerBase": 1.3645899999948672,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770915328876-cqflhi2",
+      "hash": "1149E19CF17CAC0A392B0765327D5BA40FCF693A61A1603FC8F967A78DD3BF2F",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3460100000000002,
+        "amount": 0.07500000000000001,
+        "filled": 0.075,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3460100000000002,
+        "amount": 0.07500000000000001,
+        "filled": 0.075,
+        "amountBase": 0.07500000000000001,
+        "filledBase": 0.075,
+        "filledQuote": 0.10095075,
+        "priceQuotePerBase": 1.3460100000000002,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770915542937-vwtj7hr",
+      "hash": "F5CE84913B6A6BC0017AD846394C81D7D99C4044DE2CDB8B20EAFED459984826",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3526000005518677,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.3526000005518677,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3526000005518677,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770915565264-y48r02b",
+      "hash": "17EB5E7658E7AE37F48AD12C8491459EA955B2DAD2B14A381C8346730BEF17BC",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3525699999930416,
+        "amount": 0.15,
+        "filled": 0.15,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3525699999930416,
+        "amount": 0.15,
+        "filled": 0.15,
+        "amountBase": 0.15,
+        "filledBase": 0.15,
+        "filledQuote": 0.20288549999895625,
+        "priceQuotePerBase": 1.3525699999930416,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770915565449-06jgl4w",
+      "hash": "17EB5E7658E7AE37F48AD12C8491459EA955B2DAD2B14A381C8346730BEF17BC",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3525699999963219,
+        "amount": 0.15000000000000002,
+        "filled": 0.1499999999996362,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3525699999963219,
+        "amount": 0.15000000000000002,
+        "filled": 0.1499999999996362,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0.1499999999996362,
+        "filledQuote": 0.20288549999895622,
+        "priceQuotePerBase": 1.3525699999963219,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770916136572-28e22ch",
+      "hash": "B9C62E259613AFF8BFBD066E7903B21768B70DC60A6513792C55E1F924D34D1A",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3530000012170833,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3530000012170833,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "amountBase": 0.07500000000000001,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3530000012170833,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770916653158-gsd4ygk",
+      "hash": "2B793F84D96DA665DF9C3A0F213334BE9161D4C197B845166D9CCD417E832AE6",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3536900000000003,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3536900000000003,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3536900000000003,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770916673350-pog9jh9",
+      "hash": "850AF9CD58ACF68553ECCB2E74DD5750C54298B6BC86B791C83A25E76EEE91AE",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3532999995742512,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3532999995742512,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3532999995742512,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770917130498-blka4wo",
+      "hash": "1286E44AA66CB88DD7DEE86C1309ECF7873B31FCE8A149D62D33DA7006DE9662",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3618700000000001,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3618700000000001,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3618700000000001,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770917141352-r3wvs2g",
+      "hash": "8CF581B7F88825D9FA595D2804EE4CEFAB01638EF364E02D7EA12A8C6E529BFF",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.36147,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.36147,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.36147,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770917169204-upzp09q",
+      "hash": "8C9CA41BB472C733BE4B6621A746A9B4069DC7872C093DE8DD6ACFFC92F66D2F",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.36109,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.36109,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.36109,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770917180469-9n5q3bj",
+      "hash": "0B33C6C4BE3F75837576F728B107897AF03418EFE1E3EE24A0D6C3C46128FE1A",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3609796103382792,
+        "amount": 0.149978,
+        "filled": 0.149978,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3609796103382792,
+        "amount": 0.149978,
+        "filled": 0.149978,
+        "amountBase": 0.149978,
+        "filledBase": 0.149978,
+        "filledQuote": 0.20411699999931443,
+        "priceQuotePerBase": 1.3609796103382792,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770917181290-25w36k3",
+      "hash": "0B33C6C4BE3F75837576F728B107897AF03418EFE1E3EE24A0D6C3C46128FE1A",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7347648652486961,
+        "amount": 0.15000000000000002,
+        "filled": 0.20411699999931443,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3609796103431397,
+        "amount": 0.15000000000000002,
+        "filled": 0.14997799999946437,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0.14997799999946437,
+        "filledQuote": 0.20411699999931443,
+        "priceQuotePerBase": 1.3609796103431397,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770917348026-ls24ift",
+      "hash": "EDFD367C258FC8EA6C96A9CAA7B8C6E52E0EE7E8C208C0039820EA2038872550",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "FILLED_BASE_CLAMPED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 0.7308429997718269,
+        "amount": 0.07500000000000001,
+        "filled": 0.102621219637344,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 0.7308429997718269,
+        "amount": 0.07500000000000001,
+        "filled": 0.07500000000000001,
+        "amountBase": 0.07500000000000001,
+        "filledBase": 0.07500000000000001,
+        "filledQuote": 0.075,
+        "priceQuotePerBase": 0.7308429997718269,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770918191185-dg12yu0",
+      "hash": "A10BE32D2E0959475467CB6C2DB1FA0E9B170C86CBBA93B825F0DFE3FAA73323",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3704864182209078,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3704864182209078,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "amountBase": 0.07500000000000001,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3704864182209078,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770920424058-ghxa79f",
+      "hash": "2BE4AA6E5EA7338530676275AC47A585132A306B2BE446BD0C6159324810BB17",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3527083672060491,
+        "amount": 0.149969,
+        "filled": 0.149969,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.3527083672060491,
+        "amount": 0.149969,
+        "filled": 0.149969,
+        "amountBase": 0.149969,
+        "filledBase": 0.149969,
+        "filledQuote": 0.20286432112152397,
+        "priceQuotePerBase": 1.3527083672060491,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770920425459-mh0tu2c",
+      "hash": "2BE4AA6E5EA7338530676275AC47A585132A306B2BE446BD0C6159324810BB17",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "INVERTED_PRICE_FIXED",
+        "UNIT_MIX_FIXED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 0.7392576435864147,
+        "amount": 0.15000000000000002,
+        "filled": 0.20286432112152397,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.352708367205548,
+        "amount": 0.15000000000000002,
+        "filled": 0.14996900000005556,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0.14996900000005556,
+        "filledQuote": 0.20286432112152397,
+        "priceQuotePerBase": 1.352708367205548,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770920500019-wkta23o",
+      "hash": "62FEBB77FAA290AF8BD3A413217D506961A829833912DE90D5FBA6BEE9E99278",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.354,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "REJECTED",
+        "price": 1.354,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "amountBase": 0.07500000000000001,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.354,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770920524608-vi8emd4",
+      "hash": "98D002ED5305DB9C8B5185235E97A6A1C3793CA6329CC8C5E327022BFF197A4E",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3541370892018811,
+        "amount": 0.075,
+        "filled": 0.075,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3541370892018811,
+        "amount": 0.075,
+        "filled": 0.075,
+        "amountBase": 0.075,
+        "filledBase": 0.075,
+        "filledQuote": 0.10156028169014109,
+        "priceQuotePerBase": 1.3541370892018811,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770920525612-4jxseo8",
+      "hash": "98D002ED5305DB9C8B5185235E97A6A1C3793CA6329CC8C5E327022BFF197A4E",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.354137089201882,
+        "amount": 0.07500000000000001,
+        "filled": 0.07499999999999996,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.354137089201882,
+        "amount": 0.07500000000000001,
+        "filled": 0.07499999999999996,
+        "amountBase": 0.07500000000000001,
+        "filledBase": 0.07499999999999996,
+        "filledQuote": 0.10156028169014109,
+        "priceQuotePerBase": 1.354137089201882,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770922187441-aw5olie",
+      "hash": "8ECF4094BE4D70CFC3D72857DE65508FF60C4F3B451ABF4D180E77F5636AC27F",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3628063462075999,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.3628063462075999,
+        "amount": 0.07500000000000001,
+        "filled": 0,
+        "amountBase": 0.07500000000000001,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.3628063462075999,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770923519259-pg9bije",
+      "hash": "AA49140445209FB182F2318AEF1273869736CD1202571B86E316B899F526ABAA",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.355,
+        "amount": 0.15000000000000002,
+        "filled": 0.15,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "FILLED",
+        "price": 1.355,
+        "amount": 0.15000000000000002,
+        "filled": 0.15,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0.15,
+        "filledQuote": 0.20325,
+        "priceQuotePerBase": 1.355,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770923537874-xkj01ym",
+      "hash": "F70DD3D742CF7F9D3B0545327CBD0CB086DCF95EA23E49D9BBC39B0DF56B36FD",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3567600000048212,
+        "amount": 0.15,
+        "filled": 0.15,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3567600000048212,
+        "amount": 0.15,
+        "filled": 0.15,
+        "amountBase": 0.15,
+        "filledBase": 0.15,
+        "filledQuote": 0.20351400000072317,
+        "priceQuotePerBase": 1.3567600000048212,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770923539297-kljpppu",
+      "hash": "F70DD3D742CF7F9D3B0545327CBD0CB086DCF95EA23E49D9BBC39B0DF56B36FD",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3567599999998854,
+        "amount": 0.15000000000000002,
+        "filled": 0.1500000000005457,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3567599999998854,
+        "amount": 0.15000000000000002,
+        "filled": 0.1500000000005457,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0.1500000000005457,
+        "filledQuote": 0.2035140000007232,
+        "priceQuotePerBase": 1.3567599999998854,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770924046085-2bz0t5f",
+      "hash": "32F8A8D85801ED03D78A42CCFEAE642C7E13C422E4CE80AA7CCC1928DFA52FB9",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.361908209194864,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "SELL",
+        "status": "REJECTED",
+        "price": 1.361908209194864,
+        "amount": 0.15000000000000002,
+        "filled": 0,
+        "amountBase": 0.15000000000000002,
+        "filledBase": 0,
+        "priceQuotePerBase": 1.361908209194864,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770929357815-5hod2f6",
+      "hash": "395630547EA13A433303B47963A707AFBDA5FF7D7BA1E5B5C5C596B2DCE0EEF8",
+      "pairOriginal": "XRP/RLUSD",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [],
+      "before": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3539400012359692,
+        "amount": 0.25,
+        "filled": 0.25,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3539400012359692,
+        "amount": 0.25,
+        "filled": 0.25,
+        "amountBase": 0.25,
+        "filledBase": 0.25,
+        "filledQuote": 0.3384850003089923,
+        "priceQuotePerBase": 1.3539400012359692,
+        "source": "bot"
+      }
+    },
+    {
+      "id": "1770929358412-h56lpqh",
+      "hash": "395630547EA13A433303B47963A707AFBDA5FF7D7BA1E5B5C5C596B2DCE0EEF8",
+      "pairOriginal": "XRP/524C555344000000000000000000000000000000",
+      "pairCanonical": "XRP/RLUSD",
+      "repairFlags": [
+        "STATUS_PARTIAL_TO_FILLED"
+      ],
+      "before": {
+        "pair": "XRP/524C555344000000000000000000000000000000",
+        "side": "BUY",
+        "status": "PARTIAL",
+        "price": 1.3539400012359692,
+        "amount": 0.25,
+        "filled": 0.25,
+        "source": "bot"
+      },
+      "after": {
+        "pair": "XRP/RLUSD",
+        "side": "BUY",
+        "status": "FILLED",
+        "price": 1.3539400012359692,
+        "amount": 0.25,
+        "filled": 0.25,
+        "amountBase": 0.25,
+        "filledBase": 0.25,
+        "filledQuote": 0.3384850003089923,
+        "priceQuotePerBase": 1.3539400012359692,
+        "source": "bot"
+      }
+    }
+  ]
+}

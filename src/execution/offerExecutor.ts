@@ -12,6 +12,7 @@ import { ExecutionQualityCollector, InFlightTrace } from '../analytics/execution
 import { ExposureTracker } from '../risk/exposureTracker';
 import { FlowRegime } from '../market/flowMetrics';
 import { canonicalizePairKey, decodeXrplCurrencyCode, toXrplCurrency } from '../xrpl/currency';
+import { quarantineTradeRecord, validateTradeIntegrity } from '../analytics/tradeIntegrity';
 import type { TradeToastEvent } from '../observability/tradeToastEvents';
 
 export interface OfferParams {
@@ -1338,27 +1339,74 @@ export class OfferExecutor {
 
             // Record trade with actual fill amounts
             if (intent) {
-                tradeHistory.recordTrade({
-                    pair: canonicalPair,
-                    side: intent.side as 'BUY' | 'SELL',
-                    price: fillResult.effectivePrice || intent.price,
-                    priceQuotePerBase: fillResult.effectivePrice || intent.price,
-                    amount: intent.amount,
-                    amountBase: intent.amount,
-                    filled: fillResult.baseFilled || intent.amount,
-                    filledBase: fillResult.baseFilled || intent.amount,
-                    filledQuote: fillResult.quoteFilled || ((fillResult.baseFilled || intent.amount) * (fillResult.effectivePrice || intent.price)),
-                    fee: 0.000012, // Typical XRPL transaction fee
-                    pnl: 0, // P&L calculated separately by strategy
-                    hash: res.result.hash,
-                    paper: false,
-                    status,
-                    slippageBps: fillResult.slippageBps,
-                });
-
-                // Compute cost realism metrics
                 const side = intent.side.toLowerCase() as 'buy' | 'sell';
                 const actualFillPrice = fillResult.effectivePrice || intent.price;
+                const filledBase = fillResult.baseFilled || intent.amount;
+                const filledQuote = fillResult.quoteFilled || (filledBase * actualFillPrice);
+                const integrityInput = {
+                    pair: canonicalPair,
+                    side: intent.side as 'BUY' | 'SELL',
+                    status,
+                    amountBase: intent.amount,
+                    filledBase,
+                    filledQuote,
+                    priceQuotePerBase: actualFillPrice,
+                    txHash: res.result.hash,
+                    source: 'bot',
+                } as const;
+                const integrity = validateTradeIntegrity(
+                    intentBaselinePrice != null
+                        ? { ...integrityInput, expectedPrice: intentBaselinePrice }
+                        : integrityInput
+                );
+
+                if (!integrity.ok) {
+                    logger.error({
+                        txHash: res.result.hash,
+                        pair: canonicalPair,
+                        side: intent.side,
+                        status,
+                        amountBase: intent.amount,
+                        filledBase,
+                        filledQuote,
+                        priceQuotePerBase: actualFillPrice,
+                        expectedPrice: intentBaselinePrice,
+                        reasons: integrity.reasons,
+                    }, 'Blocked corrupted fill persistence');
+                    quarantineTradeRecord({
+                        type: 'executor-fill-persistence-blocked',
+                        txHash: res.result.hash,
+                        pair: canonicalPair,
+                        side: intent.side,
+                        status,
+                        amountBase: intent.amount,
+                        filledBase,
+                        filledQuote,
+                        priceQuotePerBase: actualFillPrice,
+                        expectedPrice: intentBaselinePrice,
+                        reasons: integrity.reasons,
+                    });
+                } else {
+                    tradeHistory.recordTrade({
+                        pair: canonicalPair,
+                        side: intent.side as 'BUY' | 'SELL',
+                        price: actualFillPrice,
+                        priceQuotePerBase: actualFillPrice,
+                        amount: intent.amount,
+                        amountBase: intent.amount,
+                        filled: filledBase,
+                        filledBase,
+                        filledQuote,
+                        fee: 0.000012, // Typical XRPL transaction fee
+                        pnl: 0, // P&L calculated separately by strategy
+                        hash: res.result.hash,
+                        paper: false,
+                        status,
+                        slippageBps: fillResult.slippageBps,
+                    });
+                }
+
+                // Compute cost realism metrics
                 const costMetrics = computeCostRealism({
                     side,
                     intentPrice: intentBaselinePrice ?? intent.price,
@@ -1374,7 +1422,8 @@ export class OfferExecutor {
                 const txFeeXrp = 0.000012;
 
                 // Record feedback for successful fill
-                try {
+                if (integrity.ok) {
+                    try {
                     const eventId = feedbackEngine.recordTradeEvent({
                         pairKey: canonicalPair,
                         strategy: this.currentStrategy,
@@ -1444,7 +1493,8 @@ export class OfferExecutor {
                             },
                         });
                     }
-                } catch { /* feedback should never crash trading */ }
+                    } catch { /* feedback should never crash trading */ }
+                }
             }
 
             // ── Execution quality trace: record fill ────────────────────────

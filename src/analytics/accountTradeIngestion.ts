@@ -3,6 +3,7 @@ import type { TradingPair } from '../config';
 import { logger } from './logger';
 import { tradeHistory } from './tradeHistory';
 import { canonicalizePairKey } from '../xrpl/currency';
+import { quarantineTradeRecord, validateTradeIntegrity } from './tradeIntegrity';
 
 interface XRPLAmount {
     currency: string;
@@ -94,14 +95,56 @@ export class AccountTradeIngestionService {
         const pairKey = canonicalizePairKey(`${this.pair.baseCurrency}/${this.pair.quoteCurrency}`);
         const source = this.botHashes.has(hash) ? 'bot' : 'manual';
         const priceQuotePerBase = fill.quoteAmount / fill.baseAmount;
+        const side = fill.takerReceivesBase ? 'BUY' : 'SELL';
+        const status: 'FILLED' | 'PARTIAL' = fillRatio < 0.999 ? 'PARTIAL' : 'FILLED';
+        const amountBase = intendedBaseAmount > 0 ? intendedBaseAmount : fill.baseAmount;
+        const integrity = validateTradeIntegrity({
+            pair: pairKey,
+            side,
+            status,
+            amountBase,
+            filledBase: fill.baseAmount,
+            filledQuote: fill.quoteAmount,
+            priceQuotePerBase,
+            txHash: hash,
+            source,
+        });
+
+        if (!integrity.ok) {
+            logger.error({
+                hash,
+                pair: pairKey,
+                side,
+                status,
+                amountBase,
+                filledBase: fill.baseAmount,
+                filledQuote: fill.quoteAmount,
+                priceQuotePerBase,
+                reasons: integrity.reasons,
+            }, 'Blocked corrupted account-ingested fill persistence');
+            quarantineTradeRecord({
+                type: 'account-ingestion-persistence-blocked',
+                hash,
+                pair: pairKey,
+                side,
+                status,
+                amountBase,
+                filledBase: fill.baseAmount,
+                filledQuote: fill.quoteAmount,
+                priceQuotePerBase,
+                reasons: integrity.reasons,
+            });
+            this.remember(this.seenHashes, hash);
+            return;
+        }
 
         tradeHistory.recordTrade({
             pair: pairKey,
-            side: fill.takerReceivesBase ? 'BUY' : 'SELL',
+            side,
             price: priceQuotePerBase,
             priceQuotePerBase,
-            amount: intendedBaseAmount > 0 ? intendedBaseAmount : fill.baseAmount,
-            amountBase: intendedBaseAmount > 0 ? intendedBaseAmount : fill.baseAmount,
+            amount: amountBase,
+            amountBase,
             filled: fill.baseAmount,
             filledBase: fill.baseAmount,
             filledQuote: fill.quoteAmount,
@@ -109,7 +152,7 @@ export class AccountTradeIngestionService {
             pnl: 0,
             hash,
             paper: false,
-            status: fillRatio < 0.999 ? 'PARTIAL' : 'FILLED',
+            status,
             source,
         });
 
@@ -117,7 +160,7 @@ export class AccountTradeIngestionService {
         logger.info({
             hash,
             pair: pairKey,
-            side: fill.takerReceivesBase ? 'BUY' : 'SELL',
+            side,
             filledBase: fill.baseAmount,
             filledQuote: fill.quoteAmount,
             priceQuotePerBase,
