@@ -525,6 +525,67 @@ export class TradingRuntime {
             this.executor = executor;
             executor.setExecutionQualityCollector(this.executionQualityCollector);
             executor.setExposureTracker(this.exposureTracker);
+            executor.setTradeToastEmitter((event) => {
+                if (event.type === 'ORDER_PLACED') {
+                    const detail: {
+                        pairKey: string;
+                        runtimeState: RuntimeState;
+                        side: 'BUY' | 'SELL';
+                        baseCurrency: string;
+                        quoteCurrency: string;
+                        timestamp: string;
+                        baseAmount?: number;
+                        quoteAmount?: number;
+                        price?: number;
+                        feeQuote?: number;
+                    } = {
+                        pairKey: event.pair,
+                        runtimeState: this.fsm.getState(),
+                        side: event.side ?? 'BUY',
+                        baseCurrency: event.baseCurrency,
+                        quoteCurrency: event.quoteCurrency,
+                        timestamp: event.timestamp,
+                    };
+                    if (event.baseAmount !== undefined) detail.baseAmount = event.baseAmount;
+                    if (event.quoteAmount !== undefined) detail.quoteAmount = event.quoteAmount;
+                    if (event.price !== undefined) detail.price = event.price;
+                    if (event.feeQuote !== undefined) detail.feeQuote = event.feeQuote;
+
+                    this.observabilityBus.emitOrderPlaced({
+                        ...detail,
+                    });
+                } else {
+                    const detail: {
+                        pairKey: string;
+                        runtimeState: RuntimeState;
+                        baseCurrency: string;
+                        quoteCurrency: string;
+                        timestamp: string;
+                        side?: 'BUY' | 'SELL';
+                        baseAmount?: number;
+                        quoteAmount?: number;
+                        price?: number;
+                        feeQuote?: number;
+                        pnlQuote?: number;
+                    } = {
+                        pairKey: event.pair,
+                        runtimeState: this.fsm.getState(),
+                        baseCurrency: event.baseCurrency,
+                        quoteCurrency: event.quoteCurrency,
+                        timestamp: event.timestamp,
+                    };
+                    if (event.side !== undefined) detail.side = event.side;
+                    if (event.baseAmount !== undefined) detail.baseAmount = event.baseAmount;
+                    if (event.quoteAmount !== undefined) detail.quoteAmount = event.quoteAmount;
+                    if (event.price !== undefined) detail.price = event.price;
+                    if (event.feeQuote !== undefined) detail.feeQuote = event.feeQuote;
+                    if (event.pnlQuote !== undefined) detail.pnlQuote = event.pnlQuote;
+
+                    this.observabilityBus.emitOrderFilled({
+                        ...detail,
+                    });
+                }
+            });
             // Wire exposure tracker into risk engine so risk checks can
             // account for current notional exposure.
             try {
@@ -648,8 +709,6 @@ export class TradingRuntime {
                     discoveryEnabled: config.features?.xrplDiscoveryEnabled ?? false,
                     discoveryMinLiquidityUsd: config.xrpl.minLiquidityUsd ?? 50_000,
                     discoveryMinVolumeUsd: config.xrpl.minVolumeUsd ?? 10_000,
-                    discoveryCoinGeckoApiKey: config.xrpl.discoveryApiKey,
-                    discoveryCoinGeckoNetwork: config.xrpl.discoveryNetwork ?? 'ripple',
                 });
                 this.backgroundScanner.start();
             }

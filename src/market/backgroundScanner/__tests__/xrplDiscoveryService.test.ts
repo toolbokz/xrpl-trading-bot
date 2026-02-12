@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-    extractLiquidityEdges,
     fetchXrpscanTokens,
     generatePairsFromEdges,
     normalizeXrpscanTokens,
-    type DiscoveryToken,
+    XrplDiscoveryService,
 } from '../xrplDiscoveryService';
 
 describe('xrplDiscoveryService', () => {
@@ -36,46 +35,20 @@ describe('xrplDiscoveryService', () => {
         ]);
     });
 
-    it('filters pools by liquidity and volume thresholds', () => {
-        const tokenUniverse: DiscoveryToken[] = [
-            { currency: 'RLUSD', issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De' },
-            { currency: 'USDC', issuer: 'rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE' },
-        ];
+    it('discovery gracefully returns empty pairs without external pool providers', async () => {
+        const service = new XrplDiscoveryService(
+            { enabled: true, maxRuntimeMs: 3000 },
+            {
+                fetchFn: async () => ({
+                    ok: true,
+                    status: 200,
+                    json: async () => ([{ currency: 'RLUSD', issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De' }]),
+                }),
+            },
+        );
 
-        const payload = {
-            data: [
-                {
-                    id: 'pool-1',
-                    attributes: { reserve_in_usd: '150000', volume_usd_24h: '25000' },
-                    relationships: {
-                        base_token: { data: { id: 'token-xrp' } },
-                        quote_token: { data: { id: 'token-rlusd' } },
-                    },
-                },
-                {
-                    id: 'pool-2',
-                    attributes: { reserve_in_usd: '1000', volume_usd_24h: '5' },
-                    relationships: {
-                        base_token: { data: { id: 'token-xrp' } },
-                        quote_token: { data: { id: 'token-usdc' } },
-                    },
-                },
-            ],
-            included: [
-                { id: 'token-xrp', attributes: { symbol: 'XRP' } },
-                { id: 'token-rlusd', attributes: { symbol: 'RLUSD' } },
-                { id: 'token-usdc', attributes: { symbol: 'USDC' } },
-            ],
-        };
-
-        const edges = extractLiquidityEdges(payload, tokenUniverse, {
-            minLiquidityUsd: 50_000,
-            minVolumeUsd: 10_000,
-        });
-
-        expect(edges).toHaveLength(1);
-        expect(edges[0]?.base.currency).toBe('XRP');
-        expect(edges[0]?.quote.currency).toBe('RLUSD');
+        const pairs = await service.discoverPairs();
+        expect(pairs).toEqual([]);
     });
 
     it('generates XRP-base trading pairs from active liquidity edges', () => {
@@ -112,4 +85,3 @@ describe('xrplDiscoveryService', () => {
         ]);
     });
 });
-

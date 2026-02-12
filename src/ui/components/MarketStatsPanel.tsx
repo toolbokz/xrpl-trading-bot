@@ -38,13 +38,13 @@ export function MarketStatsPanel({
 
                 <Stat
                     label="P&L"
-                    value={`${(totalPnl ?? 0) >= 0 ? '+' : ''}${(totalPnl ?? 0).toFixed(4)}`}
+                    value={`${(totalPnl ?? 0) >= 0 ? '+' : ''}${(totalPnl ?? 0).toFixed(6)}`}
                     suffix="XRP"
                     positive={(totalPnl ?? 0) >= 0}
                 />
                 <Stat
                     label="Today"
-                    value={`${(todayPnl ?? 0) >= 0 ? '+' : ''}${(todayPnl ?? 0).toFixed(4)}`}
+                    value={`${(todayPnl ?? 0) >= 0 ? '+' : ''}${(todayPnl ?? 0).toFixed(6)}`}
                     suffix="XRP"
                     positive={(todayPnl ?? 0) >= 0}
                 />

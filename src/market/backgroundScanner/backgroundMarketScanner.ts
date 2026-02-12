@@ -12,6 +12,7 @@ import {
     instrumentSignature,
 } from './xrplDiscoveryService';
 import {
+    BackgroundScannerBestPairScore,
     BackgroundScannerConfig,
     BackgroundScannerMarketSnapshot,
     BackgroundScannerSnapshot,
@@ -76,8 +77,6 @@ export class BackgroundMarketScanner {
                 minLiquidityUsd: this.config.discoveryMinLiquidityUsd ?? DEFAULT_XRPL_DISCOVERY_CONFIG.minLiquidityUsd,
                 minVolumeUsd: this.config.discoveryMinVolumeUsd ?? DEFAULT_XRPL_DISCOVERY_CONFIG.minVolumeUsd,
                 maxRuntimeMs: this.config.discoveryMaxRuntimeMs ?? DEFAULT_XRPL_DISCOVERY_CONFIG.maxRuntimeMs,
-                geckoApiKey: this.config.discoveryCoinGeckoApiKey,
-                geckoNetwork: this.config.discoveryCoinGeckoNetwork ?? DEFAULT_XRPL_DISCOVERY_CONFIG.geckoNetwork,
             })
             : null;
     }
@@ -434,6 +433,7 @@ export class BackgroundMarketScanner {
         if (this.health.consecutiveFailures > 0) {
             notes.push(`scanner-failures:${this.health.consecutiveFailures}`);
         }
+        const bestPairs = this.rankBestPairs(markets);
 
         return {
             asOfMs: nowMs,
@@ -443,9 +443,43 @@ export class BackgroundMarketScanner {
                 liquidityScore,
                 volatilityScore,
                 notes,
+                bestPairs,
             },
             markets,
         };
+    }
+
+    private rankBestPairs(markets: Record<string, BackgroundScannerMarketSnapshot>): BackgroundScannerBestPairScore[] {
+        const ranked = Object.entries(markets).map(([pairKey, market]) => {
+            const spreadScore = clamp(100 - (Math.min(500, market.spreadBps) / 5), 0, 100);
+            const depthScore = clamp(Math.log10(Math.max(1, market.depthTopNotional) + 1) * 20, 0, 100);
+            const staleRatio = this.config.maxStalenessMs > 0
+                ? market.stalenessMs / this.config.maxStalenessMs
+                : 1;
+            const freshnessScore = clamp(100 - (staleRatio * 100), 0, 100);
+            const verdictWeight = this.bestPairVerdictWeight(market.verdict);
+            const rawScore = (spreadScore * 0.4) + (depthScore * 0.35) + (freshnessScore * 0.25);
+            const score = clamp(Math.round(rawScore * verdictWeight), 0, 100);
+
+            return {
+                pairKey,
+                score,
+                spreadBps: market.spreadBps,
+                depthTopNotional: market.depthTopNotional,
+                stalenessMs: market.stalenessMs,
+                verdict: market.verdict,
+            };
+        });
+
+        ranked.sort((a, b) => b.score - a.score || a.spreadBps - b.spreadBps || b.depthTopNotional - a.depthTopNotional || a.pairKey.localeCompare(b.pairKey));
+        return ranked.slice(0, 5);
+    }
+
+    private bestPairVerdictWeight(verdict: AvailabilityVerdict | 'UNKNOWN'): number {
+        if (verdict === 'AVAILABLE') return 1;
+        if (verdict === 'DEGRADED') return 0.7;
+        if (verdict === 'UNKNOWN') return 0.5;
+        return 0.35;
     }
 
     private toHealthSnapshot(): BackgroundScannerSnapshot['health'] {

@@ -29,6 +29,7 @@ import { RuntimeCacheProvider, useRuntimeCache } from '../lib/hooks/useRuntimeCa
 import { useMarketHealth } from '../lib/hooks/useMarketHealth';
 import { useSpreadDistribution } from '../lib/hooks/useSpreadDistribution';
 import { toBackgroundView } from '../components/backgroundScannerViewModel';
+import { hasOrderFilledEvent } from '../lib/runtimeEvents';
 
 type BotStatus = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
 type ToolTab = 'orderbook' | 'tape' | 'radar' | 'diagnostics';
@@ -97,6 +98,7 @@ const createInitialBotState = (): BotState => ({
 });
 
 export default function Page() {
+    const tradeToastsEnabled = process.env.NEXT_PUBLIC_TRADE_TOASTS_ENABLED !== 'false';
     const [bot, setBot] = useState<BotState>(createInitialBotState);
     const [actionMessage, setActionMessage] = useState<string>('');
     const [actionLoading, setActionLoading] = useState<boolean>(false);
@@ -195,6 +197,7 @@ export default function Page() {
     }, [orderBookData.spreadBps, orderBookLoading, orderBookError, selectedPairKey]);
 
     const prevMidPriceRef = useRef<number | null>(null);
+    const lastRuntimeEventSeqRef = useRef<number | null>(null);
     useEffect(() => {
         const current = midPrice;
         const prev = prevMidPriceRef.current;
@@ -341,6 +344,47 @@ export default function Page() {
         };
     }, [fetchRiskStatus, fetchWalletInfo, fetchTrades, fetchRiskQuality, currentPair]);
 
+    useEffect(() => {
+        let cancelled = false;
+
+        const pollRuntimeEvents = async () => {
+            try {
+                const afterSeq = lastRuntimeEventSeqRef.current;
+                const query = afterSeq == null
+                    ? '/api/runtime/events?limit=1'
+                    : `/api/runtime/events?afterSeq=${afterSeq}&limit=100`;
+                const res = await fetch(query);
+                if (!res.ok) return;
+
+                const payload = await res.json() as { seq?: number; events?: unknown[] };
+                if (cancelled) return;
+
+                if (typeof payload.seq === 'number' && Number.isFinite(payload.seq)) {
+                    lastRuntimeEventSeqRef.current = payload.seq;
+                }
+
+                if (afterSeq == null) return;
+
+                const events = Array.isArray(payload.events) ? payload.events : [];
+                if (hasOrderFilledEvent(events)) {
+                    await fetchTrades();
+                }
+            } catch {
+                // best-effort only; keep UI polling healthy
+            }
+        };
+
+        void pollRuntimeEvents();
+        const interval = setInterval(() => {
+            void pollRuntimeEvents();
+        }, 1200);
+
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+        };
+    }, [fetchTrades]);
+
     const callAction = async (action: 'run' | 'pause' | 'kill') => {
         if (action === 'run' && !currentPair) {
             setActionMessage('Select a trading pair before starting the bot');
@@ -401,8 +445,8 @@ export default function Page() {
 
         return [
             { key: 'state', label: 'Run', value: bot.status, tone: bot.status === 'RUNNING' ? 'ok' : bot.status === 'ERROR' ? 'bad' : 'warn' },
-            { key: 'today', label: 'P&L Today', value: fmtSigned(bot.pnlToday, 2), tone: bot.pnlToday >= 0 ? 'ok' : 'bad' },
-            { key: 'session', label: 'Session', value: fmtSigned(bot.pnlTotal, 2), tone: bot.pnlTotal >= 0 ? 'ok' : 'bad' },
+            { key: 'today', label: 'P&L Today', value: fmtSigned(bot.pnlToday, 6), tone: bot.pnlToday >= 0 ? 'ok' : 'bad' },
+            { key: 'session', label: 'Session', value: fmtSigned(bot.pnlTotal, 6), tone: bot.pnlTotal >= 0 ? 'ok' : 'bad' },
             { key: 'win', label: 'Win', value: `${bot.winRate.toFixed(1)}%`, tone: bot.winRate >= 50 ? 'ok' : 'neutral' },
             { key: 'position', label: 'Pos', value: `${bot.openPosition} ${bot.risk.currentExposure.toFixed(0)}`, tone: 'neutral' },
             {
@@ -684,7 +728,7 @@ export default function Page() {
 
     return (
         <RuntimeCacheProvider pollInterval={4000} enabled>
-            <AppShell header={headerComponent}>
+            <AppShell header={headerComponent} tradeToastsEnabled={tradeToastsEnabled}>
                 {!isCompact && !isNarrow ? (
                     <div className="grid min-h-[calc(100vh-80px)] gap-0" style={{ gridTemplateColumns: drawerOpen ? '1fr 360px' : '1fr 56px' }}>
                         <div className="pr-4">{mainContent}</div>

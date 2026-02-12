@@ -12,6 +12,7 @@ import { ExecutionQualityCollector, InFlightTrace } from '../analytics/execution
 import { ExposureTracker } from '../risk/exposureTracker';
 import { FlowRegime } from '../market/flowMetrics';
 import { toXrplCurrency } from '../xrpl/currency';
+import type { TradeToastEvent } from '../observability/tradeToastEvents';
 
 export interface OfferParams {
     side: 'buy' | 'sell';
@@ -86,6 +87,7 @@ export class OfferExecutor {
 
     // Regime policy layer overrides (regime-based sizing)
     private regimePolicySizeMultiplier: number = 1.0;
+    private tradeToastEmitter: ((event: TradeToastEvent) => void) | null = null;
 
     constructor(
         private readonly client: Client,
@@ -155,6 +157,13 @@ export class OfferExecutor {
      */
     setExposureTracker(tracker: ExposureTracker): void {
         this.exposureTracker = tracker;
+    }
+
+    /**
+     * Optional non-blocking emitter for toast-friendly trade events.
+     */
+    setTradeToastEmitter(emitter: (event: TradeToastEvent) => void): void {
+        this.tradeToastEmitter = emitter;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -610,6 +619,29 @@ export class OfferExecutor {
             if (this.exposureTracker) {
                 this.exposureTracker.recordFill(side, intent.amount, pairSymbol);
             }
+
+            this.emitTradeToastSafe({
+                type: 'ORDER_PLACED',
+                side: intent.side as 'BUY' | 'SELL',
+                pair: pairSymbol,
+                baseCurrency: this.pair.baseCurrency,
+                quoteCurrency: this.pair.quoteCurrency,
+                baseAmount: intent.amount,
+                quoteAmount: intent.amount * intent.price,
+                price: intent.price,
+                timestamp: new Date().toISOString(),
+            });
+            this.emitTradeToastSafe({
+                type: 'ORDER_FILLED',
+                side: intent.side as 'BUY' | 'SELL',
+                pair: pairSymbol,
+                baseCurrency: this.pair.baseCurrency,
+                quoteCurrency: this.pair.quoteCurrency,
+                baseAmount: intent.amount,
+                quoteAmount: intent.amount * intent.price,
+                price: intent.price,
+                timestamp: new Date().toISOString(),
+            });
 
             return { accepted: true, reason: 'paper-mode' };
         }
@@ -1267,6 +1299,34 @@ export class OfferExecutor {
                 this.exposureTracker.recordFill(fillSide, fillSize, pairSymbol);
             }
 
+            if (intent && pairSymbol) {
+                const eventTimestamp = new Date().toISOString();
+                const baseAmount = fillResult.takerGotAmount || intent.amount;
+                const quoteAmount = baseAmount * (fillResult.effectivePrice || intent.price);
+                this.emitTradeToastSafe({
+                    type: 'ORDER_PLACED',
+                    side: intent.side as 'BUY' | 'SELL',
+                    pair: pairSymbol,
+                    baseCurrency: this.pair.baseCurrency,
+                    quoteCurrency: this.pair.quoteCurrency,
+                    baseAmount: intent.amount,
+                    quoteAmount: intent.amount * intent.price,
+                    price: intent.price,
+                    timestamp: eventTimestamp,
+                });
+                this.emitTradeToastSafe({
+                    type: 'ORDER_FILLED',
+                    side: intent.side as 'BUY' | 'SELL',
+                    pair: pairSymbol,
+                    baseCurrency: this.pair.baseCurrency,
+                    quoteCurrency: this.pair.quoteCurrency,
+                    baseAmount,
+                    quoteAmount,
+                    price: fillResult.effectivePrice || intent.price,
+                    timestamp: eventTimestamp,
+                });
+            }
+
             return {
                 accepted: true,
                 hash: res.result.hash,
@@ -1308,6 +1368,15 @@ export class OfferExecutor {
             }
 
             return { accepted: false, reason: err?.message || 'submit-failed' };
+        }
+    }
+
+    private emitTradeToastSafe(event: TradeToastEvent): void {
+        if (!this.tradeToastEmitter) return;
+        try {
+            this.tradeToastEmitter(event);
+        } catch (err) {
+            logger.debug({ err }, 'Trade toast emitter failed');
         }
     }
 }

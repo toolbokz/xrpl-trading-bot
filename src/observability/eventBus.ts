@@ -52,6 +52,8 @@ export const OBSERVABILITY_EVENT_TYPES = [
     'SCANNER_DEGRADED',
     'SCANNER_RECOVERED',
     'FAIR_VALUE_UPDATED',
+    'ORDER_PLACED',
+    'ORDER_FILLED',
 ] as const;
 
 export type ObservabilityEventType = typeof OBSERVABILITY_EVENT_TYPES[number];
@@ -557,6 +559,80 @@ export class ObservabilityBus {
                 confidence: params.confidence,
                 sourcesUsed: params.sourcesUsed,
                 divergenceBpsVsXrpRlusd: params.divergenceBpsVsXrpRlusd,
+            },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit ORDER_PLACED for trade toast notifications.
+     */
+    emitOrderPlaced(params: {
+        pairKey: string;
+        runtimeState: string;
+        side: 'BUY' | 'SELL';
+        baseCurrency: string;
+        quoteCurrency: string;
+        baseAmount?: number;
+        quoteAmount?: number;
+        price?: number;
+        feeQuote?: number;
+        timestamp?: string;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'ORDER_PLACED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: {
+                type: 'ORDER_PLACED',
+                side: params.side,
+                pair: params.pairKey,
+                baseCurrency: params.baseCurrency,
+                quoteCurrency: params.quoteCurrency,
+                baseAmount: params.baseAmount,
+                quoteAmount: params.quoteAmount,
+                price: params.price,
+                feeQuote: params.feeQuote,
+                timestamp: params.timestamp ?? new Date(params.nowMs ?? Date.now()).toISOString(),
+            },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit ORDER_FILLED for trade toast notifications.
+     */
+    emitOrderFilled(params: {
+        pairKey: string;
+        runtimeState: string;
+        side?: 'BUY' | 'SELL';
+        baseCurrency: string;
+        quoteCurrency: string;
+        baseAmount?: number;
+        quoteAmount?: number;
+        price?: number;
+        feeQuote?: number;
+        pnlQuote?: number;
+        timestamp?: string;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'ORDER_FILLED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: {
+                type: 'ORDER_FILLED',
+                side: params.side,
+                pair: params.pairKey,
+                baseCurrency: params.baseCurrency,
+                quoteCurrency: params.quoteCurrency,
+                baseAmount: params.baseAmount,
+                quoteAmount: params.quoteAmount,
+                price: params.price,
+                feeQuote: params.feeQuote,
+                pnlQuote: params.pnlQuote,
+                timestamp: params.timestamp ?? new Date(params.nowMs ?? Date.now()).toISOString(),
             },
             nowMs: params.nowMs,
         });

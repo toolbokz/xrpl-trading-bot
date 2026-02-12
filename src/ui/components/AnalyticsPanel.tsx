@@ -159,7 +159,7 @@ function MiniEquityChart({ history }: { history: AnalyticsHistoryEntry[] }) {
                     'text-[10px] font-mono',
                     isPositive ? 'text-emerald-400' : 'text-red-400',
                 )}>
-                    {isPositive ? '+' : ''}{chartData[chartData.length - 1]!.pnl.toFixed(4)}
+                    {isPositive ? '+' : ''}{chartData[chartData.length - 1]!.pnl.toFixed(6)}
                 </span>
             </div>
             <ResponsiveContainer width="100%" height={40}>

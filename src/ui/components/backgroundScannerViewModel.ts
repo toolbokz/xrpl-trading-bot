@@ -19,6 +19,15 @@ export interface ScannerMarketItem {
     verdict: string;
 }
 
+export interface ScannerBestPairItem {
+    pairKey: string;
+    score: number;
+    spreadBps: number;
+    depthTopNotional: number;
+    stalenessMs: number;
+    verdict: string;
+}
+
 export interface ScannerBackgroundView {
     asOfMs: number | null;
     health: {
@@ -35,6 +44,9 @@ export interface ScannerBackgroundView {
         confidence: number | null;
         divergenceBps: number | null;
         sources: ScannerSourceItem[];
+    };
+    crossMarket: {
+        bestPairs: ScannerBestPairItem[];
     };
     markets: ScannerMarketItem[];
 }
@@ -60,6 +72,7 @@ export function toBackgroundView(snapshot: RuntimeCacheLightSnapshot | null | un
 
     const healthObj = get(bg, 'health');
     const fairObj = get(bg, 'fairValue');
+    const crossObj = get(bg, 'crossMarket');
     const marketsObj = get(bg, 'markets');
 
     const score = toNum(get(healthObj, 'score'));
@@ -92,6 +105,7 @@ export function toBackgroundView(snapshot: RuntimeCacheLightSnapshot | null | un
         : [];
 
     const markets: ScannerMarketItem[] = parseMarkets(marketsObj);
+    const bestPairs: ScannerBestPairItem[] = parseBestPairs(get(crossObj, 'bestPairs'));
 
     return {
         asOfMs: toNum(get(bg, 'asOfMs')),
@@ -109,6 +123,9 @@ export function toBackgroundView(snapshot: RuntimeCacheLightSnapshot | null | un
             confidence: toNum(get(fairObj, 'confidence')),
             divergenceBps,
             sources,
+        },
+        crossMarket: {
+            bestPairs,
         },
         markets,
     };
@@ -138,6 +155,18 @@ function parseMarkets(marketsObj: unknown): ScannerMarketItem[] {
     }
 
     return [];
+}
+
+function parseBestPairs(raw: unknown): ScannerBestPairItem[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((item) => ({
+        pairKey: toStr(get(item, 'pairKey')) ?? 'unknown',
+        score: toNum(get(item, 'score')) ?? 0,
+        spreadBps: toNum(get(item, 'spreadBps')) ?? 0,
+        depthTopNotional: toNum(get(item, 'depthTopNotional')) ?? 0,
+        stalenessMs: toNum(get(item, 'stalenessMs')) ?? 0,
+        verdict: toStr(get(item, 'verdict')) ?? 'UNKNOWN',
+    }));
 }
 
 export function sortMarkets(markets: ScannerMarketItem[], sortBy: RadarSortKey): ScannerMarketItem[] {

@@ -33,10 +33,6 @@ export interface XRPLConfig {
     minLiquidityUsd?: number | undefined;
     /** Discovery filter: minimum USD 24h volume for pool inclusion. */
     minVolumeUsd?: number | undefined;
-    /** CoinGecko onchain network slug (e.g. 'ripple'). */
-    discoveryNetwork?: string | undefined;
-    /** CoinGecko pro API key (optional). */
-    discoveryApiKey?: string | undefined;
 }
 
 export interface RiskConfig {
@@ -121,6 +117,7 @@ export interface AppConfig {
     };
     features?: {
         xrplDiscoveryEnabled?: boolean | undefined;
+        tradeToastsEnabled?: boolean | undefined;
     } | undefined;
 }
 
@@ -223,8 +220,6 @@ export const loadConfig = (): AppConfig => {
         subscribeTransactions: true,
         minLiquidityUsd: toNumber(process.env.XRPL_DISCOVERY_MIN_LIQUIDITY_USD, 50_000),
         minVolumeUsd: toNumber(process.env.XRPL_DISCOVERY_MIN_VOLUME_USD, 10_000),
-        discoveryNetwork: process.env.XRPL_DISCOVERY_NETWORK || 'ripple',
-        discoveryApiKey: process.env.COINGECKO_API_KEY || '',
     };
 
     return {
@@ -252,6 +247,7 @@ export const loadConfig = (): AppConfig => {
         },
         features: {
             xrplDiscoveryEnabled: toBool(process.env.FEATURE_XRPL_DISCOVERY_ENABLED as EnvBool, false),
+            tradeToastsEnabled: toBool(process.env.FEATURE_TRADE_TOASTS_ENABLED as EnvBool, false),
         },
     };
 };

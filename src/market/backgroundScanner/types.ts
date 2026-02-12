@@ -39,6 +39,16 @@ export interface BackgroundScannerCrossMarketSnapshot {
     liquidityScore: number;
     volatilityScore: number;
     notes: string[];
+    bestPairs?: BackgroundScannerBestPairScore[];
+}
+
+export interface BackgroundScannerBestPairScore {
+    pairKey: string;
+    score: number;
+    spreadBps: number;
+    depthTopNotional: number;
+    stalenessMs: number;
+    verdict: BackgroundScannerVerdict;
 }
 
 export interface BackgroundScannerSnapshot {
@@ -76,8 +86,6 @@ export interface BackgroundScannerConfig {
     discoveryMinLiquidityUsd?: number | undefined;
     discoveryMinVolumeUsd?: number | undefined;
     discoveryMaxRuntimeMs?: number | undefined;
-    discoveryCoinGeckoApiKey?: string | undefined;
-    discoveryCoinGeckoNetwork?: string | undefined;
 }
 
 export const DEFAULT_BACKGROUND_SCANNER_CONFIG: BackgroundScannerConfig = {
@@ -92,8 +100,6 @@ export const DEFAULT_BACKGROUND_SCANNER_CONFIG: BackgroundScannerConfig = {
     discoveryMinLiquidityUsd: 50_000,
     discoveryMinVolumeUsd: 10_000,
     discoveryMaxRuntimeMs: 3000,
-    discoveryCoinGeckoApiKey: '',
-    discoveryCoinGeckoNetwork: 'ripple',
 };
 
 export const DEFAULT_FAIR_VALUE_MODEL_CONFIG: FairValueModelConfig = {

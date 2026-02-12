@@ -3,6 +3,7 @@
 import { ReactNode } from 'react';
 import clsx from 'clsx';
 import { MockDataBanner } from '../MockDataBanner';
+import { ToastContainer } from '../TradeToasts/ToastContainer';
 
 interface AppShellProps {
     /** Header content (typically TerminalHeader) */
@@ -11,6 +12,8 @@ interface AppShellProps {
     children: ReactNode;
     /** Additional className for the shell */
     className?: string;
+    /** Feature flag for trade toast notifications */
+    tradeToastsEnabled?: boolean;
 }
 
 /**
@@ -18,7 +21,7 @@ interface AppShellProps {
  *
  * Tight 40px header, minimal chrome, maximum data density.
  */
-export function AppShell({ header, children, className }: AppShellProps) {
+export function AppShell({ header, children, className, tradeToastsEnabled = false }: AppShellProps) {
     return (
         <div
             className={clsx(
@@ -39,6 +42,8 @@ export function AppShell({ header, children, className }: AppShellProps) {
             <main className="flex-1 px-5 py-2">
                 {children}
             </main>
+
+            {tradeToastsEnabled && <ToastContainer enabled={tradeToastsEnabled} />}
         </div>
     );
 }

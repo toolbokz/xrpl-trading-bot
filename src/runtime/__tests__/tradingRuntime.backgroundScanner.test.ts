@@ -66,6 +66,8 @@ describe('TradingRuntime + BackgroundScanner harness', () => {
         const cache = runtime.getCacheRegistry().getSnapshot();
         expect(cache.background).not.toBeNull();
         expect(cache.background?.markets).toBeDefined();
+        expect(cache.background?.crossMarket.bestPairs).toBeDefined();
+        expect(Array.isArray(cache.background?.crossMarket.bestPairs)).toBe(true);
 
         scanner.stop();
     });

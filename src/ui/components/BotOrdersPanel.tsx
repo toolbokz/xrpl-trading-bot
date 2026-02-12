@@ -421,7 +421,7 @@ export function BotOrdersPanel({ pollInterval = 5000 }: BotOrdersPanelProps) {
                             <div className="col-span-6 text-[9px] pl-[52px] -mt-0.5 mb-0.5">
                                 {row.pnl != null && row.pnl !== 0 && (
                                     <span className={row.pnl > 0 ? 'text-emerald-500' : 'text-red-500'}>
-                                        PnL: {row.pnl > 0 ? '+' : ''}{row.pnl.toFixed(4)}
+                                        PnL: {row.pnl > 0 ? '+' : ''}{row.pnl.toFixed(6)}
                                     </span>
                                 )}
                                 {row.paper && (
