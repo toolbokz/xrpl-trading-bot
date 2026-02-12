@@ -127,6 +127,7 @@ const cloneConfig = (cfg: AppConfig): AppConfig => ({
     flow: { ...cfg.flow },
     backgroundScanner: { ...cfg.backgroundScanner },
     analytics: { ...cfg.analytics },
+    features: cfg.features ? { ...cfg.features } : undefined,
 });
 
 export const validateTradingPair = (pair: TradingPair): void => {
@@ -644,6 +645,11 @@ export class TradingRuntime {
                     tier1IntervalMs: config.backgroundScanner.tier1IntervalMs,
                     tier2IntervalMs: config.backgroundScanner.tier2IntervalMs,
                     maxStalenessMs: config.backgroundScanner.maxStalenessMs,
+                    discoveryEnabled: config.features?.xrplDiscoveryEnabled ?? false,
+                    discoveryMinLiquidityUsd: config.xrpl.minLiquidityUsd ?? 50_000,
+                    discoveryMinVolumeUsd: config.xrpl.minVolumeUsd ?? 10_000,
+                    discoveryCoinGeckoApiKey: config.xrpl.discoveryApiKey,
+                    discoveryCoinGeckoNetwork: config.xrpl.discoveryNetwork ?? 'ripple',
                 });
                 this.backgroundScanner.start();
             }

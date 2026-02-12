@@ -14,6 +14,7 @@
         "dashboard": "BOT_LOCAL_ONLY=true SINGLE_PROCESS_MODE=true node server.js",
         "lint": "next lint src/ui --no-inline-config",
         "faucet": "ts-node --transpile-only scripts/createTestnetWallet.ts",
+        "sync:instruments": "ts-node --transpile-only scripts/syncInstrumentRegistrySeeds.ts",
         "fund:rlusd:testnet": "ts-node --transpile-only scripts/fundExistingRlusdTestnet.ts",
         "encrypt:mainnet-secret": "ts-node --transpile-only scripts/encrypt-mainnet-secret-numbers.ts",
         "test": "vitest",

@@ -29,6 +29,14 @@ export interface XRPLConfig {
     maxReconnectDelayMs: number;
     subscribeLedger: boolean;
     subscribeTransactions: boolean;
+    /** Discovery filter: minimum USD liquidity for pool inclusion. */
+    minLiquidityUsd?: number | undefined;
+    /** Discovery filter: minimum USD 24h volume for pool inclusion. */
+    minVolumeUsd?: number | undefined;
+    /** CoinGecko onchain network slug (e.g. 'ripple'). */
+    discoveryNetwork?: string | undefined;
+    /** CoinGecko pro API key (optional). */
+    discoveryApiKey?: string | undefined;
 }
 
 export interface RiskConfig {
@@ -111,6 +119,9 @@ export interface AppConfig {
         logLevel: 'info' | 'debug' | 'warn' | 'error';
         csvExportPath: string;
     };
+    features?: {
+        xrplDiscoveryEnabled?: boolean | undefined;
+    } | undefined;
 }
 
 const toBool = (val: EnvBool, fallback: boolean): boolean => {
@@ -210,6 +221,10 @@ export const loadConfig = (): AppConfig => {
         maxReconnectDelayMs: toNumber(process.env.XRPL_RECONNECT_MAX_DELAY_MS, 30_000),
         subscribeLedger: true,
         subscribeTransactions: true,
+        minLiquidityUsd: toNumber(process.env.XRPL_DISCOVERY_MIN_LIQUIDITY_USD, 50_000),
+        minVolumeUsd: toNumber(process.env.XRPL_DISCOVERY_MIN_VOLUME_USD, 10_000),
+        discoveryNetwork: process.env.XRPL_DISCOVERY_NETWORK || 'ripple',
+        discoveryApiKey: process.env.COINGECKO_API_KEY || '',
     };
 
     return {
@@ -234,6 +249,9 @@ export const loadConfig = (): AppConfig => {
         analytics: {
             logLevel: (process.env.LOG_LEVEL as AppConfig['analytics']['logLevel']) || 'info',
             csvExportPath: process.env.CSV_EXPORT_PATH || 'pnl.csv',
+        },
+        features: {
+            xrplDiscoveryEnabled: toBool(process.env.FEATURE_XRPL_DISCOVERY_ENABLED as EnvBool, false),
         },
     };
 };

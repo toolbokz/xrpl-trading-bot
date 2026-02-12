@@ -7,6 +7,11 @@ import { toXrplCurrency } from '../../xrpl/currency';
 import { computeFairValue } from './fairValueModel';
 import { ScanScheduler } from './scanScheduler';
 import {
+    XrplDiscoveryService,
+    DEFAULT_XRPL_DISCOVERY_CONFIG,
+    instrumentSignature,
+} from './xrplDiscoveryService';
+import {
     BackgroundScannerConfig,
     BackgroundScannerMarketSnapshot,
     BackgroundScannerSnapshot,
@@ -38,6 +43,7 @@ export class BackgroundMarketScanner {
     private readonly deps: BackgroundMarketScannerDeps;
     private readonly config: BackgroundScannerConfig;
     private readonly scheduler: ScanScheduler;
+    private readonly discoveryService: XrplDiscoveryService | null;
 
     private running = false;
     private inFlight = false;
@@ -63,13 +69,24 @@ export class BackgroundMarketScanner {
             tier2IntervalMs: this.config.tier2IntervalMs,
             maxBatchSize: 3,
         });
+        this.discoveryService = this.config.discoveryEnabled
+            ? new XrplDiscoveryService({
+                ...DEFAULT_XRPL_DISCOVERY_CONFIG,
+                enabled: true,
+                minLiquidityUsd: this.config.discoveryMinLiquidityUsd ?? DEFAULT_XRPL_DISCOVERY_CONFIG.minLiquidityUsd,
+                minVolumeUsd: this.config.discoveryMinVolumeUsd ?? DEFAULT_XRPL_DISCOVERY_CONFIG.minVolumeUsd,
+                maxRuntimeMs: this.config.discoveryMaxRuntimeMs ?? DEFAULT_XRPL_DISCOVERY_CONFIG.maxRuntimeMs,
+                geckoApiKey: this.config.discoveryCoinGeckoApiKey,
+                geckoNetwork: this.config.discoveryCoinGeckoNetwork ?? DEFAULT_XRPL_DISCOVERY_CONFIG.geckoNetwork,
+            })
+            : null;
     }
 
     start(): void {
         if (!this.config.enabled || this.running) return;
 
         this.running = true;
-        this.refreshUniverse(Date.now());
+        void this.refreshUniverse(Date.now());
         this.timer = setInterval(() => {
             void this.pulse();
         }, 250);
@@ -110,7 +127,7 @@ export class BackgroundMarketScanner {
 
         try {
             if (nowMs - this.lastUniverseRefreshMs > 30_000) {
-                this.refreshUniverse(nowMs);
+                await this.refreshUniverse(nowMs);
             }
 
             const due = this.scheduler.nextBatch(nowMs);
@@ -150,20 +167,23 @@ export class BackgroundMarketScanner {
         }
     }
 
-    private refreshUniverse(nowMs: number): void {
+    private async refreshUniverse(nowMs: number): Promise<void> {
         const availability = this.deps.getAvailabilitySnapshot();
         const verdictByPair = new Map<string, AvailabilityVerdict>();
         for (const item of availability?.pairs ?? []) {
             verdictByPair.set(item.pairKey, item.verdict);
         }
 
-        const allXrpPairs = getInstruments()
+        const existingPairs = getInstruments()
             .filter((instrument) => instrument.base.currency.toUpperCase() === 'XRP')
-            .filter((instrument) => {
-                const verdict = verdictByPair.get(instrument.key);
-                if (!verdict) return true;
-                return verdict === 'AVAILABLE' || verdict === 'DEGRADED';
-            });
+            .map((instrument) => ({ ...instrument }));
+
+        const discoveredPairs = this.discoveryService
+            ? await this.discoveryService.discoverPairs()
+            : [];
+
+        const merged = this.unionPairs(existingPairs, discoveredPairs);
+        const allXrpPairs = merged.filter((instrument) => this.isTradeableByAvailability(instrument.key, verdictByPair));
 
         const pairByKey = new Map(allXrpPairs.map((instrument) => [instrument.key, instrument]));
 
@@ -197,6 +217,37 @@ export class BackgroundMarketScanner {
         this.universe = { pairByKey, tier1, tier2 };
         this.scheduler.setUniverse(tier1, tier2, nowMs);
         this.lastUniverseRefreshMs = nowMs;
+    }
+
+    private isTradeableByAvailability(pairKey: string, verdictByPair: Map<string, AvailabilityVerdict>): boolean {
+        const verdict = verdictByPair.get(pairKey);
+        if (!verdict) return true;
+        return verdict === 'AVAILABLE' || verdict === 'DEGRADED';
+    }
+
+    private unionPairs(existing: readonly Instrument[], discovered: readonly Instrument[]): Instrument[] {
+        if (discovered.length === 0) return [...existing];
+
+        const bySignature = new Map<string, Instrument>();
+        for (const inst of existing) {
+            bySignature.set(instrumentSignature(inst), inst);
+        }
+
+        for (const inst of discovered) {
+            const signature = instrumentSignature(inst);
+            if (bySignature.has(signature)) continue;
+            bySignature.set(signature, inst);
+        }
+
+        const byKey = new Map<string, Instrument>();
+        for (const inst of bySignature.values()) {
+            if (!byKey.has(inst.key)) {
+                byKey.set(inst.key, inst);
+            } else {
+                logger.debug({ pairKey: inst.key }, 'Skipping discovered pair due to key collision');
+            }
+        }
+        return [...byKey.values()];
     }
 
     private getVerdict(pairKey: string): AvailabilityVerdict | 'UNKNOWN' {

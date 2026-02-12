@@ -141,6 +141,7 @@ export function LogsPanel({ maxRows = 100, pollInterval = 2000 }: LogsPanelProps
             icon={ScrollText}
             fillHeight
             compact
+            className="h-full min-h-0"
             actions={
                 <>
                     {errorCount > 0 && <PanelBadge tone="danger">{errorCount} errors</PanelBadge>}
@@ -180,11 +181,11 @@ export function LogsPanel({ maxRows = 100, pollInterval = 2000 }: LogsPanelProps
                     />
                 </>
             }
-            bodyClassName="p-0"
+            bodyClassName="p-0 min-h-0"
         >
             <div
                 ref={containerRef}
-                className="h-full overflow-y-auto scrollbar-thin"
+                className="h-full min-h-0 overflow-y-auto scrollbar-thin"
             >
                 {filteredLogs.length === 0 ? (
                     <div className="text-center text-slate-500 text-[10px] py-4">

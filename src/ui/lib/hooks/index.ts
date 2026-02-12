@@ -24,3 +24,11 @@ export type { FlowMetricsState, UseFlowMetricsOptions } from './useFlowMetrics';
 
 export { useSpreadDistribution } from './useSpreadDistribution';
 export type { SpreadDistributionState, UseSpreadDistributionOptions } from './useSpreadDistribution';
+
+export { useRuntimeCache, RuntimeCacheProvider } from './useRuntimeCache';
+export type {
+    RuntimeCacheLightSnapshot,
+    RuntimeCacheResponse,
+    UseRuntimeCacheOptions,
+    UseRuntimeCacheState,
+} from './useRuntimeCache';

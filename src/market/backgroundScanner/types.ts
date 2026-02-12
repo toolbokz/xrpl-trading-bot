@@ -72,6 +72,12 @@ export interface BackgroundScannerConfig {
     tier2IntervalMs: number;
     requestTimeoutMs: number;
     maxStalenessMs: number;
+    discoveryEnabled?: boolean | undefined;
+    discoveryMinLiquidityUsd?: number | undefined;
+    discoveryMinVolumeUsd?: number | undefined;
+    discoveryMaxRuntimeMs?: number | undefined;
+    discoveryCoinGeckoApiKey?: string | undefined;
+    discoveryCoinGeckoNetwork?: string | undefined;
 }
 
 export const DEFAULT_BACKGROUND_SCANNER_CONFIG: BackgroundScannerConfig = {
@@ -82,6 +88,12 @@ export const DEFAULT_BACKGROUND_SCANNER_CONFIG: BackgroundScannerConfig = {
     tier2IntervalMs: 15000,
     requestTimeoutMs: 5000,
     maxStalenessMs: 20000,
+    discoveryEnabled: false,
+    discoveryMinLiquidityUsd: 50_000,
+    discoveryMinVolumeUsd: 10_000,
+    discoveryMaxRuntimeMs: 3000,
+    discoveryCoinGeckoApiKey: '',
+    discoveryCoinGeckoNetwork: 'ripple',
 };
 
 export const DEFAULT_FAIR_VALUE_MODEL_CONFIG: FairValueModelConfig = {
