@@ -80,6 +80,16 @@ export interface StrategyConfig {
     maxSlippageBps: number;
     /** Order book staleness threshold in milliseconds (default: 5000) */
     orderBookStaleMs: number;
+    /**
+     * Additional entry aggressiveness in bps (0 = passive reference price).
+     * Higher value crosses more toward the opposite side for better fill odds.
+     */
+    entryCrossBps: number;
+    /**
+     * Additional exit aggressiveness in bps (0 = passive reference price).
+     * Higher value crosses more toward the opposite side for better fill odds.
+     */
+    exitCrossBps: number;
 }
 
 /**
@@ -194,6 +204,8 @@ export const loadConfig = (): AppConfig => {
         pathArbMinProfitBps: toNumber(process.env.PATH_ARB_MIN_PROFIT_BPS, 20),
         maxSlippageBps: toNumber(process.env.MAX_SLIPPAGE_BPS, 50),
         orderBookStaleMs: toNumber(process.env.ORDERBOOK_STALE_MS, 5_000), // Default 5 seconds
+        entryCrossBps: Math.max(0, toNumber(process.env.SCALPER_ENTRY_CROSS_BPS, 2)),
+        exitCrossBps: Math.max(0, toNumber(process.env.SCALPER_EXIT_CROSS_BPS, 2)),
     };
 
     const flow: FlowConfig = {

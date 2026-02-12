@@ -212,7 +212,9 @@ export class ScalperStrategy implements Strategy {
 
         if (this.position.side === 'flat') {
             // Apply skew to entry price: positive imbalance → bid less aggressively
-            const price = bestBid * (1.0001 - skewFactor);
+            const entryBasePrice = bestBid * (1.0001 - skewFactor);
+            const entryCrossFactor = 1 + ((this.config.entryCrossBps ?? 0) / 10_000);
+            const price = Math.min(bestAsk, entryBasePrice * entryCrossFactor);
 
             logger.info({
                 side: 'BUY',
@@ -220,6 +222,7 @@ export class ScalperStrategy implements Strategy {
                 amount: adjustedPositionSize.toFixed(4),
                 flags: `${getExecutionOrderType()} (${getExecutionOrderType() === 'FOK' ? 'Fill-Or-Kill' : 'Immediate-Or-Cancel'})`,
                 skewApplied: skewBps.toFixed(2),
+                entryCrossBps: this.config.entryCrossBps ?? 0,
             }, 'Scalper: 🚀 Placing BUY order');
 
             const res = await this.executor.placeOffer({
@@ -243,7 +246,9 @@ export class ScalperStrategy implements Strategy {
 
         if (this.position.side === 'long' && this.position.entryPrice) {
             // Apply skew to exit price: positive imbalance → ask more aggressively
-            const targetExit = bestAsk * (0.9999 + skewFactor);
+            const targetExitBase = bestAsk * (0.9999 + skewFactor);
+            const exitCrossFactor = 1 - ((this.config.exitCrossBps ?? 0) / 10_000);
+            const targetExit = Math.max(bestBid, targetExitBase * exitCrossFactor);
             const takeProfit = targetExit > this.position.entryPrice;
             const stopLossLevel = this.position.entryPrice * (1 - this.config.stopLossBps / 10_000);
             const isStopLoss = bestBid < stopLossLevel;
@@ -273,6 +278,7 @@ export class ScalperStrategy implements Strategy {
                     price: targetExit.toFixed(6),
                     amount: adjustedPositionSize.toFixed(4),
                     reason: exitReason,
+                    exitCrossBps: this.config.exitCrossBps ?? 0,
                 }, 'Scalper: 🚀 Placing SELL order');
 
                 const res = await this.executor.placeOffer({
