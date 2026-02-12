@@ -518,5 +518,35 @@
     "slippageBps": 0,
     "id": "1770877009806-rna73pm",
     "timestamp": 1770877009806
+  },
+  {
+    "pair": "XRP/524C555344000000000000000000000000000000",
+    "side": "BUY",
+    "price": 1.3813041370394332,
+    "amount": 0.5,
+    "filled": 0.5,
+    "fee": 0.000012,
+    "pnl": 0,
+    "hash": "ED102860971DDAB5493FAB61B5A4CFC87AD0144AC73914806E2DE4C3F070B772",
+    "paper": false,
+    "status": "PARTIAL",
+    "slippageBps": 0,
+    "id": "1770878925937-7mtg7el",
+    "timestamp": 1770878925937
+  },
+  {
+    "id": "manual-AD5645A4",
+    "timestamp": 1770868412000,
+    "pair": "XRP/524C555344000000000000000000000000000000",
+    "side": "SELL",
+    "price": 1.304692,
+    "amount": 6,
+    "filled": 6,
+    "fee": 0.000012,
+    "pnl": 0,
+    "hash": "AD5645A40888833848ACC1379B2CB79596EBBA2A63E68C10A0E4EC05C6168BDC",
+    "paper": false,
+    "status": "FILLED",
+    "source": "manual"
   }
 ]
