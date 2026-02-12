@@ -2,6 +2,7 @@ import { TransactionMetadata, TransactionStream, isDeletedNode, isModifiedNode }
 import type { TradingPair } from '../config';
 import { logger } from './logger';
 import { tradeHistory } from './tradeHistory';
+import { canonicalizePairKey } from '../xrpl/currency';
 
 interface XRPLAmount {
     currency: string;
@@ -90,15 +91,20 @@ export class AccountTradeIngestionService {
             TakerPays?: Amount;
         }, fill.takerReceivesBase);
         const fillRatio = intendedBaseAmount > 0 ? Math.max(0, Math.min(1, fill.baseAmount / intendedBaseAmount)) : 1;
-        const pairKey = `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`;
+        const pairKey = canonicalizePairKey(`${this.pair.baseCurrency}/${this.pair.quoteCurrency}`);
         const source = this.botHashes.has(hash) ? 'bot' : 'manual';
+        const priceQuotePerBase = fill.quoteAmount / fill.baseAmount;
 
         tradeHistory.recordTrade({
             pair: pairKey,
             side: fill.takerReceivesBase ? 'BUY' : 'SELL',
-            price: fill.quoteAmount / fill.baseAmount,
+            price: priceQuotePerBase,
+            priceQuotePerBase,
             amount: intendedBaseAmount > 0 ? intendedBaseAmount : fill.baseAmount,
+            amountBase: intendedBaseAmount > 0 ? intendedBaseAmount : fill.baseAmount,
             filled: fill.baseAmount,
+            filledBase: fill.baseAmount,
+            filledQuote: fill.quoteAmount,
             fee: 0,
             pnl: 0,
             hash,
@@ -112,8 +118,9 @@ export class AccountTradeIngestionService {
             hash,
             pair: pairKey,
             side: fill.takerReceivesBase ? 'BUY' : 'SELL',
-            filled: fill.baseAmount,
-            price: fill.quoteAmount / fill.baseAmount,
+            filledBase: fill.baseAmount,
+            filledQuote: fill.quoteAmount,
+            priceQuotePerBase,
             source,
         }, 'Account-level fill ingested');
     }

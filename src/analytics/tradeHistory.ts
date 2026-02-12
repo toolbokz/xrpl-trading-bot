@@ -1,15 +1,27 @@
 import fs from 'fs';
 import path from 'path';
 import { logger } from './logger';
+import { canonicalizePairKey } from '../xrpl/currency';
 
 export interface Trade {
     id: string;
     timestamp: number;
     pair: string;
     side: 'BUY' | 'SELL';
+    /** Quote-per-base execution price. */
     price: number;
+    /** Base amount requested. */
     amount: number;
+    /** Base amount filled (legacy field kept for compatibility). */
     filled: number;
+    /** Explicit base amount requested (same unit as amount). */
+    amountBase?: number;
+    /** Explicit base amount filled (same unit as filled). */
+    filledBase?: number;
+    /** Explicit quote amount filled. */
+    filledQuote?: number;
+    /** Explicit quote-per-base execution price. */
+    priceQuotePerBase?: number;
     fee: number;
     pnl: number;
     entryPrice?: number;
@@ -100,6 +112,104 @@ function computeFallbackRealizedPnl(trades: Trade[], todayTimestamp: number): Re
 const MAX_TRADES_IN_MEMORY = 1000;
 const TRADES_FILE = 'trade_history.json';
 
+type TradeInput = Omit<Trade, 'id' | 'timestamp'>;
+
+function toFinitePositive(value: unknown): number {
+    if (typeof value !== 'number') return 0;
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return value;
+}
+
+function statusPriority(status: Trade['status']): number {
+    switch (status) {
+        case 'FILLED': return 4;
+        case 'PARTIAL': return 3;
+        case 'REJECTED': return 2;
+        default: return 1;
+    }
+}
+
+export function shouldReplaceByHash(existing: Trade, incoming: TradeInput): boolean {
+    const existingPriority = statusPriority(existing.status);
+    const incomingPriority = statusPriority(incoming.status);
+    if (incomingPriority > existingPriority) return true;
+    if (incomingPriority < existingPriority) return false;
+
+    const existingBase = toFinitePositive(existing.filledBase ?? existing.filled);
+    const incomingBase = toFinitePositive(incoming.filledBase ?? incoming.filled);
+    if (existingBase === 0 && incomingBase > 0) return true;
+
+    const existingQuote = toFinitePositive(existing.filledQuote);
+    const incomingQuote = toFinitePositive(incoming.filledQuote);
+    if (existingQuote === 0 && incomingQuote > 0) return true;
+
+    const existingAmount = toFinitePositive(existing.amountBase ?? existing.amount);
+    if (existingAmount > 0 && existingBase > existingAmount * 1.000001 && incomingBase <= existingAmount * 1.000001) {
+        return true;
+    }
+
+    return false;
+}
+
+export function dedupeTradesByHash(trades: Trade[]): Trade[] {
+    const deduped: Trade[] = [];
+    for (const trade of trades) {
+        if (!trade.hash) {
+            deduped.push(trade);
+            continue;
+        }
+        const idx = deduped.findIndex((t) => t.hash === trade.hash);
+        if (idx === -1) {
+            deduped.push(trade);
+        } else if (shouldReplaceByHash(deduped[idx]!, trade)) {
+            deduped[idx] = { ...deduped[idx]!, ...trade };
+        }
+    }
+    return deduped;
+}
+
+export function normalizeTradeUnits(trade: TradeInput): TradeInput {
+    const pair = canonicalizePairKey(trade.pair);
+    const amountBase = toFinitePositive(trade.amountBase ?? trade.amount);
+    const priceQuotePerBase = toFinitePositive(trade.priceQuotePerBase ?? trade.price);
+    let filledBase = toFinitePositive(trade.filledBase ?? trade.filled);
+    let filledQuote = toFinitePositive(trade.filledQuote);
+
+    // Legacy SELL records sometimes stored quote in `filled` while `amount` is base.
+    if (filledQuote === 0 && trade.side === 'SELL' && amountBase > 0 && filledBase > amountBase * 1.000001) {
+        filledQuote = filledBase;
+        if (priceQuotePerBase > 0) {
+            filledBase = filledQuote / priceQuotePerBase;
+        }
+    }
+
+    if (filledQuote === 0 && priceQuotePerBase > 0 && filledBase > 0) {
+        filledQuote = filledBase * priceQuotePerBase;
+    }
+
+    if (amountBase > 0 && filledBase > amountBase * 1.000001) {
+        filledBase = amountBase;
+    }
+
+    const normalized: TradeInput = {
+        ...trade,
+        pair,
+        price: priceQuotePerBase > 0 ? priceQuotePerBase : trade.price,
+        amount: amountBase,
+        amountBase,
+        filled: filledBase,
+        filledBase,
+    };
+
+    if (priceQuotePerBase > 0) {
+        normalized.priceQuotePerBase = priceQuotePerBase;
+    }
+    if (filledQuote > 0) {
+        normalized.filledQuote = filledQuote;
+    }
+    return normalized;
+}
+
 class TradeHistoryService {
     private trades: Trade[] = [];
     private filePath: string;
@@ -121,12 +231,37 @@ class TradeHistoryService {
                 const data = fs.readFileSync(this.filePath, 'utf8');
                 const parsed = JSON.parse(data);
                 if (Array.isArray(parsed)) {
-                    this.trades = parsed
+                    const normalized = parsed
                         .slice(-MAX_TRADES_IN_MEMORY)
                         .map((raw) => ({
-                            ...raw,
+                            ...normalizeTradeUnits({
+                                ...raw,
+                                pair: typeof raw?.pair === 'string' ? raw.pair : '',
+                                side: raw?.side === 'SELL' ? 'SELL' : 'BUY',
+                                price: typeof raw?.price === 'number' ? raw.price : 0,
+                                amount: typeof raw?.amount === 'number' ? raw.amount : 0,
+                                filled: typeof raw?.filled === 'number' ? raw.filled : 0,
+                                fee: typeof raw?.fee === 'number' ? raw.fee : 0,
+                                pnl: typeof raw?.pnl === 'number' ? raw.pnl : 0,
+                                paper: !!raw?.paper,
+                                status: raw?.status === 'FILLED' || raw?.status === 'PARTIAL' || raw?.status === 'REJECTED'
+                                    ? raw.status
+                                    : 'PENDING',
+                                hash: typeof raw?.hash === 'string' ? raw.hash : undefined,
+                                source: raw?.source === 'manual' ? 'manual' : 'bot',
+                                entryPrice: typeof raw?.entryPrice === 'number' ? raw.entryPrice : undefined,
+                                exitPrice: typeof raw?.exitPrice === 'number' ? raw.exitPrice : undefined,
+                                slippageBps: typeof raw?.slippageBps === 'number' ? raw.slippageBps : undefined,
+                                amountBase: typeof raw?.amountBase === 'number' ? raw.amountBase : undefined,
+                                filledBase: typeof raw?.filledBase === 'number' ? raw.filledBase : undefined,
+                                filledQuote: typeof raw?.filledQuote === 'number' ? raw.filledQuote : undefined,
+                                priceQuotePerBase: typeof raw?.priceQuotePerBase === 'number' ? raw.priceQuotePerBase : undefined,
+                            }),
+                            id: typeof raw?.id === 'string' ? raw.id : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                            timestamp: typeof raw?.timestamp === 'number' ? raw.timestamp : Date.now(),
                             source: raw?.source === 'manual' ? 'manual' : 'bot',
-                        }));
+                        })) as Trade[];
+                    this.trades = dedupeTradesByHash(normalized);
                     logger.info({ count: this.trades.length }, 'Loaded trade history from disk');
                 }
             }
@@ -146,9 +281,30 @@ class TradeHistoryService {
 
     recordTrade(trade: Omit<Trade, 'id' | 'timestamp'>): Trade {
         this.init();
+        const normalized = normalizeTradeUnits(trade);
+        const source = normalized.source === 'manual' ? 'manual' : 'bot';
+
+        if (normalized.hash) {
+            const existingIndex = this.trades.findIndex((t) => t.hash === normalized.hash);
+            if (existingIndex !== -1) {
+                const existing = this.trades[existingIndex]!;
+                if (!shouldReplaceByHash(existing, normalized)) {
+                    return existing;
+                }
+                const replacement: Trade = {
+                    ...existing,
+                    ...normalized,
+                    source,
+                };
+                this.trades[existingIndex] = replacement;
+                this.saveToDisk();
+                return replacement;
+            }
+        }
+
         const fullTrade: Trade = {
-            ...trade,
-            source: trade.source === 'manual' ? 'manual' : 'bot',
+            ...normalized,
+            source,
             id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
             timestamp: Date.now(),
         };
@@ -195,8 +351,9 @@ class TradeHistoryService {
 
     getTradesByPair(pair: string, limit = 50): Trade[] {
         this.init();
+        const canonical = canonicalizePairKey(pair);
         return this.trades
-            .filter(t => t.pair === pair)
+            .filter(t => canonicalizePairKey(t.pair) === canonical)
             .slice(-limit)
             .reverse();
     }

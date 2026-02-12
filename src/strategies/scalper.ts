@@ -229,6 +229,7 @@ export class ScalperStrategy implements Strategy {
                 side: 'buy',
                 price,
                 amount: adjustedPositionSize,
+                strategy: this.name,
                 flags: getExecutionOrderFlags(),
             });
             if (res.accepted) {
@@ -285,6 +286,7 @@ export class ScalperStrategy implements Strategy {
                     side: 'sell',
                     price: targetExit,
                     amount: adjustedPositionSize,
+                    strategy: this.name,
                     flags: getExecutionOrderFlags(),
                 });
                 if (res.accepted) {

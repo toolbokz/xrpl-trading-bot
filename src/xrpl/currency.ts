@@ -25,6 +25,67 @@ function currencyToHex(currency: string): string {
     return hex.padEnd(40, '0');
 }
 
+/**
+ * Decode a 160-bit hex XRPL currency code to ASCII symbol when possible.
+ * Returns uppercase symbol (or the original uppercase input when undecodable).
+ */
+export function decodeXrplCurrencyCode(currency: string): string {
+    const upper = (currency ?? '').trim().toUpperCase();
+    if (!upper) return upper;
+    if (!is160BitHex.test(upper)) return upper;
+
+    try {
+        const decoded = Buffer.from(upper, 'hex')
+            .toString('ascii')
+            .replace(/\0/g, '')
+            .trim()
+            .toUpperCase();
+        return decoded.length > 0 ? decoded : upper;
+    } catch {
+        return upper;
+    }
+}
+
+/**
+ * Canonical pair key representation for analytics/trade history.
+ * Example: XRP/524C... -> XRP/RLUSD
+ */
+export function canonicalizePairKey(pairKey: string): string {
+    const raw = (pairKey ?? '').trim();
+    if (!raw) return raw;
+    const [baseRaw, quoteRaw, ...rest] = raw.split('/');
+    if (!baseRaw || !quoteRaw || rest.length > 0) {
+        return raw.toUpperCase();
+    }
+
+    const base = decodeXrplCurrencyCode(baseRaw);
+    const quote = decodeXrplCurrencyCode(quoteRaw);
+    return `${base}/${quote}`;
+}
+
+/**
+ * Pair-key aliases accepted for filtering legacy + canonical records.
+ */
+export function getPairKeyAliases(pairKey: string): string[] {
+    const aliases = new Set<string>();
+    const canonical = canonicalizePairKey(pairKey);
+    if (!canonical) return [];
+
+    aliases.add(canonical);
+    aliases.add(canonical.toUpperCase());
+    aliases.add((pairKey ?? '').trim());
+    aliases.add(((pairKey ?? '').trim()).toUpperCase());
+
+    const [baseRaw, quoteRaw] = canonical.split('/');
+    if (baseRaw && quoteRaw) {
+        const base = baseRaw === 'XRP' ? 'XRP' : currencyToHex(baseRaw);
+        const quote = quoteRaw === 'XRP' ? 'XRP' : currencyToHex(quoteRaw);
+        aliases.add(`${base}/${quote}`);
+    }
+
+    return Array.from(aliases).filter((v) => v.length > 0);
+}
+
 export const normalizeXrplCurrency = (currency: string, issuer?: string): { currency: string; issuer?: string } => {
     if (!currency || typeof currency !== 'string') {
         throw new Error('Currency is required');

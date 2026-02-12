@@ -566,12 +566,6 @@ export class AdaptiveLearner {
                     const key = `${strategy}:${regime}`;
                     const perfRow = perfIndex.get(key);
 
-                    if (!perfRow && !forceUpdate) {
-                        // No performance data and not forcing - keep prior
-                        skippedCount++;
-                        continue;
-                    }
-
                     const priorTuning = strategyTunings[regime];
 
                     if (perfRow) {
@@ -597,14 +591,18 @@ export class AdaptiveLearner {
                             sizeMultiplier: newTuning.sizeMultiplier.toFixed(2),
                             reason: newTuning.reason,
                         }, 'Updated adaptive tuning');
-                    } else if (forceUpdate && !priorTuning) {
-                        // Force update with no prior - use defaults
+                    } else if (!priorTuning) {
+                        // Initialize baseline tuning so UI/runtime always have a visible
+                        // context while the learner is still collecting enough samples.
                         strategyTunings[regime] = {
                             ...DEFAULT_TUNING,
                             updatedAt: Date.now(),
-                            reason: 'initialized (no data)',
+                            reason: forceUpdate ? 'initialized (no data)' : `collecting samples (<${this.config.minSamples})`,
                         };
                         updatedCount++;
+                    } else {
+                        // No new performance data; keep prior tuning unchanged.
+                        skippedCount++;
                     }
                 }
             }

@@ -22,6 +22,7 @@ import { SpreadDistributionPanel } from '../components/SpreadDistributionPanel';
 import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
 import { AdverseSelectionPanel } from '../components/AdverseSelectionPanel';
 import { DrawdownGaugePanel } from '../components/DrawdownGaugePanel';
+import { AdaptivePanel } from '../components/AdaptivePanel';
 import { BackgroundFairValuePanel } from '../components/BackgroundFairValuePanel';
 import { MarketRadarPanel } from '../components/MarketRadarPanel';
 import { useOrderBook } from '../lib/hooks/useOrderBook';
@@ -527,7 +528,7 @@ export default function Page() {
     );
 
     const diagnosticsPanel = (
-        <div className="grid gap-4 md:grid-cols-2 md:items-start">
+        <div className="grid gap-4 md:grid-cols-3 md:items-stretch">
             <div className="space-y-4 min-w-0">
                 <SpreadDistributionPanel />
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -535,13 +536,70 @@ export default function Page() {
                     <DrawdownGaugePanel pollInterval={10000} />
                 </div>
             </div>
-            <div className="space-y-4 min-w-0">
-                <RegimeHeatmapPanel />
-                <div className="min-w-0">
+            <div className="min-w-0 h-full grid gap-4 sm:grid-cols-2">
+                <div className="min-w-0 h-full">
                     <GovernancePanel compact />
                 </div>
+                <div className="min-w-0 h-full">
+                    <AdaptivePanel
+                        {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                        strategy={bot.strategy}
+                        regime="normal"
+                        pollInterval={10000}
+                    />
+                </div>
+            </div>
+            <div className="min-w-0 h-full">
+                <RegimeHeatmapPanel />
             </div>
         </div>
+    );
+
+    const drawerPanel = (
+        <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-white/10 bg-card">
+            <div className="flex items-center gap-1 border-b border-white/10 p-2" role="tablist" aria-label="Activity drawer tabs">
+                {drawerTabs.map((tab, index) => {
+                    const Icon = tab.icon;
+                    return (
+                        <button
+                            key={tab.id}
+                            role="tab"
+                            aria-selected={drawerTab === tab.id}
+                            aria-controls={`drawer-panel-${tab.id}`}
+                            onClick={() => setDrawerTab(tab.id)}
+                            onKeyDown={(event) => onDrawerTabKeyDown(event, index)}
+                            className={clsx(
+                                'flex items-center gap-1 rounded px-2 py-1 text-xs',
+                                drawerTab === tab.id ? 'bg-sky-500/20 text-sky-300' : 'text-slate-400 hover:text-slate-200',
+                            )}
+                        >
+                            <Icon size={12} /> {tab.label}
+                        </button>
+                    );
+                })}
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden px-2 pt-2 pb-0">
+                {drawerTab === 'orders' && (
+                    <div id="drawer-panel-orders" role="tabpanel" className="h-full">
+                        <BotOrdersPanel pollInterval={5000} />
+                    </div>
+                )}
+                {drawerTab === 'logs' && (
+                    <div
+                        id="drawer-panel-logs"
+                        role="tabpanel"
+                        className="h-full min-h-0 overflow-hidden"
+                    >
+                        <LogsPanel maxRows={120} pollInterval={2000} />
+                    </div>
+                )}
+                {drawerTab === 'alerts' && (
+                    <div id="drawer-panel-alerts" role="tabpanel" className="card flex h-full items-center justify-center p-4 text-sm text-slate-400">
+                        {stripWarnings.length > 0 ? stripWarnings.join(', ') : 'No active alerts.'}
+                    </div>
+                )}
+            </div>
+        </aside>
     );
 
     const mainContent = (
@@ -572,55 +630,151 @@ export default function Page() {
                 </div>
             </section>
 
-            {/* Z2 PRIMARY DECISION PANEL */}
-            <section className="card p-4 min-h-[420px]">
-                <div className="mb-3 flex items-center justify-between">
-                    <h2 className="text-lg font-semibold text-slate-100">Flow Sentiment</h2>
-                    <span className="text-xs text-slate-400">Primary Decision Panel</span>
-                </div>
-                <div className="h-[calc(100%-2rem)] min-h-0">
-                    <FlowMetricsPanel pollInterval={2000} />
-                </div>
-            </section>
+            {/* Z2 + Z3 WITH DESKTOP ACTIVITY COLUMN */}
+            {!isCompact && !isNarrow ? (
+                <section
+                    className={clsx(
+                        'grid gap-3 items-stretch',
+                        drawerOpen ? 'grid-cols-[minmax(0,1fr)_360px]' : 'grid-cols-[minmax(0,1fr)_56px]'
+                    )}
+                >
+                    <div className="space-y-4 min-w-0">
+                        {/* Z2 PRIMARY DECISION PANEL */}
+                        <section className="card p-4 min-h-[420px]">
+                            <div className="mb-3 flex items-center justify-between">
+                                <h2 className="text-lg font-semibold text-slate-100">Flow Sentiment</h2>
+                                <span className="text-xs text-slate-400">Primary Decision Panel</span>
+                            </div>
+                            <div className="h-[calc(100%-2rem)] min-h-0">
+                                <FlowMetricsPanel pollInterval={2000} />
+                            </div>
+                        </section>
 
-            {/* Z3 DIAGNOSTIC SUMMARY ROW */}
-            {!isCompact && (
-                <section className={clsx('grid gap-4', isNarrow ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-3')}>
-                    <div className="card min-h-[220px] p-4">
-                        <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
-                        <div className="space-y-2">
-                            <MetricLine label="Spread now" value={`${fmtNum(orderBookData.spreadBps, 1)} bps`} />
-                            <MetricLine
-                                label="Spread percentile"
-                                value={spreadDist.data?.lookback24h?.p75Bps != null ? `${spreadDist.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
-                            />
-                            <MetricLine label="Depth (top)" value={fmtNum(activePairMarket?.depthTopNotional ?? null, 0)} />
-                            <MetricLine label="Staleness" value={fmtMs(activePairMarket?.stalenessMs ?? null)} />
-                            <MetricLine
-                                label="Mid / Bid / Ask"
-                                value={`${fmtNum(midPrice, 4)} / ${fmtNum(orderBookBids[0]?.price ?? null, 4)} / ${fmtNum(orderBookAsks[0]?.price ?? null, 4)}`}
-                            />
-                        </div>
+                        {/* Z3 DIAGNOSTIC SUMMARY ROW */}
+                        <section className="grid gap-4 grid-cols-3">
+                            <div className="card min-h-[220px] p-4">
+                                <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
+                                <div className="space-y-2">
+                                    <MetricLine label="Spread now" value={`${fmtNum(orderBookData.spreadBps, 1)} bps`} />
+                                    <MetricLine
+                                        label="Spread percentile"
+                                        value={spreadDist.data?.lookback24h?.p75Bps != null ? `${spreadDist.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
+                                    />
+                                    <MetricLine label="Depth (top)" value={fmtNum(activePairMarket?.depthTopNotional ?? null, 0)} />
+                                    <MetricLine label="Staleness" value={fmtMs(activePairMarket?.stalenessMs ?? null)} />
+                                    <MetricLine
+                                        label="Mid / Bid / Ask"
+                                        value={`${fmtNum(midPrice, 4)} / ${fmtNum(orderBookBids[0]?.price ?? null, 4)} / ${fmtNum(orderBookAsks[0]?.price ?? null, 4)}`}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="min-h-[220px]">
+                                <BackgroundFairValuePanel pollInterval={4000} compact />
+                            </div>
+
+                            <div className="card min-h-[220px] p-4">
+                                <h3 className="mb-3 text-base font-semibold text-slate-100">Risk Quality</h3>
+                                <div className="space-y-2">
+                                    <MetricLine label="Adverse 1H" value={adverseRate == null ? '—' : `${(adverseRate * 100).toFixed(1)}% (${riskBand(adverseRate)})`} />
+                                    <MetricLine label="Drawdown" value={drawdownPct == null ? '—' : `${drawdownPct.toFixed(2)}%`} />
+                                    <MetricLine label="DD Velocity" value={drawdownVelocity == null ? '—' : `${drawdownVelocity.toFixed(2)}/h`} />
+                                </div>
+                                <div className="mt-3 text-xs text-slate-400">Expanded adverse and drawdown charts are in Diagnostics.</div>
+                            </div>
+                        </section>
                     </div>
 
-                    <div className="min-h-[220px]">
-                        <BackgroundFairValuePanel pollInterval={4000} compact />
-                    </div>
-
-                    <div className="card min-h-[220px] p-4">
-                        <h3 className="mb-3 text-base font-semibold text-slate-100">Risk Quality</h3>
-                        <div className="space-y-2">
-                            <MetricLine label="Adverse 1H" value={adverseRate == null ? '—' : `${(adverseRate * 100).toFixed(1)}% (${riskBand(adverseRate)})`} />
-                            <MetricLine label="Drawdown" value={drawdownPct == null ? '—' : `${drawdownPct.toFixed(2)}%`} />
-                            <MetricLine label="DD Velocity" value={drawdownVelocity == null ? '—' : `${drawdownVelocity.toFixed(2)}/h`} />
-                        </div>
-                        <div className="mt-3 text-xs text-slate-400">Expanded adverse and drawdown charts are in Diagnostics.</div>
+                    <div className="relative h-[656px] min-h-[656px] max-h-[656px] min-w-0 overflow-hidden">
+                        {drawerOpen ? (
+                            <div className="h-full min-h-0 overflow-hidden">{drawerPanel}</div>
+                        ) : (
+                            <div className="flex h-full min-h-0 flex-col items-center gap-2 overflow-hidden rounded-md border border-white/10 bg-card/80 py-3">
+                                <button
+                                    onClick={() => setDrawerOpen(true)}
+                                    className="rounded-md p-2 text-slate-300 hover:bg-white/10"
+                                    aria-label="Open activity drawer"
+                                >
+                                    <ChevronLeft size={16} />
+                                </button>
+                                <button onClick={() => { setDrawerOpen(true); setDrawerTab('orders'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open orders">
+                                    <ListOrdered size={14} />
+                                </button>
+                                <button onClick={() => { setDrawerOpen(true); setDrawerTab('logs'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open logs">
+                                    <Logs size={14} />
+                                </button>
+                                <button onClick={() => { setDrawerOpen(true); setDrawerTab('alerts'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open alerts">
+                                    <AlertTriangle size={14} />
+                                </button>
+                                {severity > 0 && (
+                                    <span className="mt-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-300">{severity}</span>
+                                )}
+                            </div>
+                        )}
+                        {drawerOpen && (
+                            <button
+                                onClick={() => setDrawerOpen(false)}
+                                className="absolute left-2 top-2 rounded bg-white/10 p-1 text-slate-200 hover:bg-white/20"
+                                aria-label="Collapse activity drawer"
+                            >
+                                <ChevronRight size={14} />
+                            </button>
+                        )}
                     </div>
                 </section>
+            ) : (
+                <>
+                    {/* Z2 PRIMARY DECISION PANEL */}
+                    <section className="card p-4 min-h-[420px]">
+                        <div className="mb-3 flex items-center justify-between">
+                            <h2 className="text-lg font-semibold text-slate-100">Flow Sentiment</h2>
+                            <span className="text-xs text-slate-400">Primary Decision Panel</span>
+                        </div>
+                        <div className="h-[calc(100%-2rem)] min-h-0">
+                            <FlowMetricsPanel pollInterval={2000} />
+                        </div>
+                    </section>
+
+                    {/* Z3 DIAGNOSTIC SUMMARY ROW */}
+                    {!isCompact && (
+                        <section className={clsx('grid gap-4', isNarrow ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-3')}>
+                            <div className="card min-h-[220px] p-4">
+                                <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
+                                <div className="space-y-2">
+                                    <MetricLine label="Spread now" value={`${fmtNum(orderBookData.spreadBps, 1)} bps`} />
+                                    <MetricLine
+                                        label="Spread percentile"
+                                        value={spreadDist.data?.lookback24h?.p75Bps != null ? `${spreadDist.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
+                                    />
+                                    <MetricLine label="Depth (top)" value={fmtNum(activePairMarket?.depthTopNotional ?? null, 0)} />
+                                    <MetricLine label="Staleness" value={fmtMs(activePairMarket?.stalenessMs ?? null)} />
+                                    <MetricLine
+                                        label="Mid / Bid / Ask"
+                                        value={`${fmtNum(midPrice, 4)} / ${fmtNum(orderBookBids[0]?.price ?? null, 4)} / ${fmtNum(orderBookAsks[0]?.price ?? null, 4)}`}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="min-h-[220px]">
+                                <BackgroundFairValuePanel pollInterval={4000} compact />
+                            </div>
+
+                            <div className="card min-h-[220px] p-4">
+                                <h3 className="mb-3 text-base font-semibold text-slate-100">Risk Quality</h3>
+                                <div className="space-y-2">
+                                    <MetricLine label="Adverse 1H" value={adverseRate == null ? '—' : `${(adverseRate * 100).toFixed(1)}% (${riskBand(adverseRate)})`} />
+                                    <MetricLine label="Drawdown" value={drawdownPct == null ? '—' : `${drawdownPct.toFixed(2)}%`} />
+                                    <MetricLine label="DD Velocity" value={drawdownVelocity == null ? '—' : `${drawdownVelocity.toFixed(2)}/h`} />
+                                </div>
+                                <div className="mt-3 text-xs text-slate-400">Expanded adverse and drawdown charts are in Diagnostics.</div>
+                            </div>
+                        </section>
+                    )}
+                </>
             )}
 
-            {/* Z4 TOOL TABS */}
-            <section className="card p-4">
+            {/* Z4 TOOL TABS (FULL WIDTH) */}
+            <section className="card p-4 min-w-0">
                 <div className="mb-3 flex items-center gap-2 border-b border-white/10 pb-2" role="tablist" aria-label="Tool tabs">
                     {toolTabs.map((tab, index) => (
                         <button
@@ -679,96 +833,11 @@ export default function Page() {
         </div>
     );
 
-    const drawerPanel = (
-        <aside className="flex h-[calc(100vh-80px)] max-h-[calc(100vh-80px)] min-h-0 flex-col overflow-hidden border-l border-white/10 bg-card">
-            <div className="flex items-center gap-1 border-b border-white/10 p-2" role="tablist" aria-label="Activity drawer tabs">
-                {drawerTabs.map((tab, index) => {
-                    const Icon = tab.icon;
-                    return (
-                        <button
-                            key={tab.id}
-                            role="tab"
-                            aria-selected={drawerTab === tab.id}
-                            aria-controls={`drawer-panel-${tab.id}`}
-                            onClick={() => setDrawerTab(tab.id)}
-                            onKeyDown={(event) => onDrawerTabKeyDown(event, index)}
-                            className={clsx(
-                                'flex items-center gap-1 rounded px-2 py-1 text-xs',
-                                drawerTab === tab.id ? 'bg-sky-500/20 text-sky-300' : 'text-slate-400 hover:text-slate-200',
-                            )}
-                        >
-                            <Icon size={12} /> {tab.label}
-                        </button>
-                    );
-                })}
-            </div>
-            <div className="min-h-0 flex-1 overflow-hidden p-2">
-                {drawerTab === 'orders' && (
-                    <div id="drawer-panel-orders" role="tabpanel" className="h-full">
-                        <BotOrdersPanel pollInterval={5000} />
-                    </div>
-                )}
-                {drawerTab === 'logs' && (
-                    <div
-                        id="drawer-panel-logs"
-                        role="tabpanel"
-                        className="h-full min-h-0 overflow-hidden"
-                    >
-                        <LogsPanel maxRows={120} pollInterval={2000} />
-                    </div>
-                )}
-                {drawerTab === 'alerts' && (
-                    <div id="drawer-panel-alerts" role="tabpanel" className="card flex h-full items-center justify-center p-4 text-sm text-slate-400">
-                        {stripWarnings.length > 0 ? stripWarnings.join(', ') : 'No active alerts.'}
-                    </div>
-                )}
-            </div>
-        </aside>
-    );
-
     return (
         <RuntimeCacheProvider pollInterval={4000} enabled>
             <AppShell header={headerComponent} tradeToastsEnabled={tradeToastsEnabled}>
                 {!isCompact && !isNarrow ? (
-                    <div className="grid min-h-[calc(100vh-80px)] gap-0" style={{ gridTemplateColumns: drawerOpen ? '1fr 360px' : '1fr 56px' }}>
-                        <div className="pr-4">{mainContent}</div>
-                        <div className="relative">
-                            {drawerOpen ? (
-                                <div className="h-full">{drawerPanel}</div>
-                            ) : (
-                                <div className="flex h-full flex-col items-center gap-2 border-l border-white/10 bg-card/70 py-3">
-                                    <button
-                                        onClick={() => setDrawerOpen(true)}
-                                        className="rounded-md p-2 text-slate-300 hover:bg-white/10"
-                                        aria-label="Open activity drawer"
-                                    >
-                                        <ChevronLeft size={16} />
-                                    </button>
-                                    <button onClick={() => { setDrawerOpen(true); setDrawerTab('orders'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open orders">
-                                        <ListOrdered size={14} />
-                                    </button>
-                                    <button onClick={() => { setDrawerOpen(true); setDrawerTab('logs'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open logs">
-                                        <Logs size={14} />
-                                    </button>
-                                    <button onClick={() => { setDrawerOpen(true); setDrawerTab('alerts'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open alerts">
-                                        <AlertTriangle size={14} />
-                                    </button>
-                                    {severity > 0 && (
-                                        <span className="mt-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-300">{severity}</span>
-                                    )}
-                                </div>
-                            )}
-                            {drawerOpen && (
-                                <button
-                                    onClick={() => setDrawerOpen(false)}
-                                    className="absolute left-2 top-2 rounded bg-white/10 p-1 text-slate-200 hover:bg-white/20"
-                                    aria-label="Collapse activity drawer"
-                                >
-                                    <ChevronRight size={14} />
-                                </button>
-                            )}
-                        </div>
-                    </div>
+                    <div>{mainContent}</div>
                 ) : isCompact ? (
                     <div className="space-y-4">{mainContent}</div>
                 ) : (
@@ -784,7 +853,7 @@ export default function Page() {
                         {mainContent}
                         {drawerOpen && (
                             <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setDrawerOpen(false)}>
-                                <div className="absolute right-0 top-0 h-full w-[360px] max-w-[92vw]" onClick={(event) => event.stopPropagation()}>
+                                <div className="absolute bottom-0 right-0 h-[70vh] w-full max-w-[100vw] sm:top-0 sm:h-full sm:w-[360px] sm:max-w-[92vw]" onClick={(event) => event.stopPropagation()}>
                                     {drawerPanel}
                                 </div>
                             </div>

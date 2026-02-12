@@ -354,6 +354,7 @@ export class PathArbitrageStrategy implements Strategy {
                 side,
                 price,
                 amount: adjustedPositionSize,
+                strategy: this.name,
                 flags: { immediateOrCancel: true }
             });
             if (res.accepted) {
@@ -378,6 +379,7 @@ export class PathArbitrageStrategy implements Strategy {
                 side,
                 price,
                 amount: adjustedPositionSize,
+                strategy: this.name,
                 flags: { immediateOrCancel: true }
             });
             if (res.accepted) {

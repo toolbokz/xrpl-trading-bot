@@ -29,10 +29,16 @@ export interface PartialFillResult {
     takerGotAmount: number;
     /** Amount of TakerPays actually delivered */
     takerPaidAmount: number;
+    /** Executed base amount (XRP for XRP/* pairs). */
+    baseFilled: number;
+    /** Executed quote amount (RLUSD for XRP/RLUSD). */
+    quoteFilled: number;
     /** Percentage of the original order filled (0-1) */
     fillRatio: number;
-    /** Effective price achieved (takerPaidAmount / takerGotAmount) */
+    /** Effective quote-per-base execution price. */
     effectivePrice: number;
+    /** Alias of effectivePrice for explicit unit semantics. */
+    priceQuotePerBase: number;
     /** Slippage from expected price in basis points (can be negative for better execution) */
     slippageBps: number;
 }

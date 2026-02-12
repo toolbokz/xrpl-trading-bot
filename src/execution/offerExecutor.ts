@@ -11,13 +11,15 @@ import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './off
 import { ExecutionQualityCollector, InFlightTrace } from '../analytics/executionQuality';
 import { ExposureTracker } from '../risk/exposureTracker';
 import { FlowRegime } from '../market/flowMetrics';
-import { toXrplCurrency } from '../xrpl/currency';
+import { canonicalizePairKey, decodeXrplCurrencyCode, toXrplCurrency } from '../xrpl/currency';
 import type { TradeToastEvent } from '../observability/tradeToastEvents';
 
 export interface OfferParams {
     side: 'buy' | 'sell';
     price: number;
     amount: number;
+    /** Explicit strategy attribution override for this order. */
+    strategy?: string;
     expectedPrice?: number; // For slippage calculation
     flags?: {
         immediateOrCancel?: boolean;
@@ -100,6 +102,11 @@ export class OfferExecutor {
     ) { }
 
     private readonly depthCheckLevels: number = Math.max(1, Math.min(20, parseInt(process.env.EXECUTION_DEPTH_LEVELS ?? '5', 10) || 5));
+    private readonly iocMinFillRatio: number = (() => {
+        const parsed = Number(process.env.EXECUTION_IOC_MIN_FILL_RATIO ?? '1');
+        if (!Number.isFinite(parsed)) return 1;
+        return Math.max(0.05, Math.min(1, parsed));
+    })();
 
     /**
      * Update the trading pair (called by TradingRuntime on pair switch).
@@ -380,7 +387,10 @@ export class OfferExecutor {
     }
 
     async placeOffer(params: OfferParams): Promise<ExecutionResult> {
-        const pairSymbol = `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`;
+        if (params.strategy && params.strategy.trim().length > 0) {
+            this.currentStrategy = params.strategy.trim();
+        }
+        const pairSymbol = canonicalizePairKey(`${this.pair.baseCurrency}/${this.pair.quoteCurrency}`);
 
         // ─────────────────────────────────────────────────────────────────────
         // Defense-in-depth: Governance layer gate (Capital Protection)
@@ -533,23 +543,30 @@ export class OfferExecutor {
             side: adjustedParams.side.toUpperCase() as TradeSide,
             amount: adjustedParams.amount,
             price: adjustedParams.price,
+            expectedPrice: adjustedParams.expectedPrice ?? adjustedParams.price,
         };
         return this.placeOfferIntent(intent, adjustedParams.flags, adjustedParams.expectedPrice);
     }
 
-    async placeOfferIntent(intent: TradeIntent, flags?: OfferParams['flags'], _expectedPrice?: number): Promise<ExecutionResult> {
-        const pairSymbol = `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`;
+    async placeOfferIntent(intent: TradeIntent, flags?: OfferParams['flags'], expectedPriceOverride?: number): Promise<ExecutionResult> {
+        const pairSymbol = canonicalizePairKey(`${this.pair.baseCurrency}/${this.pair.quoteCurrency}`);
+        const effectiveExpectedPrice = expectedPriceOverride ?? intent.expectedPrice ?? intent.price;
+        const normalizedIntent: TradeIntent = { ...intent, expectedPrice: effectiveExpectedPrice };
 
         if (this.paper) {
-            logger.info({ intent }, 'Paper trade: simulated OfferCreate');
+            logger.info({ intent: normalizedIntent }, 'Paper trade: simulated OfferCreate');
 
             // Record paper trade
             tradeHistory.recordTrade({
                 pair: pairSymbol,
-                side: intent.side as 'BUY' | 'SELL',
-                price: intent.price,
-                amount: intent.amount,
-                filled: intent.amount,
+                side: normalizedIntent.side as 'BUY' | 'SELL',
+                price: normalizedIntent.price,
+                priceQuotePerBase: normalizedIntent.price,
+                amount: normalizedIntent.amount,
+                amountBase: normalizedIntent.amount,
+                filled: normalizedIntent.amount,
+                filledBase: normalizedIntent.amount,
+                filledQuote: normalizedIntent.amount * normalizedIntent.price,
                 fee: 0,
                 pnl: 0, // P&L calculated by strategy
                 paper: true,
@@ -557,11 +574,11 @@ export class OfferExecutor {
             });
 
             // Compute cost realism for paper trades
-            const side = intent.side.toLowerCase() as 'buy' | 'sell';
+            const side = normalizedIntent.side.toLowerCase() as 'buy' | 'sell';
             const costMetrics = computeCostRealism({
                 side,
-                intentPrice: intent.price,
-                fillPrice: intent.price, // Paper assumes perfect fill
+                intentPrice: normalizedIntent.expectedPrice ?? normalizedIntent.price,
+                fillPrice: normalizedIntent.price, // Paper assumes perfect fill
                 midPriceAtDecision: this.currentMidPrice,
                 ammFeeBps: null, // No AMM fee in paper mode
             });
@@ -573,10 +590,10 @@ export class OfferExecutor {
                     strategy: this.currentStrategy,
                     action: 'fill',
                     side,
-                    intentPrice: intent.price,
-                    intentSizeBase: intent.amount,
-                    fillPrice: intent.price,
-                    fillSizeBase: intent.amount,
+                    intentPrice: normalizedIntent.expectedPrice ?? normalizedIntent.price,
+                    intentSizeBase: normalizedIntent.amount,
+                    fillPrice: normalizedIntent.price,
+                    fillSizeBase: normalizedIntent.amount,
                     resultCode: 'paper-mode',
                     isBotTrade: true,
                     midPriceAtDecision: this.currentMidPrice ?? undefined,
@@ -608,15 +625,15 @@ export class OfferExecutor {
                         pairKey: pairSymbol,
                         strategy: this.currentStrategy,
                         side,
-                        arrivalMid: this.currentMidPrice ?? intent.price,
-                        expectedPrice: intent.price,
+                        arrivalMid: this.currentMidPrice ?? normalizedIntent.price,
+                        expectedPrice: normalizedIntent.expectedPrice ?? normalizedIntent.price,
                         isMaker: false,
                     });
                     this.executionQualityCollector.recordFill(paperTrace, {
                         submitTimeMs: now,
                         ledgerAcceptedTimeMs: now,
-                        fillPrice: intent.price,
-                        postFillMid: this.currentMidPrice ?? intent.price,
+                        fillPrice: normalizedIntent.price,
+                        postFillMid: this.currentMidPrice ?? normalizedIntent.price,
                         fillRatio: 1,
                         txHash: null,
                         ledgerIndex: 0,
@@ -626,29 +643,29 @@ export class OfferExecutor {
 
             // Record fill in exposure tracker
             if (this.exposureTracker) {
-                this.exposureTracker.recordFill(side, intent.amount, pairSymbol);
+                this.exposureTracker.recordFill(side, normalizedIntent.amount, pairSymbol);
             }
 
             this.emitTradeToastSafe({
                 type: 'ORDER_PLACED',
-                side: intent.side as 'BUY' | 'SELL',
+                side: normalizedIntent.side as 'BUY' | 'SELL',
                 pair: pairSymbol,
                 baseCurrency: this.pair.baseCurrency,
                 quoteCurrency: this.pair.quoteCurrency,
-                baseAmount: intent.amount,
-                quoteAmount: intent.amount * intent.price,
-                price: intent.price,
+                baseAmount: normalizedIntent.amount,
+                quoteAmount: normalizedIntent.amount * normalizedIntent.price,
+                price: normalizedIntent.price,
                 timestamp: new Date().toISOString(),
             });
             this.emitTradeToastSafe({
                 type: 'ORDER_FILLED',
-                side: intent.side as 'BUY' | 'SELL',
+                side: normalizedIntent.side as 'BUY' | 'SELL',
                 pair: pairSymbol,
                 baseCurrency: this.pair.baseCurrency,
                 quoteCurrency: this.pair.quoteCurrency,
-                baseAmount: intent.amount,
-                quoteAmount: intent.amount * intent.price,
-                price: intent.price,
+                baseAmount: normalizedIntent.amount,
+                quoteAmount: normalizedIntent.amount * normalizedIntent.price,
+                price: normalizedIntent.price,
                 timestamp: new Date().toISOString(),
             });
 
@@ -656,23 +673,27 @@ export class OfferExecutor {
         }
         if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
 
-        if (!Number.isFinite(intent.price) || intent.price <= 0 || !Number.isFinite(intent.amount) || intent.amount <= 0) {
+        if (!Number.isFinite(normalizedIntent.price) || normalizedIntent.price <= 0 || !Number.isFinite(normalizedIntent.amount) || normalizedIntent.amount <= 0) {
             return { accepted: false, reason: 'invalid-params' };
         }
 
-        const hasDepth = await this.hasSufficientDepthAtPrice(intent.side, intent.price, intent.amount);
-        if (!hasDepth) {
+        const depth = await this.hasSufficientDepthAtPrice(normalizedIntent.side, normalizedIntent.price, normalizedIntent.amount, flags);
+        if (!depth.hasDepth) {
             logger.warn({
-                side: intent.side,
-                price: intent.price,
-                amount: intent.amount,
+                side: normalizedIntent.side,
+                price: normalizedIntent.price,
+                amount: normalizedIntent.amount,
                 levels: this.depthCheckLevels,
                 pair: pairSymbol,
-            }, 'Skipped FOK: insufficient depth at price');
+                orderType: depth.orderType,
+                fillableBase: depth.fillableBase,
+                minRequiredBase: depth.minRequiredBase,
+                iocMinFillRatio: this.iocMinFillRatio,
+            }, 'Skipped order: insufficient depth at price');
             return { accepted: false, reason: 'insufficient-depth-at-price' };
         }
 
-        const normalized = normalizeIntent(intent);
+        const normalized = normalizeIntent(normalizedIntent);
         const txCore = buildOfferCreate(normalized);
 
         const tx: any = {
@@ -682,7 +703,7 @@ export class OfferExecutor {
             Flags: this.mapFlags(flags),
             LastLedgerSequence: await this.computeLastLedgerSequence(),
         };
-        return this.submitWithGuards(tx, normalized.pair.symbol, intent, flags);
+        return this.submitWithGuards(tx, normalized.pair.symbol, normalizedIntent, flags);
     }
 
     async executeIntents(intents: TradeIntent[]): Promise<ExecutionResult[]> {
@@ -700,7 +721,7 @@ export class OfferExecutor {
     }
 
     async cancelOffer(offerSequence: number): Promise<ExecutionResult> {
-        const pairSymbol = `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`;
+        const pairSymbol = canonicalizePairKey(`${this.pair.baseCurrency}/${this.pair.quoteCurrency}`);
 
         if (this.paper) {
             logger.info({ offerSequence }, 'Paper trade: simulated cancel');
@@ -754,9 +775,31 @@ export class OfferExecutor {
         return toXrplCurrency({ currency, issuer });
     }
 
-    private async hasSufficientDepthAtPrice(side: TradeSide, intendedPrice: number, requiredBaseAmount: number): Promise<boolean> {
+    private async hasSufficientDepthAtPrice(
+        side: TradeSide,
+        intendedPrice: number,
+        requiredBaseAmount: number,
+        flags?: OfferParams['flags']
+    ): Promise<{
+        hasDepth: boolean;
+        fillableBase: number;
+        requiredBaseAmount: number;
+        minRequiredBase: number;
+        orderType: 'IOC' | 'FOK';
+    }> {
+        const orderType: 'IOC' | 'FOK' = flags?.fillOrKill ? 'FOK' : 'IOC';
+        const minRequiredBase = orderType === 'FOK'
+            ? requiredBaseAmount
+            : requiredBaseAmount * this.iocMinFillRatio;
+
         if (!Number.isFinite(intendedPrice) || intendedPrice <= 0 || !Number.isFinite(requiredBaseAmount) || requiredBaseAmount <= 0) {
-            return false;
+            return {
+                hasDepth: false,
+                fillableBase: 0,
+                requiredBaseAmount,
+                minRequiredBase,
+                orderType,
+            };
         }
 
         try {
@@ -804,13 +847,33 @@ export class OfferExecutor {
                     }
                 }
 
-                if (fillableBase >= requiredBaseAmount) return true;
+                if (fillableBase >= minRequiredBase) {
+                    return {
+                        hasDepth: true,
+                        fillableBase,
+                        requiredBaseAmount,
+                        minRequiredBase,
+                        orderType,
+                    };
+                }
             }
 
-            return false;
+            return {
+                hasDepth: false,
+                fillableBase,
+                requiredBaseAmount,
+                minRequiredBase,
+                orderType,
+            };
         } catch (err) {
             logger.warn({ err, side, intendedPrice, requiredBaseAmount }, 'Depth preflight failed');
-            return false;
+            return {
+                hasDepth: false,
+                fillableBase: 0,
+                requiredBaseAmount,
+                minRequiredBase,
+                orderType,
+            };
         }
     }
 
@@ -854,6 +917,84 @@ export class OfferExecutor {
         return 0;
     }
 
+    private parseAmountInfo(amount: Amount | undefined): { value: number; currency: string; issuer?: string } | null {
+        if (!amount) return null;
+        if (typeof amount === 'string') {
+            const value = dropsToXrp(amount);
+            if (!Number.isFinite(value) || value <= 0) return null;
+            return { value, currency: 'XRP' };
+        }
+
+        if (typeof amount !== 'object' || !('value' in amount)) return null;
+        const issued = amount as IssuedCurrencyAmount;
+        const value = parseFloat(issued.value);
+        if (!Number.isFinite(value) || value <= 0) return null;
+
+        return {
+            value,
+            currency: decodeXrplCurrencyCode(issued.currency).toUpperCase(),
+            issuer: issued.issuer,
+        };
+    }
+
+    private amountMatchesAsset(
+        info: { currency: string; issuer?: string },
+        targetCurrency: string,
+        targetIssuer?: string
+    ): boolean {
+        const normalizedTarget = decodeXrplCurrencyCode(targetCurrency).toUpperCase();
+        if (info.currency !== normalizedTarget) return false;
+        if (normalizedTarget === 'XRP') return true;
+        if (!targetIssuer) return true;
+        return info.issuer === targetIssuer;
+    }
+
+    private mapOfferDeltaToPairUnits(
+        getsAmount: Amount | undefined,
+        getsDelta: number,
+        paysAmount: Amount | undefined,
+        paysDelta: number
+    ): { baseDelta: number; quoteDelta: number } | null {
+        if (!Number.isFinite(getsDelta) || getsDelta <= 0 || !Number.isFinite(paysDelta) || paysDelta <= 0) {
+            return null;
+        }
+
+        const getsInfo = this.parseAmountInfo(getsAmount);
+        const paysInfo = this.parseAmountInfo(paysAmount);
+        if (!getsInfo || !paysInfo) return null;
+
+        const baseIssuer = this.pair.baseIssuer ?? this.pair.issuer;
+        const quoteIssuer = this.pair.quoteIssuer ?? this.pair.issuer;
+
+        const getsIsBase = this.amountMatchesAsset(getsInfo, this.pair.baseCurrency, baseIssuer);
+        const paysIsQuote = this.amountMatchesAsset(paysInfo, this.pair.quoteCurrency, quoteIssuer);
+        if (getsIsBase && paysIsQuote) {
+            return { baseDelta: getsDelta, quoteDelta: paysDelta };
+        }
+
+        const getsIsQuote = this.amountMatchesAsset(getsInfo, this.pair.quoteCurrency, quoteIssuer);
+        const paysIsBase = this.amountMatchesAsset(paysInfo, this.pair.baseCurrency, baseIssuer);
+        if (getsIsQuote && paysIsBase) {
+            return { baseDelta: paysDelta, quoteDelta: getsDelta };
+        }
+
+        return null;
+    }
+
+    private computeDirectionalSlippageBps(
+        expectedPrice: number | undefined,
+        actualPrice: number,
+        side: TradeSide
+    ): number {
+        if (!expectedPrice || expectedPrice <= 0 || !Number.isFinite(actualPrice) || actualPrice <= 0) {
+            return 0;
+        }
+        if (side === 'BUY') {
+            return Math.round(((actualPrice - expectedPrice) / expectedPrice) * 10000);
+        }
+        return Math.round(((expectedPrice - actualPrice) / expectedPrice) * 10000);
+    }
+
     /**
      * Parse transaction metadata to extract actual fill amounts.
      * XRPL OfferCreate transactions may partially fill, and the actual amounts
@@ -869,105 +1010,109 @@ export class OfferExecutor {
         meta: TransactionMetadata | undefined,
         originalTakerGets: Amount,
         originalTakerPays: Amount,
+        side: TradeSide,
         expectedPrice?: number
     ): PartialFillResult {
         const originalGetsNum = this.amountToNumber(originalTakerGets);
         const originalPaysNum = this.amountToNumber(originalTakerPays);
 
-        // Default to full fill assumption if no metadata
-        if (!meta || typeof meta === 'string' || !meta.AffectedNodes) {
-            const effectivePrice = originalGetsNum > 0 ? originalPaysNum / originalGetsNum : 0;
-            const slippageBps = expectedPrice && expectedPrice > 0
-                ? Math.round(((effectivePrice - expectedPrice) / expectedPrice) * 10000)
-                : 0;
+        const intendedBaseAmount = side === 'BUY' ? originalPaysNum : originalGetsNum;
+        const fallbackBase = intendedBaseAmount;
+        const fallbackQuote = side === 'BUY' ? originalGetsNum : originalPaysNum;
 
+        const buildFallback = (): PartialFillResult => {
+            const effectivePrice = fallbackBase > 0 ? fallbackQuote / fallbackBase : 0;
+            const slippageBps = this.computeDirectionalSlippageBps(expectedPrice, effectivePrice, side);
             return {
-                takerGotAmount: originalGetsNum,
-                takerPaidAmount: originalPaysNum,
+                takerGotAmount: side === 'BUY' ? fallbackBase : fallbackQuote,
+                takerPaidAmount: side === 'BUY' ? fallbackQuote : fallbackBase,
+                baseFilled: fallbackBase,
+                quoteFilled: fallbackQuote,
                 fillRatio: 1,
                 effectivePrice,
+                priceQuotePerBase: effectivePrice,
                 slippageBps,
             };
+        };
+
+        // Default to full fill assumption if no metadata
+        if (!meta || typeof meta === 'string' || !meta.AffectedNodes) {
+            return buildFallback();
         }
 
-        // Track delivered amounts from balance changes
-        let takerGotAmount = 0;
-        let takerPaidAmount = 0;
-
-        // Look through AffectedNodes for balance changes that indicate fills
-        // For OfferCreate, we look for:
-        // - ModifiedNode on Offer entries that were consumed
-        // - CreatedNode/DeletedNode for the offer itself
-        // - Balance changes in AccountRoot or RippleState (trustline)
+        let baseFilled = 0;
+        let quoteFilled = 0;
 
         for (const node of meta.AffectedNodes) {
-            // Check for Offer nodes that were consumed (filled against)
             if ('ModifiedNode' in node && node.ModifiedNode.LedgerEntryType === 'Offer') {
                 const modified = node.ModifiedNode;
                 const prev = modified.PreviousFields;
                 const final = modified.FinalFields;
 
                 if (prev && final) {
-                    // The difference in TakerGets/TakerPays shows how much was consumed
-                    const prevGets = prev.TakerGets ? this.amountToNumber(prev.TakerGets as Amount) : 0;
-                    const finalGets = final.TakerGets ? this.amountToNumber(final.TakerGets as Amount) : 0;
-                    const prevPays = prev.TakerPays ? this.amountToNumber(prev.TakerPays as Amount) : 0;
-                    const finalPays = final.TakerPays ? this.amountToNumber(final.TakerPays as Amount) : 0;
+                    const prevGetsAmount = prev.TakerGets as Amount | undefined;
+                    const finalGetsAmount = final.TakerGets as Amount | undefined;
+                    const prevPaysAmount = prev.TakerPays as Amount | undefined;
+                    const finalPaysAmount = final.TakerPays as Amount | undefined;
 
-                    // Amount consumed = previous - final
-                    takerGotAmount += Math.max(0, prevGets - finalGets);
-                    takerPaidAmount += Math.max(0, prevPays - finalPays);
+                    const prevGets = prevGetsAmount ? this.amountToNumber(prevGetsAmount) : 0;
+                    const finalGets = finalGetsAmount ? this.amountToNumber(finalGetsAmount) : 0;
+                    const prevPays = prevPaysAmount ? this.amountToNumber(prevPaysAmount) : 0;
+                    const finalPays = finalPaysAmount ? this.amountToNumber(finalPaysAmount) : 0;
+
+                    const deltaGets = Math.max(0, prevGets - finalGets);
+                    const deltaPays = Math.max(0, prevPays - finalPays);
+                    const pairDelta = this.mapOfferDeltaToPairUnits(prevGetsAmount, deltaGets, prevPaysAmount, deltaPays);
+                    if (pairDelta) {
+                        baseFilled += pairDelta.baseDelta;
+                        quoteFilled += pairDelta.quoteDelta;
+                    }
                 }
             }
 
-            // Check for Offer nodes that were fully consumed (deleted)
             if ('DeletedNode' in node && node.DeletedNode.LedgerEntryType === 'Offer') {
                 const deleted = node.DeletedNode;
                 const prev = deleted.PreviousFields;
                 const final = deleted.FinalFields;
 
-                // For deleted nodes, final fields show what remained before deletion
-                // We need previous fields to know the starting amount
                 if (prev) {
-                    const prevGets = prev.TakerGets ? this.amountToNumber(prev.TakerGets as Amount) : 0;
-                    const prevPays = prev.TakerPays ? this.amountToNumber(prev.TakerPays as Amount) : 0;
-
-                    takerGotAmount += prevGets;
-                    takerPaidAmount += prevPays;
+                    const prevGetsAmount = prev.TakerGets as Amount | undefined;
+                    const prevPaysAmount = prev.TakerPays as Amount | undefined;
+                    const prevGets = prevGetsAmount ? this.amountToNumber(prevGetsAmount) : 0;
+                    const prevPays = prevPaysAmount ? this.amountToNumber(prevPaysAmount) : 0;
+                    const pairDelta = this.mapOfferDeltaToPairUnits(prevGetsAmount, prevGets, prevPaysAmount, prevPays);
+                    if (pairDelta) {
+                        baseFilled += pairDelta.baseDelta;
+                        quoteFilled += pairDelta.quoteDelta;
+                    }
                 } else if (final) {
-                    // No previous fields means entire offer was consumed
-                    const finalGets = final.TakerGets ? this.amountToNumber(final.TakerGets as Amount) : 0;
-                    const finalPays = final.TakerPays ? this.amountToNumber(final.TakerPays as Amount) : 0;
-
-                    takerGotAmount += finalGets;
-                    takerPaidAmount += finalPays;
+                    const finalGetsAmount = final.TakerGets as Amount | undefined;
+                    const finalPaysAmount = final.TakerPays as Amount | undefined;
+                    const finalGets = finalGetsAmount ? this.amountToNumber(finalGetsAmount) : 0;
+                    const finalPays = finalPaysAmount ? this.amountToNumber(finalPaysAmount) : 0;
+                    const pairDelta = this.mapOfferDeltaToPairUnits(finalGetsAmount, finalGets, finalPaysAmount, finalPays);
+                    if (pairDelta) {
+                        baseFilled += pairDelta.baseDelta;
+                        quoteFilled += pairDelta.quoteDelta;
+                    }
                 }
             }
         }
 
-        // If we couldn't determine fill from metadata, assume full fill
-        if (takerGotAmount === 0 && takerPaidAmount === 0) {
-            takerGotAmount = originalGetsNum;
-            takerPaidAmount = originalPaysNum;
+        if (baseFilled <= 0 || quoteFilled <= 0) {
+            return buildFallback();
         }
 
-        // Calculate fill ratio based on the "gets" side (what we receive)
-        const fillRatio = originalGetsNum > 0 ? Math.min(1, takerGotAmount / originalGetsNum) : 0;
-
-        // Calculate effective price (what we paid per unit received)
-        const effectivePrice = takerGotAmount > 0 ? takerPaidAmount / takerGotAmount : 0;
-
-        // Calculate slippage in basis points
-        // Positive = worse execution, negative = better execution
-        const slippageBps = expectedPrice && expectedPrice > 0
-            ? Math.round(((effectivePrice - expectedPrice) / expectedPrice) * 10000)
-            : 0;
+        const fillRatio = intendedBaseAmount > 0 ? Math.min(1, baseFilled / intendedBaseAmount) : 0;
+        const effectivePrice = baseFilled > 0 ? quoteFilled / baseFilled : 0;
+        const slippageBps = this.computeDirectionalSlippageBps(expectedPrice, effectivePrice, side);
 
         logger.debug({
             originalGetsNum,
             originalPaysNum,
-            takerGotAmount,
-            takerPaidAmount,
+            side,
+            baseFilled,
+            quoteFilled,
             fillRatio,
             effectivePrice,
             expectedPrice,
@@ -975,10 +1120,13 @@ export class OfferExecutor {
         }, 'Parsed partial fill result');
 
         return {
-            takerGotAmount,
-            takerPaidAmount,
+            takerGotAmount: side === 'BUY' ? baseFilled : quoteFilled,
+            takerPaidAmount: side === 'BUY' ? quoteFilled : baseFilled,
+            baseFilled,
+            quoteFilled,
             fillRatio,
             effectivePrice,
+            priceQuotePerBase: effectivePrice,
             slippageBps,
         };
     }
@@ -1035,16 +1183,21 @@ export class OfferExecutor {
 
     // Unified submit path with logging, validation, and error handling to avoid rippled parameter errors.
     private async submitWithGuards(tx: any, pairSymbol?: string, intent?: TradeIntent, flags?: { passive?: boolean }): Promise<ExecutionResult> {
+        const canonicalPair = canonicalizePairKey(
+            pairSymbol ?? (intent ? `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}` : `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`)
+        );
+        const intentBaselinePrice = intent?.expectedPrice ?? intent?.price;
+
         // ── Execution quality trace: start ──────────────────────────────────
         let inflightTrace: InFlightTrace | null = null;
-        if (this.executionQualityCollector && intent && pairSymbol) {
+        if (this.executionQualityCollector && intent) {
             const side = intent.side.toLowerCase() as 'buy' | 'sell';
             inflightTrace = this.executionQualityCollector.createTrace({
-                pairKey: pairSymbol,
+                pairKey: canonicalPair,
                 strategy: this.currentStrategy,
                 side,
                 arrivalMid: this.currentMidPrice ?? intent.price,
-                expectedPrice: intent.price,
+                expectedPrice: intentBaselinePrice ?? intent.price,
                 isMaker: flags?.passive ?? false,
             });
         }
@@ -1112,11 +1265,15 @@ export class OfferExecutor {
                 // Record failed trade
                 if (intent) {
                     tradeHistory.recordTrade({
-                        pair: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
+                        pair: canonicalPair,
                         side: intent.side as 'BUY' | 'SELL',
-                        price: intent.price,
+                        price: intentBaselinePrice ?? intent.price,
+                        priceQuotePerBase: intentBaselinePrice ?? intent.price,
                         amount: intent.amount,
+                        amountBase: intent.amount,
                         filled: 0,
+                        filledBase: 0,
+                        filledQuote: 0,
                         fee: 0,
                         pnl: 0,
                         hash: res.result.hash,
@@ -1127,11 +1284,11 @@ export class OfferExecutor {
                     // Record feedback for failed trade
                     try {
                         feedbackEngine.recordTradeEvent({
-                            pairKey: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
+                            pairKey: canonicalPair,
                             strategy: this.currentStrategy,
                             action: 'error',
                             side: intent.side.toLowerCase() as 'buy' | 'sell',
-                            intentPrice: intent.price,
+                            intentPrice: intentBaselinePrice ?? intent.price,
                             intentSizeBase: intent.amount,
                             txHash: res.result.hash,
                             resultCode: txResult ?? undefined,
@@ -1152,6 +1309,7 @@ export class OfferExecutor {
                 meta,
                 prepared.TakerGets as Amount,
                 prepared.TakerPays as Amount,
+                intent?.side ?? 'BUY',
                 intent?.expectedPrice
             );
 
@@ -1159,7 +1317,7 @@ export class OfferExecutor {
             if (fillResult.slippageBps !== 0) {
                 logger.info({
                     pair: pairSymbol,
-                    expectedPrice: intent?.expectedPrice,
+                    expectedPrice: intentBaselinePrice,
                     effectivePrice: fillResult.effectivePrice,
                     slippageBps: fillResult.slippageBps,
                     fillRatio: fillResult.fillRatio,
@@ -1173,19 +1331,23 @@ export class OfferExecutor {
                 logger.warn({
                     pair: pairSymbol,
                     fillRatio: fillResult.fillRatio,
-                    takerGotAmount: fillResult.takerGotAmount,
-                    takerPaidAmount: fillResult.takerPaidAmount,
+                    baseFilled: fillResult.baseFilled,
+                    quoteFilled: fillResult.quoteFilled,
                 }, 'Partial fill detected');
             }
 
             // Record trade with actual fill amounts
             if (intent) {
                 tradeHistory.recordTrade({
-                    pair: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
+                    pair: canonicalPair,
                     side: intent.side as 'BUY' | 'SELL',
                     price: fillResult.effectivePrice || intent.price,
+                    priceQuotePerBase: fillResult.effectivePrice || intent.price,
                     amount: intent.amount,
-                    filled: fillResult.takerGotAmount || intent.amount, // Use actual fill amount
+                    amountBase: intent.amount,
+                    filled: fillResult.baseFilled || intent.amount,
+                    filledBase: fillResult.baseFilled || intent.amount,
+                    filledQuote: fillResult.quoteFilled || ((fillResult.baseFilled || intent.amount) * (fillResult.effectivePrice || intent.price)),
                     fee: 0.000012, // Typical XRPL transaction fee
                     pnl: 0, // P&L calculated separately by strategy
                     hash: res.result.hash,
@@ -1199,7 +1361,7 @@ export class OfferExecutor {
                 const actualFillPrice = fillResult.effectivePrice || intent.price;
                 const costMetrics = computeCostRealism({
                     side,
-                    intentPrice: intent.price,
+                    intentPrice: intentBaselinePrice ?? intent.price,
                     fillPrice: actualFillPrice,
                     midPriceAtDecision: this.currentMidPrice,
                     ammFeeBps: null, // Populated below if AMM fill detected
@@ -1214,14 +1376,15 @@ export class OfferExecutor {
                 // Record feedback for successful fill
                 try {
                     const eventId = feedbackEngine.recordTradeEvent({
-                        pairKey: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
+                        pairKey: canonicalPair,
                         strategy: this.currentStrategy,
                         action: 'fill',
                         side,
-                        intentPrice: intent.price,
+                        intentPrice: intentBaselinePrice ?? intent.price,
                         intentSizeBase: intent.amount,
                         fillPrice: actualFillPrice,
-                        fillSizeBase: fillResult.takerGotAmount || intent.amount,
+                        fillSizeBase: fillResult.baseFilled || intent.amount,
+                        fillSizeQuote: fillResult.quoteFilled || ((fillResult.baseFilled || intent.amount) * actualFillPrice),
                         txHash: res.result.hash,
                         ledgerIndex: (res.result as any).ledger_index,
                         resultCode: txResult ?? 'tesSUCCESS',
@@ -1303,20 +1466,20 @@ export class OfferExecutor {
             }
 
             // ── Exposure tracking: record fill for position tracking ────────
-            if (this.exposureTracker && intent && pairSymbol) {
+            if (this.exposureTracker && intent) {
                 const fillSide = intent.side.toLowerCase() as 'buy' | 'sell';
-                const fillSize = fillResult.takerGotAmount || intent.amount;
-                this.exposureTracker.recordFill(fillSide, fillSize, pairSymbol);
+                const fillSize = fillResult.baseFilled || intent.amount;
+                this.exposureTracker.recordFill(fillSide, fillSize, canonicalPair);
             }
 
-            if (intent && pairSymbol) {
+            if (intent) {
                 const eventTimestamp = new Date().toISOString();
-                const baseAmount = fillResult.takerGotAmount || intent.amount;
-                const quoteAmount = baseAmount * (fillResult.effectivePrice || intent.price);
+                const baseAmount = fillResult.baseFilled || intent.amount;
+                const quoteAmount = fillResult.quoteFilled || (baseAmount * (fillResult.effectivePrice || intent.price));
                 this.emitTradeToastSafe({
                     type: 'ORDER_PLACED',
                     side: intent.side as 'BUY' | 'SELL',
-                    pair: pairSymbol,
+                    pair: canonicalPair,
                     baseCurrency: this.pair.baseCurrency,
                     quoteCurrency: this.pair.quoteCurrency,
                     baseAmount: intent.amount,
@@ -1327,7 +1490,7 @@ export class OfferExecutor {
                 this.emitTradeToastSafe({
                     type: 'ORDER_FILLED',
                     side: intent.side as 'BUY' | 'SELL',
-                    pair: pairSymbol,
+                    pair: canonicalPair,
                     baseCurrency: this.pair.baseCurrency,
                     quoteCurrency: this.pair.quoteCurrency,
                     baseAmount,
@@ -1350,11 +1513,15 @@ export class OfferExecutor {
             // Record error trade
             if (intent) {
                 tradeHistory.recordTrade({
-                    pair: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
+                    pair: canonicalPair,
                     side: intent.side as 'BUY' | 'SELL',
-                    price: intent.price,
+                    price: intentBaselinePrice ?? intent.price,
+                    priceQuotePerBase: intentBaselinePrice ?? intent.price,
                     amount: intent.amount,
+                    amountBase: intent.amount,
                     filled: 0,
+                    filledBase: 0,
+                    filledQuote: 0,
                     fee: 0,
                     pnl: 0,
                     paper: false,
@@ -1364,11 +1531,11 @@ export class OfferExecutor {
                 // Record feedback for error
                 try {
                     feedbackEngine.recordTradeEvent({
-                        pairKey: pairSymbol || `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}`,
+                        pairKey: canonicalPair,
                         strategy: this.currentStrategy,
                         action: 'error',
                         side: intent.side.toLowerCase() as 'buy' | 'sell',
-                        intentPrice: intent.price,
+                        intentPrice: intentBaselinePrice ?? intent.price,
                         intentSizeBase: intent.amount,
                         error: err?.message || 'submit-failed',
                         isBotTrade: true,

@@ -16,6 +16,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { logger } from './logger';
 import { FlowRegime } from '../market/flowMetrics';
+import { canonicalizePairKey, getPairKeyAliases } from '../xrpl/currency';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -755,6 +756,18 @@ export interface QueryFilters {
     regime?: FlowRegime;
 }
 
+function appendPairFilter(sql: string, params: any[], pairKey: string | undefined): string {
+    if (!pairKey) return sql;
+    const aliases = getPairKeyAliases(pairKey);
+    if (aliases.length === 0) {
+        params.push(pairKey);
+        return `${sql} AND pairKey = ?`;
+    }
+    const placeholders = aliases.map(() => '?').join(', ');
+    params.push(...aliases);
+    return `${sql} AND pairKey IN (${placeholders})`;
+}
+
 /**
  * Get trade events with optional filters
  */
@@ -763,10 +776,7 @@ export function queryTradeEvents(filters: QueryFilters = {}): TradeEventRecord[]
     let sql = 'SELECT * FROM trade_events WHERE 1=1';
     const params: any[] = [];
 
-    if (filters.pairKey) {
-        sql += ' AND pairKey = ?';
-        params.push(filters.pairKey);
-    }
+    sql = appendPairFilter(sql, params, filters.pairKey ? canonicalizePairKey(filters.pairKey) : undefined);
     if (filters.sinceMs) {
         sql += ' AND ts >= ?';
         params.push(filters.sinceMs);
@@ -794,10 +804,7 @@ export function querySnapshots(filters: QueryFilters = {}): MarketSnapshotRecord
     let sql = 'SELECT * FROM market_snapshots WHERE 1=1';
     const params: any[] = [];
 
-    if (filters.pairKey) {
-        sql += ' AND pairKey = ?';
-        params.push(filters.pairKey);
-    }
+    sql = appendPairFilter(sql, params, filters.pairKey ? canonicalizePairKey(filters.pairKey) : undefined);
     if (filters.sinceMs) {
         sql += ' AND ts >= ?';
         params.push(filters.sinceMs);
@@ -823,12 +830,16 @@ export function querySnapshots(filters: QueryFilters = {}): MarketSnapshotRecord
 export function getLatestSnapshot(pairKey: string): MarketSnapshotRecord | null {
     const db = getFeedbackDb();
     try {
+        const aliases = getPairKeyAliases(canonicalizePairKey(pairKey));
+        const placeholders = aliases.map(() => '?').join(', ');
+        const where = aliases.length > 0 ? `pairKey IN (${placeholders})` : 'pairKey = ?';
+        const params = aliases.length > 0 ? aliases : [pairKey];
         return db.prepare(`
             SELECT * FROM market_snapshots 
-            WHERE pairKey = ? 
+            WHERE ${where}
             ORDER BY ts DESC 
             LIMIT 1
-        `).get(pairKey) as MarketSnapshotRecord | null;
+        `).get(...params) as MarketSnapshotRecord | null;
     } catch (err) {
         logger.warn({ err, pairKey }, 'Failed to get latest snapshot');
         return null;
@@ -841,12 +852,16 @@ export function getLatestSnapshot(pairKey: string): MarketSnapshotRecord | null 
 export function getSnapshotNear(pairKey: string, ts: number, toleranceMs: number = 5000): MarketSnapshotRecord | null {
     const db = getFeedbackDb();
     try {
+        const aliases = getPairKeyAliases(canonicalizePairKey(pairKey));
+        const placeholders = aliases.map(() => '?').join(', ');
+        const where = aliases.length > 0 ? `pairKey IN (${placeholders})` : 'pairKey = ?';
+        const baseParams = aliases.length > 0 ? aliases : [pairKey];
         return db.prepare(`
             SELECT * FROM market_snapshots 
-            WHERE pairKey = ? AND ts BETWEEN ? AND ?
+            WHERE ${where} AND ts BETWEEN ? AND ?
             ORDER BY ABS(ts - ?) 
             LIMIT 1
-        `).get(pairKey, ts - toleranceMs, ts + toleranceMs, ts) as MarketSnapshotRecord | null;
+        `).get(...baseParams, ts - toleranceMs, ts + toleranceMs, ts) as MarketSnapshotRecord | null;
     } catch (err) {
         logger.warn({ err, pairKey, ts }, 'Failed to get snapshot near timestamp');
         return null;

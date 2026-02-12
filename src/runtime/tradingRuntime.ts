@@ -1243,6 +1243,12 @@ export class TradingRuntime {
                 // Rate limit strategy execution to prevent CPU spikes
                 await throttleStrategy();
 
+                // Ensure fill/reject analytics are attributed to the strategy
+                // currently being evaluated in this tick.
+                if (this.executor) {
+                    this.executor.setCurrentStrategy(strategy.name);
+                }
+
                 // Check if strategy is disabled by governance
                 if (governanceDecision?.disabledStrategies?.includes(strategy.name)) {
                     logger.debug({

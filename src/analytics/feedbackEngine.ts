@@ -35,6 +35,7 @@ import {
 import { FlowMetrics, FlowRegime, hasAdverseSelectionRisk } from '../market/flowMetrics';
 import { OrderBookState } from '../utils/types';
 import { logger } from './logger';
+import { canonicalizePairKey } from '../xrpl/currency';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -296,7 +297,7 @@ class FeedbackEngine {
             const snapshot: MarketSnapshotRecord = {
                 id: generateId(),
                 ts: Date.now(),
-                pairKey: input.pairKey,
+                pairKey: canonicalizePairKey(input.pairKey),
                 ledgerIndex: input.ledgerIndex,
                 midPrice: this.computeMidPrice(input.orderBook),
                 spreadBps: input.orderBook.spread ?? null,
@@ -364,7 +365,7 @@ class FeedbackEngine {
             const event: TradeEventRecord = {
                 id: generateId(),
                 ts: Date.now(),
-                pairKey: input.pairKey,
+                pairKey: canonicalizePairKey(input.pairKey),
                 strategy: input.strategy,
                 action: input.action,
                 side: input.side ?? null,
@@ -476,7 +477,7 @@ class FeedbackEngine {
             const eventRecords: TradeEventRecord[] = events.map(input => ({
                 id: generateId(),
                 ts: Date.now(),
-                pairKey: input.pairKey,
+                pairKey: canonicalizePairKey(input.pairKey),
                 strategy: input.strategy,
                 action: input.action,
                 side: input.side ?? null,
@@ -528,7 +529,7 @@ class FeedbackEngine {
                 snapshotRecord = {
                     id: generateId(),
                     ts: Date.now(),
-                    pairKey: snapshot.pairKey,
+                    pairKey: canonicalizePairKey(snapshot.pairKey),
                     ledgerIndex: snapshot.ledgerIndex,
                     midPrice: this.computeMidPrice(snapshot.orderBook),
                     spreadBps: snapshot.orderBook.spread ?? null,
@@ -1449,6 +1450,9 @@ class FeedbackEngine {
      * Positive = worse execution (paid more / received less)
      */
     private computeSlippageBps(event: TradeEventRecord): number | null {
+        if (event.slippageBpsVsIntent != null) {
+            return event.slippageBpsVsIntent;
+        }
         if (!event.fillPrice || !event.intentPrice || event.intentPrice === 0) {
             return null;
         }
@@ -1469,6 +1473,9 @@ class FeedbackEngine {
      * Sign-adjusted by side: positive = favorable execution
      */
     private computeEdgeBps(event: TradeEventRecord): number | null {
+        if (event.edgeBpsVsMid != null) {
+            return event.edgeBpsVsMid;
+        }
         if (!event.fillPrice || !event.midPriceAtDecision || event.midPriceAtDecision === 0) {
             return null;
         }

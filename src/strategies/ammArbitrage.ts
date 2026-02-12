@@ -142,6 +142,7 @@ export class AMMArbitrageStrategy implements Strategy {
             side,
             price,
             amount: adjustedPositionSize,
+            strategy: this.name,
             flags: getExecutionOrderFlags(),
         });
         if (res.accepted) {
