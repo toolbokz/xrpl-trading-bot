@@ -36,6 +36,7 @@ import { FlowMetrics, FlowRegime, hasAdverseSelectionRisk } from '../market/flow
 import { OrderBookState } from '../utils/types';
 import { logger } from './logger';
 import { canonicalizePairKey } from '../xrpl/currency';
+import { computeCanonicalSlippageBps, warnInvalidSlippageInputs } from './slippageMath';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -74,6 +75,11 @@ export interface TradeEventInput {
     // Cost realism fields
     slippageBpsVsIntent?: number | null;
     slippageBpsVsMid?: number | null;
+    slippageBpsVsBbo?: number | null;
+    expectedPriceSource?: 'intent' | 'mid' | 'bbo' | 'fallback_intent' | null;
+    decisionMidPrice?: number | null;
+    decisionBestBid?: number | null;
+    decisionBestAsk?: number | null;
     spreadPaidBps?: number | null;
     edgeBpsVsMid?: number | null;
     netEdgeBpsVsMid?: number | null;
@@ -384,6 +390,11 @@ class FeedbackEngine {
                 // Cost realism fields
                 slippageBpsVsIntent: input.slippageBpsVsIntent ?? null,
                 slippageBpsVsMid: input.slippageBpsVsMid ?? null,
+                slippageBpsVsBbo: input.slippageBpsVsBbo ?? null,
+                expectedPriceSource: input.expectedPriceSource ?? null,
+                decisionMidPrice: input.decisionMidPrice ?? null,
+                decisionBestBid: input.decisionBestBid ?? null,
+                decisionBestAsk: input.decisionBestAsk ?? null,
                 spreadPaidBps: input.spreadPaidBps ?? null,
                 edgeBpsVsMid: input.edgeBpsVsMid ?? null,
                 netEdgeBpsVsMid: input.netEdgeBpsVsMid ?? null,
@@ -496,6 +507,11 @@ class FeedbackEngine {
                 // Cost realism fields
                 slippageBpsVsIntent: input.slippageBpsVsIntent ?? null,
                 slippageBpsVsMid: input.slippageBpsVsMid ?? null,
+                slippageBpsVsBbo: input.slippageBpsVsBbo ?? null,
+                expectedPriceSource: input.expectedPriceSource ?? null,
+                decisionMidPrice: input.decisionMidPrice ?? null,
+                decisionBestBid: input.decisionBestBid ?? null,
+                decisionBestAsk: input.decisionBestAsk ?? null,
                 spreadPaidBps: input.spreadPaidBps ?? null,
                 edgeBpsVsMid: input.edgeBpsVsMid ?? null,
                 netEdgeBpsVsMid: input.netEdgeBpsVsMid ?? null,
@@ -1444,26 +1460,72 @@ class FeedbackEngine {
         return 0;
     }
 
+    private resolveExpectedPriceForEvent(event: TradeEventRecord): number | null {
+        const baselineSource = event.expectedPriceSource ?? 'intent';
+        if (baselineSource === 'mid' && Number.isFinite(event.decisionMidPrice) && (event.decisionMidPrice ?? 0) > 0) {
+            return event.decisionMidPrice ?? null;
+        }
+        if (baselineSource === 'bbo') {
+            if (event.side === 'buy' && Number.isFinite(event.decisionBestAsk) && (event.decisionBestAsk ?? 0) > 0) {
+                return event.decisionBestAsk ?? null;
+            }
+            if (event.side === 'sell' && Number.isFinite(event.decisionBestBid) && (event.decisionBestBid ?? 0) > 0) {
+                return event.decisionBestBid ?? null;
+            }
+        }
+        return event.intentPrice ?? null;
+    }
+
     /**
-     * Compute slippage in basis points
-     * slippageBps = ((fillPrice - intentPrice) / intentPrice) * 10_000
-     * Positive = worse execution (paid more / received less)
+     * Compute canonical slippage in basis points.
+     * Positive = worse execution cost, negative = price improvement.
      */
     private computeSlippageBps(event: TradeEventRecord): number | null {
         if (event.slippageBpsVsIntent != null) {
             return event.slippageBpsVsIntent;
         }
-        if (!event.fillPrice || !event.intentPrice || event.intentPrice === 0) {
+        if (event.side !== 'buy' && event.side !== 'sell') {
+            return null;
+        }
+        if (!event.fillPrice || event.fillPrice <= 0) {
+            warnInvalidSlippageInputs({
+                source: 'feedback-engine.computeSlippageBps',
+                side: event.side ?? null,
+                expectedPrice: null,
+                fillPrice: event.fillPrice,
+                baseline: event.expectedPriceSource ?? 'unknown',
+                pairKey: event.pairKey,
+                txHash: event.txHash,
+            });
             return null;
         }
 
-        const slippage = ((event.fillPrice - event.intentPrice) / event.intentPrice) * 10000;
-
-        // For sells, negative slippage is bad (got less), for buys positive is bad (paid more)
-        if (event.side === 'sell') {
-            return -slippage; // Invert for sells so positive is always bad
+        const expectedPrice = this.resolveExpectedPriceForEvent(event);
+        if (!expectedPrice || expectedPrice <= 0) {
+            warnInvalidSlippageInputs({
+                source: 'feedback-engine.computeSlippageBps',
+                side: event.side,
+                expectedPrice,
+                fillPrice: event.fillPrice,
+                baseline: event.expectedPriceSource ?? 'unknown',
+                pairKey: event.pairKey,
+                txHash: event.txHash,
+            });
+            return null;
         }
 
+        const slippage = computeCanonicalSlippageBps(event.side, expectedPrice, event.fillPrice);
+        if (slippage == null) {
+            warnInvalidSlippageInputs({
+                source: 'feedback-engine.computeSlippageBps',
+                side: event.side,
+                expectedPrice,
+                fillPrice: event.fillPrice,
+                baseline: event.expectedPriceSource ?? 'unknown',
+                pairKey: event.pairKey,
+                txHash: event.txHash,
+            });
+        }
         return slippage;
     }
 

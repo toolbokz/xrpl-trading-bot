@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { canonicalizePairKey } from '../xrpl/currency';
+import { logger } from './logger';
+import type { ExpectedPriceSource } from './slippageMath';
 
 const EPS = 1e-9;
 const QUARANTINE_FILE = path.resolve(process.cwd(), 'data', 'quarantine_trades.jsonl');
@@ -83,4 +85,31 @@ export function quarantineTradeRecord(payload: Record<string, unknown>): void {
     } catch {
         // Quarantine must never crash runtime.
     }
+}
+
+export function warnSuspiciousSlippage(input: {
+    slippageBps: number | null | undefined;
+    baseline: ExpectedPriceSource | 'unknown';
+    pair: string;
+    side: 'BUY' | 'SELL' | 'buy' | 'sell';
+    txHash?: string | null;
+    expectedPrice?: number | null;
+    fillPrice?: number | null;
+    bestBid?: number | null;
+    bestAsk?: number | null;
+}): void {
+    if (input.slippageBps == null || !Number.isFinite(input.slippageBps)) return;
+    if (input.slippageBps >= -100 && input.slippageBps <= 500) return;
+
+    logger.warn({
+        txHash: input.txHash ?? null,
+        pair: canonicalizePairKey(input.pair),
+        side: input.side,
+        slippageBps: input.slippageBps,
+        baseline: input.baseline,
+        expectedPrice: input.expectedPrice ?? null,
+        fillPrice: input.fillPrice ?? null,
+        bestBid: input.bestBid ?? null,
+        bestAsk: input.bestAsk ?? null,
+    }, 'Suspicious slippage telemetry observed');
 }

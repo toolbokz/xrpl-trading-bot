@@ -1074,6 +1074,8 @@ export class TradingRuntime {
                 const midPrice = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : (bestBid || bestAsk || 0);
                 this.executor.setCurrentMarketContext({
                     midPrice: midPrice > 0 ? midPrice : null,
+                    bestBid: bestBid > 0 ? bestBid : null,
+                    bestAsk: bestAsk > 0 ? bestAsk : null,
                     spreadBps: Number.isFinite(orderBookState.spread) ? orderBookState.spread : null,
                     flowCombined: flowMetrics.combinedSignal,
                     flowStrength: flowMetrics.signalStrength,

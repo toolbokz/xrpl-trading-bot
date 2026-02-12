@@ -7,6 +7,8 @@
  * - netEdge = edge - spreadPaid - fees (what you actually keep)
  */
 
+import { computeCanonicalSlippageBps } from './slippageMath';
+
 export interface CostRealismInput {
     side: "buy" | "sell";
     intentPrice: number;
@@ -51,14 +53,10 @@ export interface CostRealismOutput {
 export function computeCostRealism(args: CostRealismInput): CostRealismOutput {
     const { side, intentPrice, fillPrice, midPriceAtDecision, ammFeeBps } = args;
 
-    // Slippage vs Intent: how much worse did we do than our limit/quote?
-    // For buys: positive = paid more than intended (bad)
-    // For sells: positive = received less than intended (bad)
-    const rawSlippageVsIntent = (fillPrice - intentPrice) / intentPrice;
+    // Slippage vs intent follows canonical side-aware sign convention.
     const slippageBpsVsIntent =
-        side === "buy"
-            ? rawSlippageVsIntent * 10000 // buy: higher fill = worse
-            : -rawSlippageVsIntent * 10000; // sell: lower fill = worse
+        computeCanonicalSlippageBps(side, intentPrice, fillPrice)
+        ?? 0;
 
     // Without mid price, we can only compute slippage vs intent
     if (midPriceAtDecision == null || midPriceAtDecision <= 0) {
@@ -76,11 +74,7 @@ export function computeCostRealism(args: CostRealismInput): CostRealismOutput {
     // Slippage vs Mid: how much did fill deviate from mid?
     // For buys: positive = paid more than mid (bad)
     // For sells: positive = received less than mid (bad)
-    const rawSlippageVsMid = (fillPrice - mid) / mid;
-    const slippageBpsVsMid =
-        side === "buy"
-            ? rawSlippageVsMid * 10000
-            : -rawSlippageVsMid * 10000;
+    const slippageBpsVsMid = computeCanonicalSlippageBps(side, mid, fillPrice);
 
     // Spread paid: absolute cost of crossing the spread (always positive = cost)
     const spreadPaidBps = Math.abs(fillPrice - mid) / mid * 10000;

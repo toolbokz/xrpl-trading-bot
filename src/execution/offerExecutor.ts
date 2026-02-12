@@ -12,7 +12,8 @@ import { ExecutionQualityCollector, InFlightTrace } from '../analytics/execution
 import { ExposureTracker } from '../risk/exposureTracker';
 import { FlowRegime } from '../market/flowMetrics';
 import { canonicalizePairKey, decodeXrplCurrencyCode, toXrplCurrency } from '../xrpl/currency';
-import { quarantineTradeRecord, validateTradeIntegrity } from '../analytics/tradeIntegrity';
+import { quarantineTradeRecord, validateTradeIntegrity, warnSuspiciousSlippage } from '../analytics/tradeIntegrity';
+import { computeCanonicalSlippageBps, ExpectedPriceSource } from '../analytics/slippageMath';
 import type { TradeToastEvent } from '../observability/tradeToastEvents';
 
 export interface OfferParams {
@@ -67,6 +68,8 @@ export function schedulePostFillSnapshots(opts: {
 export class OfferExecutor {
     private currentStrategy: string = 'unknown';
     private currentMidPrice: number | null = null;
+    private currentBestBid: number | null = null;
+    private currentBestAsk: number | null = null;
     private currentSpreadBps: number | null = null;
     private currentFlowCombined: number | null = null;
     private currentFlowStrength: number | null = null;
@@ -138,6 +141,8 @@ export class OfferExecutor {
      */
     setCurrentMarketContext(input: {
         midPrice: number | null;
+        bestBid?: number | null;
+        bestAsk?: number | null;
         spreadBps: number | null;
         flowCombined: number | null;
         flowStrength: number | null;
@@ -145,6 +150,8 @@ export class OfferExecutor {
         localExtreme?: boolean | null;
     }): void {
         this.currentMidPrice = input.midPrice;
+        this.currentBestBid = input.bestBid ?? null;
+        this.currentBestAsk = input.bestAsk ?? null;
         this.currentSpreadBps = input.spreadBps;
         this.currentFlowCombined = input.flowCombined;
         this.currentFlowStrength = input.flowStrength;
@@ -553,6 +560,13 @@ export class OfferExecutor {
         const pairSymbol = canonicalizePairKey(`${this.pair.baseCurrency}/${this.pair.quoteCurrency}`);
         const effectiveExpectedPrice = expectedPriceOverride ?? intent.expectedPrice ?? intent.price;
         const normalizedIntent: TradeIntent = { ...intent, expectedPrice: effectiveExpectedPrice };
+        const normalizedSide = normalizedIntent.side.toLowerCase() as 'buy' | 'sell';
+        const expectedBaseline = this.resolveExpectedBaseline({
+            side: normalizedSide,
+            intentPrice: normalizedIntent.price,
+            expectedPrice: normalizedIntent.expectedPrice,
+        });
+        const bboBaseline = this.getBboBaseline(normalizedSide);
 
         if (this.paper) {
             logger.info({ intent: normalizedIntent }, 'Paper trade: simulated OfferCreate');
@@ -583,6 +597,10 @@ export class OfferExecutor {
                 midPriceAtDecision: this.currentMidPrice,
                 ammFeeBps: null, // No AMM fee in paper mode
             });
+            const slippageBpsVsBbo =
+                bboBaseline != null
+                    ? computeCanonicalSlippageBps(side, bboBaseline, normalizedIntent.price)
+                    : null;
 
             // Record feedback event for paper trades
             try {
@@ -601,6 +619,11 @@ export class OfferExecutor {
                     // Cost realism fields
                     slippageBpsVsIntent: costMetrics.slippageBpsVsIntent,
                     slippageBpsVsMid: costMetrics.slippageBpsVsMid,
+                    slippageBpsVsBbo,
+                    expectedPriceSource: expectedBaseline.source,
+                    decisionMidPrice: this.currentMidPrice,
+                    decisionBestBid: this.currentBestBid,
+                    decisionBestAsk: this.currentBestAsk,
                     spreadPaidBps: costMetrics.spreadPaidBps,
                     edgeBpsVsMid: costMetrics.edgeBpsVsMid,
                     netEdgeBpsVsMid: costMetrics.netEdgeBpsVsMid,
@@ -627,7 +650,7 @@ export class OfferExecutor {
                         strategy: this.currentStrategy,
                         side,
                         arrivalMid: this.currentMidPrice ?? normalizedIntent.price,
-                        expectedPrice: normalizedIntent.expectedPrice ?? normalizedIntent.price,
+                        expectedPrice: expectedBaseline.expectedPrice,
                         isMaker: false,
                     });
                     this.executionQualityCollector.recordFill(paperTrace, {
@@ -990,10 +1013,41 @@ export class OfferExecutor {
         if (!expectedPrice || expectedPrice <= 0 || !Number.isFinite(actualPrice) || actualPrice <= 0) {
             return 0;
         }
-        if (side === 'BUY') {
-            return Math.round(((actualPrice - expectedPrice) / expectedPrice) * 10000);
+        const canonicalSide = side.toLowerCase() as 'buy' | 'sell';
+        const bps = computeCanonicalSlippageBps(canonicalSide, expectedPrice, actualPrice);
+        return bps == null ? 0 : Math.round(bps);
+    }
+
+    private getBboBaseline(side: 'buy' | 'sell'): number | null {
+        if (side === 'buy' && this.currentBestAsk != null && this.currentBestAsk > 0) {
+            return this.currentBestAsk;
         }
-        return Math.round(((expectedPrice - actualPrice) / expectedPrice) * 10000);
+        if (side === 'sell' && this.currentBestBid != null && this.currentBestBid > 0) {
+            return this.currentBestBid;
+        }
+        return null;
+    }
+
+    private resolveExpectedBaseline(input: {
+        side: 'buy' | 'sell';
+        intentPrice: number;
+        expectedPrice: number | undefined;
+    }): { expectedPrice: number; source: ExpectedPriceSource } {
+        const expected = input.expectedPrice;
+        if (expected != null && Number.isFinite(expected) && expected > 0) {
+            return { expectedPrice: expected, source: 'intent' };
+        }
+
+        if (this.currentMidPrice != null && Number.isFinite(this.currentMidPrice) && this.currentMidPrice > 0) {
+            return { expectedPrice: this.currentMidPrice, source: 'mid' };
+        }
+
+        const bbo = this.getBboBaseline(input.side);
+        if (bbo != null) {
+            return { expectedPrice: bbo, source: 'bbo' };
+        }
+
+        return { expectedPrice: input.intentPrice, source: 'fallback_intent' };
     }
 
     /**
@@ -1188,6 +1242,17 @@ export class OfferExecutor {
             pairSymbol ?? (intent ? `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}` : `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`)
         );
         const intentBaselinePrice = intent?.expectedPrice ?? intent?.price;
+        const executionSide = intent ? (intent.side.toLowerCase() as 'buy' | 'sell') : null;
+        const expectedBaseline = (intent && executionSide)
+            ? this.resolveExpectedBaseline({
+                side: executionSide,
+                intentPrice: intent.price,
+                expectedPrice: intent.expectedPrice,
+            })
+            : null;
+        const selectedExpectedPrice = expectedBaseline?.expectedPrice ?? intentBaselinePrice;
+        const expectedPriceSource = expectedBaseline?.source ?? 'fallback_intent';
+        const bboBaseline = executionSide ? this.getBboBaseline(executionSide) : null;
 
         // ── Execution quality trace: start ──────────────────────────────────
         let inflightTrace: InFlightTrace | null = null;
@@ -1198,7 +1263,7 @@ export class OfferExecutor {
                 strategy: this.currentStrategy,
                 side,
                 arrivalMid: this.currentMidPrice ?? intent.price,
-                expectedPrice: intentBaselinePrice ?? intent.price,
+                expectedPrice: selectedExpectedPrice ?? intent.price,
                 isMaker: flags?.passive ?? false,
             });
         }
@@ -1311,14 +1376,14 @@ export class OfferExecutor {
                 prepared.TakerGets as Amount,
                 prepared.TakerPays as Amount,
                 intent?.side ?? 'BUY',
-                intent?.expectedPrice
+                selectedExpectedPrice
             );
 
             // Log slippage metrics for monitoring
             if (fillResult.slippageBps !== 0) {
                 logger.info({
                     pair: pairSymbol,
-                    expectedPrice: intentBaselinePrice,
+                    expectedPrice: selectedExpectedPrice,
                     effectivePrice: fillResult.effectivePrice,
                     slippageBps: fillResult.slippageBps,
                     fillRatio: fillResult.fillRatio,
@@ -1355,8 +1420,8 @@ export class OfferExecutor {
                     source: 'bot',
                 } as const;
                 const integrity = validateTradeIntegrity(
-                    intentBaselinePrice != null
-                        ? { ...integrityInput, expectedPrice: intentBaselinePrice }
+                    selectedExpectedPrice != null
+                        ? { ...integrityInput, expectedPrice: selectedExpectedPrice }
                         : integrityInput
                 );
 
@@ -1370,7 +1435,7 @@ export class OfferExecutor {
                         filledBase,
                         filledQuote,
                         priceQuotePerBase: actualFillPrice,
-                        expectedPrice: intentBaselinePrice,
+                        expectedPrice: selectedExpectedPrice,
                         reasons: integrity.reasons,
                     }, 'Blocked corrupted fill persistence');
                     quarantineTradeRecord({
@@ -1383,7 +1448,7 @@ export class OfferExecutor {
                         filledBase,
                         filledQuote,
                         priceQuotePerBase: actualFillPrice,
-                        expectedPrice: intentBaselinePrice,
+                        expectedPrice: selectedExpectedPrice,
                         reasons: integrity.reasons,
                     });
                 } else {
@@ -1414,6 +1479,53 @@ export class OfferExecutor {
                     midPriceAtDecision: this.currentMidPrice,
                     ammFeeBps: null, // Populated below if AMM fill detected
                 });
+                const slippageBpsVsIntent = computeCanonicalSlippageBps(
+                    side,
+                    intentBaselinePrice ?? intent.price,
+                    actualFillPrice
+                );
+                const slippageBpsVsMid =
+                    this.currentMidPrice != null
+                        ? computeCanonicalSlippageBps(side, this.currentMidPrice, actualFillPrice)
+                        : null;
+                const slippageBpsVsBbo =
+                    bboBaseline != null
+                        ? computeCanonicalSlippageBps(side, bboBaseline, actualFillPrice)
+                        : null;
+
+                warnSuspiciousSlippage({
+                    slippageBps: slippageBpsVsIntent,
+                    baseline: 'intent',
+                    pair: canonicalPair,
+                    side: intent.side,
+                    txHash: res.result.hash,
+                    expectedPrice: intentBaselinePrice ?? intent.price,
+                    fillPrice: actualFillPrice,
+                    bestBid: this.currentBestBid,
+                    bestAsk: this.currentBestAsk,
+                });
+                warnSuspiciousSlippage({
+                    slippageBps: slippageBpsVsMid,
+                    baseline: 'mid',
+                    pair: canonicalPair,
+                    side: intent.side,
+                    txHash: res.result.hash,
+                    expectedPrice: this.currentMidPrice,
+                    fillPrice: actualFillPrice,
+                    bestBid: this.currentBestBid,
+                    bestAsk: this.currentBestAsk,
+                });
+                warnSuspiciousSlippage({
+                    slippageBps: slippageBpsVsBbo,
+                    baseline: 'bbo',
+                    pair: canonicalPair,
+                    side: intent.side,
+                    txHash: res.result.hash,
+                    expectedPrice: bboBaseline,
+                    fillPrice: actualFillPrice,
+                    bestBid: this.currentBestBid,
+                    bestAsk: this.currentBestAsk,
+                });
 
                 // Detect execution source (AMM vs order book)
                 const fillExecutionSource = this.detectExecutionSource(meta);
@@ -1440,8 +1552,13 @@ export class OfferExecutor {
                         isBotTrade: true,
                         midPriceAtDecision: this.currentMidPrice ?? undefined,
                         // Cost realism fields
-                        slippageBpsVsIntent: costMetrics.slippageBpsVsIntent,
-                        slippageBpsVsMid: costMetrics.slippageBpsVsMid,
+                        slippageBpsVsIntent: slippageBpsVsIntent ?? costMetrics.slippageBpsVsIntent,
+                        slippageBpsVsMid: slippageBpsVsMid ?? costMetrics.slippageBpsVsMid,
+                        slippageBpsVsBbo,
+                        expectedPriceSource,
+                        decisionMidPrice: this.currentMidPrice,
+                        decisionBestBid: this.currentBestBid,
+                        decisionBestAsk: this.currentBestAsk,
                         spreadPaidBps: costMetrics.spreadPaidBps,
                         edgeBpsVsMid: costMetrics.edgeBpsVsMid,
                         netEdgeBpsVsMid: costMetrics.netEdgeBpsVsMid,

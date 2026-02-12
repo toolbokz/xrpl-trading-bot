@@ -52,6 +52,11 @@ export interface TradeEventRecord {
     // Cost realism fields
     slippageBpsVsIntent: number | null;
     slippageBpsVsMid: number | null;
+    slippageBpsVsBbo?: number | null;
+    expectedPriceSource?: 'intent' | 'mid' | 'bbo' | 'fallback_intent' | null;
+    decisionMidPrice?: number | null;
+    decisionBestBid?: number | null;
+    decisionBestAsk?: number | null;
     spreadPaidBps: number | null;
     edgeBpsVsMid: number | null;
     netEdgeBpsVsMid: number | null;
@@ -191,6 +196,11 @@ function initSchema(db: DatabaseType): void {
             midPriceAtDecision REAL,
             slippageBpsVsIntent REAL,
             slippageBpsVsMid REAL,
+            slippageBpsVsBbo REAL,
+            expectedPriceSource TEXT,
+            decisionMidPrice REAL,
+            decisionBestBid REAL,
+            decisionBestAsk REAL,
             spreadPaidBps REAL,
             edgeBpsVsMid REAL,
             netEdgeBpsVsMid REAL,
@@ -264,6 +274,11 @@ function initSchema(db: DatabaseType): void {
 const TRADE_EVENT_EXTRA_COLUMNS = {
     slippageBpsVsIntent: 'REAL',
     slippageBpsVsMid: 'REAL',
+    slippageBpsVsBbo: 'REAL',
+    expectedPriceSource: 'TEXT',
+    decisionMidPrice: 'REAL',
+    decisionBestBid: 'REAL',
+    decisionBestAsk: 'REAL',
     spreadPaidBps: 'REAL',
     edgeBpsVsMid: 'REAL',
     netEdgeBpsVsMid: 'REAL',
@@ -335,7 +350,9 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 intentPrice, intentSizeBase, intentSizeQuote,
                 fillPrice, fillSizeBase, fillSizeQuote,
                 txHash, ledgerIndex, resultCode, error, isBotTrade, midPriceAtDecision,
-                slippageBpsVsIntent, slippageBpsVsMid, spreadPaidBps,
+                slippageBpsVsIntent, slippageBpsVsMid, slippageBpsVsBbo,
+                expectedPriceSource, decisionMidPrice, decisionBestBid, decisionBestAsk,
+                spreadPaidBps,
                 edgeBpsVsMid, netEdgeBpsVsMid, txFeeXrp, ammFeeBps, fillRatio, isPartial,
                 entrySpreadBps, entryFlowCombined, entryFlowStrength, entryFlowRegime,
                 postMid1s, postSpread1s, postFlowCombined1s, postFlowStrength1s, postFlowRegime1s,
@@ -346,7 +363,9 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 @intentPrice, @intentSizeBase, @intentSizeQuote,
                 @fillPrice, @fillSizeBase, @fillSizeQuote,
                 @txHash, @ledgerIndex, @resultCode, @error, @isBotTrade, @midPriceAtDecision,
-                @slippageBpsVsIntent, @slippageBpsVsMid, @spreadPaidBps,
+                @slippageBpsVsIntent, @slippageBpsVsMid, @slippageBpsVsBbo,
+                @expectedPriceSource, @decisionMidPrice, @decisionBestBid, @decisionBestAsk,
+                @spreadPaidBps,
                 @edgeBpsVsMid, @netEdgeBpsVsMid, @txFeeXrp, @ammFeeBps, @fillRatio, @isPartial,
                 @entrySpreadBps, @entryFlowCombined, @entryFlowStrength, @entryFlowRegime,
                 @postMid1s, @postSpread1s, @postFlowCombined1s, @postFlowStrength1s, @postFlowRegime1s,
@@ -503,6 +522,11 @@ export function insertTradeEvent(event: TradeEventRecord): string | null {
             midPriceAtDecision: event.midPriceAtDecision,
             slippageBpsVsIntent: event.slippageBpsVsIntent,
             slippageBpsVsMid: event.slippageBpsVsMid,
+            slippageBpsVsBbo: event.slippageBpsVsBbo ?? null,
+            expectedPriceSource: event.expectedPriceSource ?? null,
+            decisionMidPrice: event.decisionMidPrice ?? null,
+            decisionBestBid: event.decisionBestBid ?? null,
+            decisionBestAsk: event.decisionBestAsk ?? null,
             spreadPaidBps: event.spreadPaidBps,
             edgeBpsVsMid: event.edgeBpsVsMid,
             netEdgeBpsVsMid: event.netEdgeBpsVsMid,
@@ -658,6 +682,11 @@ export function insertBatch(events: TradeEventRecord[], snapshot?: MarketSnapsho
                     midPriceAtDecision: event.midPriceAtDecision,
                     slippageBpsVsIntent: event.slippageBpsVsIntent,
                     slippageBpsVsMid: event.slippageBpsVsMid,
+                    slippageBpsVsBbo: event.slippageBpsVsBbo ?? null,
+                    expectedPriceSource: event.expectedPriceSource ?? null,
+                    decisionMidPrice: event.decisionMidPrice ?? null,
+                    decisionBestBid: event.decisionBestBid ?? null,
+                    decisionBestAsk: event.decisionBestAsk ?? null,
                     spreadPaidBps: event.spreadPaidBps,
                     edgeBpsVsMid: event.edgeBpsVsMid,
                     netEdgeBpsVsMid: event.netEdgeBpsVsMid,
