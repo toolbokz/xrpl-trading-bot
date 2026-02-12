@@ -19,6 +19,8 @@ export interface Trade {
     status: 'FILLED' | 'PARTIAL' | 'REJECTED' | 'PENDING';
     /** Slippage from expected price in basis points (negative = better execution) */
     slippageBps?: number;
+    /** Origin of fill ingestion path. */
+    source?: 'bot' | 'manual';
 }
 
 export interface TradeStats {
@@ -32,6 +34,67 @@ export interface TradeStats {
     avgLoss: number;
     largestWin: number;
     largestLoss: number;
+}
+
+interface RealizedPnl {
+    total: number;
+    today: number;
+}
+
+interface PositionLot {
+    qty: number;
+    unitCost: number;
+}
+
+function executedQty(trade: Trade): number {
+    const qty = trade.filled > 0 ? trade.filled : trade.amount;
+    return Number.isFinite(qty) && qty > 0 ? qty : 0;
+}
+
+function computeFallbackRealizedPnl(trades: Trade[], todayTimestamp: number): RealizedPnl {
+    const fills = trades
+        .filter((t) => (t.status === 'FILLED' || t.status === 'PARTIAL') && executedQty(t) > 0)
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+    const lotsByPair = new Map<string, PositionLot[]>();
+    let total = 0;
+    let today = 0;
+
+    for (const trade of fills) {
+        const qty = executedQty(trade);
+        const grossQuote = trade.price * qty;
+        const fee = Number.isFinite(trade.fee) && trade.fee > 0 ? trade.fee : 0;
+        const pairLots = lotsByPair.get(trade.pair) ?? [];
+
+        if (trade.side === 'BUY') {
+            pairLots.push({ qty, unitCost: (grossQuote + fee) / qty });
+            lotsByPair.set(trade.pair, pairLots);
+            continue;
+        }
+
+        let remaining = qty;
+        let realized = 0;
+        while (remaining > 1e-12 && pairLots.length > 0) {
+            const lot = pairLots[0]!;
+            const matchQty = Math.min(remaining, lot.qty);
+            const feePart = fee * (matchQty / qty);
+            const proceeds = (trade.price * matchQty) - feePart;
+            const cost = lot.unitCost * matchQty;
+            realized += (proceeds - cost);
+
+            lot.qty -= matchQty;
+            remaining -= matchQty;
+            if (lot.qty <= 1e-12) pairLots.shift();
+        }
+
+        lotsByPair.set(trade.pair, pairLots);
+        total += realized;
+        if (trade.timestamp >= todayTimestamp) {
+            today += realized;
+        }
+    }
+
+    return { total, today };
 }
 
 const MAX_TRADES_IN_MEMORY = 1000;
@@ -58,7 +121,12 @@ class TradeHistoryService {
                 const data = fs.readFileSync(this.filePath, 'utf8');
                 const parsed = JSON.parse(data);
                 if (Array.isArray(parsed)) {
-                    this.trades = parsed.slice(-MAX_TRADES_IN_MEMORY);
+                    this.trades = parsed
+                        .slice(-MAX_TRADES_IN_MEMORY)
+                        .map((raw) => ({
+                            ...raw,
+                            source: raw?.source === 'manual' ? 'manual' : 'bot',
+                        }));
                     logger.info({ count: this.trades.length }, 'Loaded trade history from disk');
                 }
             }
@@ -80,6 +148,7 @@ class TradeHistoryService {
         this.init();
         const fullTrade: Trade = {
             ...trade,
+            source: trade.source === 'manual' ? 'manual' : 'bot',
             id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
             timestamp: Date.now(),
         };
@@ -102,6 +171,7 @@ class TradeHistoryService {
             amount: fullTrade.amount,
             pnl: fullTrade.pnl,
             paper: fullTrade.paper,
+            source: fullTrade.source,
         }, 'Trade recorded');
 
         return fullTrade;
@@ -115,6 +185,12 @@ class TradeHistoryService {
     getAllTrades(): Trade[] {
         this.init();
         return [...this.trades];
+    }
+
+    hasTradeHash(hash: string): boolean {
+        this.init();
+        if (!hash) return false;
+        return this.trades.some((t) => t.hash === hash);
     }
 
     getTradesByPair(pair: string, limit = 50): Trade[] {
@@ -136,8 +212,13 @@ class TradeHistoryService {
         const losingTrades = completedTrades.filter(t => t.pnl < 0);
         const todayTrades = completedTrades.filter(t => t.timestamp >= todayTimestamp);
 
-        const totalPnl = completedTrades.reduce((sum, t) => sum + t.pnl, 0);
-        const todayPnl = todayTrades.reduce((sum, t) => sum + t.pnl, 0);
+        let totalPnl = completedTrades.reduce((sum, t) => sum + t.pnl, 0);
+        let todayPnl = todayTrades.reduce((sum, t) => sum + t.pnl, 0);
+        if (completedTrades.length === 0) {
+            const fallback = computeFallbackRealizedPnl(this.trades, todayTimestamp);
+            totalPnl = fallback.total;
+            todayPnl = fallback.today;
+        }
 
         const avgWin = winningTrades.length > 0
             ? winningTrades.reduce((sum, t) => sum + t.pnl, 0) / winningTrades.length

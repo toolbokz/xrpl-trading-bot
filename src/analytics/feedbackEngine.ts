@@ -752,10 +752,15 @@ class FeedbackEngine {
                 e.isBotTrade === 1
             );
 
-            // Enrich with regime from snapshots
+            // Enrich with regime context. Prefer nearest snapshot; fall back to
+            // entry/post-fill regime fields captured on the trade event itself.
             const enriched = fills.map(event => {
                 const snapshot = getSnapshotNear(event.pairKey, event.ts, 10000);
-                return { event, regime: snapshot?.flowRegime ?? null, spreadBps: snapshot?.spreadBps ?? null };
+                return {
+                    event,
+                    regime: this.resolveEventRegime(event, snapshot?.flowRegime ?? null),
+                    spreadBps: this.resolveEventSpreadBps(event, snapshot?.spreadBps ?? null),
+                };
             }).filter(e => e.regime !== null) as Array<{
                 event: TradeEventRecord;
                 regime: FlowRegime;
@@ -1222,12 +1227,13 @@ class FeedbackEngine {
                 e.isBotTrade === 1
             );
 
-            // Enrich each fill with regime from nearest snapshot
+            // Enrich each fill with regime context. Prefer nearest snapshot;
+            // fall back to regime fields captured at decision/post-fill.
             return fills.map(event => {
                 const snapshot = getSnapshotNear(event.pairKey, event.ts, 10000);
                 return {
                     event,
-                    regime: snapshot?.flowRegime ?? null,
+                    regime: this.resolveEventRegime(event, snapshot?.flowRegime ?? null),
                 };
             });
         } catch (err) {
@@ -1301,12 +1307,39 @@ class FeedbackEngine {
         for (const event of events) {
             // Get snapshot closest to event time
             const snapshot = getSnapshotNear(event.pairKey, event.ts, 10000);
-            if (snapshot && snapshot.flowRegime === regime) {
+            const eventRegime = this.resolveEventRegime(event, snapshot?.flowRegime ?? null);
+            if (eventRegime === regime) {
                 result.push(event);
             }
         }
 
         return result;
+    }
+
+    /**
+     * Resolve regime for an event with robust fallbacks.
+     * Snapshot is preferred when available; event-captured fields are used
+     * when pair-key or timing mismatches prevent snapshot correlation.
+     */
+    private resolveEventRegime(event: TradeEventRecord, snapshotRegime: FlowRegime | null): FlowRegime | null {
+        return (
+            snapshotRegime
+            ?? event.entryFlowRegime
+            ?? event.postFlowRegime1s
+            ?? event.postFlowRegime3s
+            ?? null
+        );
+    }
+
+    /**
+     * Resolve spread bps for an event with robust fallbacks.
+     */
+    private resolveEventSpreadBps(event: TradeEventRecord, snapshotSpreadBps: number | null): number | null {
+        return snapshotSpreadBps
+            ?? event.entrySpreadBps
+            ?? event.postSpread1s
+            ?? event.postSpread3s
+            ?? null;
     }
 
     /**

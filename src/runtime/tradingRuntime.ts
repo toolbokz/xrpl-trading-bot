@@ -113,6 +113,7 @@ import { getInstruments, findInstrument, isValidPairKey } from '../market/instru
 import { SpreadDistributionSampler, type SpreadDistributionSnapshot } from '../analytics/spreadDistribution';
 import { BackgroundMarketScanner } from '../market/backgroundScanner/backgroundMarketScanner';
 import type { BackgroundScannerSnapshot } from '../market/backgroundScanner/types';
+import { AccountTradeIngestionService } from '../analytics/accountTradeIngestion';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -238,6 +239,8 @@ export class TradingRuntime {
     private eventLoopLagTracker: EventLoopLagTracker | null = null;
     /** Background scanner — best-effort cross-market intelligence. */
     private backgroundScanner: BackgroundMarketScanner | null = null;
+    /** Account-level fill ingester for bot + manual wallet activity. */
+    private accountTradeIngestion: AccountTradeIngestionService | null = null;
     /** Edge-detection flag for scanner degraded/recovered observability. */
     private scannerWasDegraded = false;
     /** Whether the last snapshot passed structural validation. */
@@ -447,12 +450,17 @@ export class TradingRuntime {
             // Initialize trade tape for capturing executed trades
             const tradeTape = new TradeTape(config.tradingPair);
             const tradeTapeService = new TradeTapeService(tradeTape, config.tradingPair, wallet?.classicAddress ?? null);
+            const accountTradeIngestion = new AccountTradeIngestionService(
+                config.tradingPair,
+                wallet?.classicAddress ?? null,
+            );
 
             // Set global reference for API routes
             setGlobalTradeTape(tradeTape);
 
             this.tradeTape = tradeTape;
             this.tradeTapeService = tradeTapeService;
+            this.accountTradeIngestion = accountTradeIngestion;
 
             // ── Listener dedup guard ─────────────────────────────────────
             // Prevents stacking duplicate event listeners if start() is
@@ -480,6 +488,7 @@ export class TradingRuntime {
                         logger.info({ txCount, lastTxType: tx.transaction?.TransactionType }, 'TradeTape: Transaction stream active');
                     }
                     this.tradeTapeService?.processTransaction(tx);
+                    this.accountTradeIngestion?.processTransaction(tx);
                     // Inform stall recovery that the tape feed is alive
                     this.feedStallRecovery?.recordTapeEvent();
                 };
@@ -525,6 +534,7 @@ export class TradingRuntime {
             this.executor = executor;
             executor.setExecutionQualityCollector(this.executionQualityCollector);
             executor.setExposureTracker(this.exposureTracker);
+            executor.setBotTxHashSink((hash) => this.accountTradeIngestion?.registerBotTxHash(hash));
             executor.setTradeToastEmitter((event) => {
                 if (event.type === 'ORDER_PLACED') {
                     const detail: {
@@ -1974,6 +1984,7 @@ export class TradingRuntime {
                 // 2. Market data layer
                 this.tradeTape?.setPair(newPair);
                 this.tradeTapeService?.setPair(newPair);
+                this.accountTradeIngestion?.setPair(newPair);
                 this.tracker?.setPair(newPair);
 
                 // 3. Execution layer
@@ -2294,6 +2305,8 @@ export class TradingRuntime {
         this.pairSwitchLastError = null;
         this.tradeTape = null;
         this.tradeTapeService = null;
+        this.accountTradeIngestion?.reset();
+        this.accountTradeIngestion = null;
         this.capitalProtection = null;
         this.capitalProtectionConfig = null;
         this.lastGovernanceDecision = null;

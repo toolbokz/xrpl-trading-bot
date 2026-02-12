@@ -88,6 +88,7 @@ export class OfferExecutor {
     // Regime policy layer overrides (regime-based sizing)
     private regimePolicySizeMultiplier: number = 1.0;
     private tradeToastEmitter: ((event: TradeToastEvent) => void) | null = null;
+    private botTxHashSink: ((hash: string) => void) | null = null;
 
     constructor(
         private readonly client: Client,
@@ -164,6 +165,14 @@ export class OfferExecutor {
      */
     setTradeToastEmitter(emitter: (event: TradeToastEvent) => void): void {
         this.tradeToastEmitter = emitter;
+    }
+
+    /**
+     * Optional callback sink for submitted bot tx hashes.
+     * Used by account-level ingestion to classify source=bot|manual.
+     */
+    setBotTxHashSink(sink: ((hash: string) => void) | null): void {
+        this.botTxHashSink = sink;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1063,6 +1072,7 @@ export class OfferExecutor {
             };
             logger.info({ tx: safePrepared, pair: pairSymbol }, 'Autofilled XRPL transaction');
             const signed = this.wallet.sign(prepared);
+            this.botTxHashSink?.(signed.hash);
 
             // ── Execution quality trace: mark submit ────────────────────────
             const eqSubmitTimeMs = Date.now();

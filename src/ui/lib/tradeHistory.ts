@@ -16,6 +16,7 @@ export interface Trade {
     hash?: string;
     paper: boolean;
     status: 'FILLED' | 'PARTIAL' | 'REJECTED' | 'PENDING';
+    source?: 'bot' | 'manual';
 }
 
 export interface TradeStats {
@@ -29,6 +30,73 @@ export interface TradeStats {
     avgLoss: number;
     largestWin: number;
     largestLoss: number;
+}
+
+interface RealizedPnl {
+    total: number;
+    today: number;
+}
+
+interface PositionLot {
+    qty: number;
+    unitCost: number;
+}
+
+function executedQty(trade: Trade): number {
+    const qty = trade.filled > 0 ? trade.filled : trade.amount;
+    return Number.isFinite(qty) && qty > 0 ? qty : 0;
+}
+
+/**
+ * Fallback realized PnL estimator when per-trade pnl is not populated.
+ * Uses FIFO lot matching per pair and realizes PnL on SELL fills.
+ */
+export function computeFallbackRealizedPnl(trades: Trade[], todayTimestamp: number): RealizedPnl {
+    const fills = trades
+        .filter((t) => (t.status === 'FILLED' || t.status === 'PARTIAL') && executedQty(t) > 0)
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+    const lotsByPair = new Map<string, PositionLot[]>();
+    let total = 0;
+    let today = 0;
+
+    for (const trade of fills) {
+        const qty = executedQty(trade);
+        const grossQuote = trade.price * qty;
+        const fee = Number.isFinite(trade.fee) && trade.fee > 0 ? trade.fee : 0;
+        const pairLots = lotsByPair.get(trade.pair) ?? [];
+
+        if (trade.side === 'BUY') {
+            pairLots.push({ qty, unitCost: (grossQuote + fee) / qty });
+            lotsByPair.set(trade.pair, pairLots);
+            continue;
+        }
+
+        // SELL: realize PnL against FIFO inventory only.
+        let remaining = qty;
+        let realized = 0;
+
+        while (remaining > 1e-12 && pairLots.length > 0) {
+            const lot = pairLots[0]!;
+            const matchQty = Math.min(remaining, lot.qty);
+            const feePart = fee * (matchQty / qty);
+            const proceeds = (trade.price * matchQty) - feePart;
+            const cost = lot.unitCost * matchQty;
+            realized += (proceeds - cost);
+
+            lot.qty -= matchQty;
+            remaining -= matchQty;
+            if (lot.qty <= 1e-12) pairLots.shift();
+        }
+
+        lotsByPair.set(trade.pair, pairLots);
+        total += realized;
+        if (trade.timestamp >= todayTimestamp) {
+            today += realized;
+        }
+    }
+
+    return { total, today };
 }
 
 const TRADES_FILE = 'trade_history.json';
@@ -61,7 +129,10 @@ class WebTradeHistoryService {
                 const data = fs.readFileSync(filePath, 'utf8');
                 const parsed = JSON.parse(data);
                 if (Array.isArray(parsed)) {
-                    return parsed;
+                    return parsed.map((raw) => ({
+                        ...raw,
+                        source: raw?.source === 'manual' ? 'manual' : 'bot',
+                    }));
                 }
             }
         } catch (err) {
@@ -94,8 +165,13 @@ class WebTradeHistoryService {
         const losingTrades = completedTrades.filter(t => t.pnl < 0);
         const todayTrades = completedTrades.filter(t => t.timestamp >= todayTimestamp);
 
-        const totalPnl = completedTrades.reduce((sum, t) => sum + t.pnl, 0);
-        const todayPnl = todayTrades.reduce((sum, t) => sum + t.pnl, 0);
+        let totalPnl = completedTrades.reduce((sum, t) => sum + t.pnl, 0);
+        let todayPnl = todayTrades.reduce((sum, t) => sum + t.pnl, 0);
+        if (completedTrades.length === 0) {
+            const fallback = computeFallbackRealizedPnl(trades, todayTimestamp);
+            totalPnl = fallback.total;
+            todayPnl = fallback.today;
+        }
 
         const avgWin = winningTrades.length > 0
             ? winningTrades.reduce((sum, t) => sum + t.pnl, 0) / winningTrades.length
