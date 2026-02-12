@@ -25,6 +25,7 @@ import { DrawdownGaugePanel } from '../components/DrawdownGaugePanel';
 import { AdaptivePanel } from '../components/AdaptivePanel';
 import { BackgroundFairValuePanel } from '../components/BackgroundFairValuePanel';
 import { MarketRadarPanel } from '../components/MarketRadarPanel';
+import { ExecutionQualityPanel } from '../components/ExecutionQualityPanel';
 import { useOrderBook } from '../lib/hooks/useOrderBook';
 import { RuntimeCacheProvider, useRuntimeCache } from '../lib/hooks/useRuntimeCache';
 import { useMarketHealth } from '../lib/hooks/useMarketHealth';
@@ -528,29 +529,36 @@ export default function Page() {
     );
 
     const diagnosticsPanel = (
-        <div className="grid gap-4 md:grid-cols-3 md:items-stretch">
-            <div className="space-y-4 min-w-0">
-                <SpreadDistributionPanel />
-                <div className="grid gap-4 sm:grid-cols-2">
-                    <AdverseSelectionPanel pollInterval={5000} />
-                    <DrawdownGaugePanel pollInterval={10000} />
+        <div className="space-y-4">
+            <ExecutionQualityPanel
+                {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                strategy={bot.strategy}
+                pollInterval={15_000}
+            />
+            <div className="grid gap-4 md:grid-cols-3 md:items-stretch">
+                <div className="space-y-4 min-w-0">
+                    <SpreadDistributionPanel />
+                    <div className="grid gap-4 sm:grid-cols-2">
+                        <AdverseSelectionPanel pollInterval={5000} />
+                        <DrawdownGaugePanel pollInterval={10000} />
+                    </div>
                 </div>
-            </div>
-            <div className="min-w-0 h-full grid gap-4 sm:grid-cols-2">
+                <div className="min-w-0 h-full grid gap-4 sm:grid-cols-2">
+                    <div className="min-w-0 h-full">
+                        <GovernancePanel compact />
+                    </div>
+                    <div className="min-w-0 h-full">
+                        <AdaptivePanel
+                            {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                            strategy={bot.strategy}
+                            regime="normal"
+                            pollInterval={10000}
+                        />
+                    </div>
+                </div>
                 <div className="min-w-0 h-full">
-                    <GovernancePanel compact />
+                    <RegimeHeatmapPanel />
                 </div>
-                <div className="min-w-0 h-full">
-                    <AdaptivePanel
-                        {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                        strategy={bot.strategy}
-                        regime="normal"
-                        pollInterval={10000}
-                    />
-                </div>
-            </div>
-            <div className="min-w-0 h-full">
-                <RegimeHeatmapPanel />
             </div>
         </div>
     );

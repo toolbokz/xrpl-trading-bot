@@ -4,6 +4,8 @@ import { logger } from './logger';
 import { tradeHistory } from './tradeHistory';
 import { canonicalizePairKey } from '../xrpl/currency';
 import { quarantineTradeRecord, validateTradeIntegrity } from './tradeIntegrity';
+import { feedbackEngine } from './feedbackEngine';
+import { hasExecutionQualityTxHash } from './feedbackDb';
 
 interface XRPLAmount {
     currency: string;
@@ -155,6 +157,26 @@ export class AccountTradeIngestionService {
             status,
             source,
         });
+
+        try {
+            if (!hasExecutionQualityTxHash(hash)) {
+                feedbackEngine.recordExecutionQualityEvent({
+                    txHash: hash,
+                    pairKey,
+                    side: side === 'BUY' ? 'buy' : 'sell',
+                    strategy: 'account-ingestion',
+                    source,
+                    fillPrice: priceQuotePerBase,
+                    amountBase,
+                    filledBase: fill.baseAmount,
+                    filledQuote: fill.quoteAmount,
+                    fillRatio,
+                    status,
+                });
+            }
+        } catch (err) {
+            logger.debug({ err, hash }, 'Execution quality fallback write skipped');
+        }
 
         this.remember(this.seenHashes, hash);
         logger.info({

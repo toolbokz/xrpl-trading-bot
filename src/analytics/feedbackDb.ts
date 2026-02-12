@@ -115,6 +115,49 @@ export interface MarketSnapshotRecord {
     adverseSelectionRisk: number | null;
 }
 
+export interface ExecutionQualityEventRecord {
+    id: string;
+    ts: number;
+    eventId: string | null;
+    txHash: string | null;
+    pairKeyCanonical: string;
+    pairAliases: string | null; // JSON array
+    side: 'buy' | 'sell' | null;
+    strategy: string | null;
+    regime: FlowRegime | null;
+    source: 'bot' | 'manual' | 'unknown';
+    intentPrice: number | null;
+    expectedPrice: number | null;
+    expectedPriceSource: 'intent' | 'mid' | 'bbo' | 'fallback_intent' | null;
+    decisionMid: number | null;
+    decisionBid: number | null;
+    decisionAsk: number | null;
+    fillPrice: number | null;
+    amountBase: number | null;
+    filledBase: number | null;
+    filledQuote: number | null;
+    slippageBpsVsIntent: number | null;
+    slippageBpsVsMid: number | null;
+    slippageBpsVsBbo: number | null;
+    effSpreadBps: number | null;
+    realizedSpreadBps1m: number | null;
+    realizedSpreadBps5m: number | null;
+    impactBps1m: number | null;
+    impactBps5m: number | null;
+    implShortfallQuote: number | null;
+    fillRatio: number | null;
+    status: string | null;
+    rejectReason: string | null;
+    flags: string | null; // JSON array
+    guardQuarantined: number | null; // 1=true, 0=false, null=unknown
+    decisionTs: number | null;
+    submitTs: number | null;
+    validatedTs: number | null;
+    decisionToSubmitMs: number | null;
+    submitToValidatedMs: number | null;
+    decisionToValidatedMs: number | null;
+}
+
 /**
  * Database configuration
  */
@@ -152,10 +195,13 @@ let preparedStatements: PreparedStatements | null = null;
 interface PreparedStatements {
     insertTradeEvent: Statement;
     insertSnapshot: Statement;
+    insertExecutionQualityEvent: Statement;
+    updateExecutionQualityHorizons: Statement;
     updateTradeEventPostFill1s: Statement;
     updateTradeEventPostFill3s: Statement;
     pruneTradeEvents: Statement;
     pruneSnapshots: Statement;
+    pruneExecutionQualityEvents: Statement;
 }
 
 /**
@@ -255,6 +301,51 @@ function initSchema(db: DatabaseType): void {
         )
     `);
 
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS execution_quality_events (
+            id TEXT PRIMARY KEY,
+            ts INTEGER NOT NULL,
+            eventId TEXT,
+            txHash TEXT,
+            pairKeyCanonical TEXT NOT NULL,
+            pairAliases TEXT,
+            side TEXT,
+            strategy TEXT,
+            regime TEXT,
+            source TEXT,
+            intentPrice REAL,
+            expectedPrice REAL,
+            expectedPriceSource TEXT,
+            decisionMid REAL,
+            decisionBid REAL,
+            decisionAsk REAL,
+            fillPrice REAL,
+            amountBase REAL,
+            filledBase REAL,
+            filledQuote REAL,
+            slippageBpsVsIntent REAL,
+            slippageBpsVsMid REAL,
+            slippageBpsVsBbo REAL,
+            effSpreadBps REAL,
+            realizedSpreadBps1m REAL,
+            realizedSpreadBps5m REAL,
+            impactBps1m REAL,
+            impactBps5m REAL,
+            implShortfallQuote REAL,
+            fillRatio REAL,
+            status TEXT,
+            rejectReason TEXT,
+            flags TEXT,
+            guardQuarantined INTEGER,
+            decisionTs INTEGER,
+            submitTs INTEGER,
+            validatedTs INTEGER,
+            decisionToSubmitMs INTEGER,
+            submitToValidatedMs INTEGER,
+            decisionToValidatedMs INTEGER
+        )
+    `);
+
     // Create indices for efficient queries
     db.exec(`
         CREATE INDEX IF NOT EXISTS idx_trade_events_pair_ts ON trade_events(pairKey, ts);
@@ -263,6 +354,12 @@ function initSchema(db: DatabaseType): void {
         CREATE INDEX IF NOT EXISTS idx_trade_events_txhash ON trade_events(txHash);
         CREATE INDEX IF NOT EXISTS idx_snapshots_pair_ts ON market_snapshots(pairKey, ts);
         CREATE INDEX IF NOT EXISTS idx_snapshots_regime_ts ON market_snapshots(flowRegime, ts);
+        CREATE INDEX IF NOT EXISTS idx_eq_events_pair_ts ON execution_quality_events(pairKeyCanonical, ts);
+        CREATE INDEX IF NOT EXISTS idx_eq_events_strategy_ts ON execution_quality_events(strategy, ts);
+        CREATE INDEX IF NOT EXISTS idx_eq_events_side_ts ON execution_quality_events(side, ts);
+        CREATE INDEX IF NOT EXISTS idx_eq_events_source_ts ON execution_quality_events(source, ts);
+        CREATE INDEX IF NOT EXISTS idx_eq_events_regime_ts ON execution_quality_events(regime, ts);
+        CREATE INDEX IF NOT EXISTS idx_eq_events_txhash ON execution_quality_events(txHash);
     `);
 
     logger.debug('Feedback database schema initialized');
@@ -312,6 +409,50 @@ const TRADE_EVENT_EXTRA_COLUMNS = {
  */
 const SNAPSHOT_EXTRA_COLUMNS = {
     adverseSelectionRisk: 'INTEGER',
+} as const;
+
+/**
+ * Execution quality columns (for forward-compatible migrations)
+ */
+const EXECUTION_QUALITY_EXTRA_COLUMNS = {
+    eventId: 'TEXT',
+    txHash: 'TEXT',
+    pairKeyCanonical: 'TEXT',
+    pairAliases: 'TEXT',
+    side: 'TEXT',
+    strategy: 'TEXT',
+    regime: 'TEXT',
+    source: 'TEXT',
+    intentPrice: 'REAL',
+    expectedPrice: 'REAL',
+    expectedPriceSource: 'TEXT',
+    decisionMid: 'REAL',
+    decisionBid: 'REAL',
+    decisionAsk: 'REAL',
+    fillPrice: 'REAL',
+    amountBase: 'REAL',
+    filledBase: 'REAL',
+    filledQuote: 'REAL',
+    slippageBpsVsIntent: 'REAL',
+    slippageBpsVsMid: 'REAL',
+    slippageBpsVsBbo: 'REAL',
+    effSpreadBps: 'REAL',
+    realizedSpreadBps1m: 'REAL',
+    realizedSpreadBps5m: 'REAL',
+    impactBps1m: 'REAL',
+    impactBps5m: 'REAL',
+    implShortfallQuote: 'REAL',
+    fillRatio: 'REAL',
+    status: 'TEXT',
+    rejectReason: 'TEXT',
+    flags: 'TEXT',
+    guardQuarantined: 'INTEGER',
+    decisionTs: 'INTEGER',
+    submitTs: 'INTEGER',
+    validatedTs: 'INTEGER',
+    decisionToSubmitMs: 'INTEGER',
+    submitToValidatedMs: 'INTEGER',
+    decisionToValidatedMs: 'INTEGER',
 } as const;
 
 /**
@@ -373,6 +514,41 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 @entryMid, @entrySignalStrength, @entryLocalExtreme, @postSignal1s, @postSignal3s
             )
         `),
+        insertExecutionQualityEvent: db.prepare(`
+            INSERT INTO execution_quality_events (
+                id, ts, eventId, txHash, pairKeyCanonical, pairAliases,
+                side, strategy, regime, source,
+                intentPrice, expectedPrice, expectedPriceSource,
+                decisionMid, decisionBid, decisionAsk, fillPrice,
+                amountBase, filledBase, filledQuote,
+                slippageBpsVsIntent, slippageBpsVsMid, slippageBpsVsBbo,
+                effSpreadBps, realizedSpreadBps1m, realizedSpreadBps5m,
+                impactBps1m, impactBps5m, implShortfallQuote, fillRatio,
+                status, rejectReason, flags, guardQuarantined,
+                decisionTs, submitTs, validatedTs,
+                decisionToSubmitMs, submitToValidatedMs, decisionToValidatedMs
+            ) VALUES (
+                @id, @ts, @eventId, @txHash, @pairKeyCanonical, @pairAliases,
+                @side, @strategy, @regime, @source,
+                @intentPrice, @expectedPrice, @expectedPriceSource,
+                @decisionMid, @decisionBid, @decisionAsk, @fillPrice,
+                @amountBase, @filledBase, @filledQuote,
+                @slippageBpsVsIntent, @slippageBpsVsMid, @slippageBpsVsBbo,
+                @effSpreadBps, @realizedSpreadBps1m, @realizedSpreadBps5m,
+                @impactBps1m, @impactBps5m, @implShortfallQuote, @fillRatio,
+                @status, @rejectReason, @flags, @guardQuarantined,
+                @decisionTs, @submitTs, @validatedTs,
+                @decisionToSubmitMs, @submitToValidatedMs, @decisionToValidatedMs
+            )
+        `),
+        updateExecutionQualityHorizons: db.prepare(`
+            UPDATE execution_quality_events
+            SET realizedSpreadBps1m = COALESCE(@realizedSpreadBps1m, realizedSpreadBps1m),
+                realizedSpreadBps5m = COALESCE(@realizedSpreadBps5m, realizedSpreadBps5m),
+                impactBps1m = COALESCE(@impactBps1m, impactBps1m),
+                impactBps5m = COALESCE(@impactBps5m, impactBps5m)
+            WHERE id = @id
+        `),
         updateTradeEventPostFill1s: db.prepare(`
             UPDATE trade_events
             SET postMid1s = @postMid1s,
@@ -414,6 +590,9 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
         pruneSnapshots: db.prepare(`
             DELETE FROM market_snapshots WHERE ts < ?
         `),
+        pruneExecutionQualityEvents: db.prepare(`
+            DELETE FROM execution_quality_events WHERE ts < ?
+        `),
     };
 }
 
@@ -445,6 +624,9 @@ export function getFeedbackDb(): DatabaseType {
 
         // Ensure adverse selection column exists on snapshots
         ensureColumns(dbInstance, 'market_snapshots', SNAPSHOT_EXTRA_COLUMNS);
+
+        // Ensure execution quality columns exist
+        ensureColumns(dbInstance, 'execution_quality_events', EXECUTION_QUALITY_EXTRA_COLUMNS);
 
         preparedStatements = createPreparedStatements(dbInstance);
 
@@ -559,6 +741,81 @@ export function insertTradeEvent(event: TradeEventRecord): string | null {
         logger.warn({ err, eventId: event.id }, 'Failed to insert trade event');
     }
     return null;
+}
+
+export function insertExecutionQualityEvent(event: ExecutionQualityEventRecord): string | null {
+    try {
+        const stmt = getStatements().insertExecutionQualityEvent;
+        stmt.run({
+            id: event.id,
+            ts: event.ts,
+            eventId: event.eventId,
+            txHash: event.txHash,
+            pairKeyCanonical: event.pairKeyCanonical,
+            pairAliases: event.pairAliases,
+            side: event.side,
+            strategy: event.strategy,
+            regime: event.regime,
+            source: event.source,
+            intentPrice: event.intentPrice,
+            expectedPrice: event.expectedPrice,
+            expectedPriceSource: event.expectedPriceSource,
+            decisionMid: event.decisionMid,
+            decisionBid: event.decisionBid,
+            decisionAsk: event.decisionAsk,
+            fillPrice: event.fillPrice,
+            amountBase: event.amountBase,
+            filledBase: event.filledBase,
+            filledQuote: event.filledQuote,
+            slippageBpsVsIntent: event.slippageBpsVsIntent,
+            slippageBpsVsMid: event.slippageBpsVsMid,
+            slippageBpsVsBbo: event.slippageBpsVsBbo,
+            effSpreadBps: event.effSpreadBps,
+            realizedSpreadBps1m: event.realizedSpreadBps1m,
+            realizedSpreadBps5m: event.realizedSpreadBps5m,
+            impactBps1m: event.impactBps1m,
+            impactBps5m: event.impactBps5m,
+            implShortfallQuote: event.implShortfallQuote,
+            fillRatio: event.fillRatio,
+            status: event.status,
+            rejectReason: event.rejectReason,
+            flags: event.flags,
+            guardQuarantined: event.guardQuarantined,
+            decisionTs: event.decisionTs,
+            submitTs: event.submitTs,
+            validatedTs: event.validatedTs,
+            decisionToSubmitMs: event.decisionToSubmitMs,
+            submitToValidatedMs: event.submitToValidatedMs,
+            decisionToValidatedMs: event.decisionToValidatedMs,
+        });
+        return event.id;
+    } catch (err) {
+        logger.warn({ err, eventId: event.id }, 'Failed to insert execution quality event');
+    }
+    return null;
+}
+
+export function updateExecutionQualityHorizons(input: {
+    id: string;
+    realizedSpreadBps1m?: number | null;
+    realizedSpreadBps5m?: number | null;
+    impactBps1m?: number | null;
+    impactBps5m?: number | null;
+}): number {
+    try {
+        const stmt = getStatements().updateExecutionQualityHorizons;
+        const result = stmt.run({
+            id: input.id,
+            realizedSpreadBps1m: input.realizedSpreadBps1m ?? null,
+            realizedSpreadBps5m: input.realizedSpreadBps5m ?? null,
+            impactBps1m: input.impactBps1m ?? null,
+            impactBps5m: input.impactBps5m ?? null,
+        });
+        return result.changes;
+    } catch (err) {
+        logger.warn({ err, eventId: input.id }, 'Failed to update execution quality horizons');
+    }
+    return 0;
 }
 
 /**
@@ -757,6 +1014,7 @@ export function pruneOldData(retentionDays?: number): { eventsDeleted: number; s
         const stmts = getStatements();
         const eventsResult = stmts.pruneTradeEvents.run(cutoffTs);
         const snapshotsResult = stmts.pruneSnapshots.run(cutoffTs);
+        stmts.pruneExecutionQualityEvents.run(cutoffTs);
 
         const result = {
             eventsDeleted: eventsResult.changes,
@@ -785,16 +1043,24 @@ export interface QueryFilters {
     regime?: FlowRegime;
 }
 
-function appendPairFilter(sql: string, params: any[], pairKey: string | undefined): string {
+export interface ExecutionQualityQueryFilters {
+    pairKey?: string;
+    sinceMs?: number;
+    strategy?: string;
+    side?: 'buy' | 'sell';
+    source?: 'bot' | 'manual' | 'unknown';
+}
+
+function appendPairFilter(sql: string, params: any[], pairKey: string | undefined, column: string = 'pairKey'): string {
     if (!pairKey) return sql;
     const aliases = getPairKeyAliases(pairKey);
     if (aliases.length === 0) {
         params.push(pairKey);
-        return `${sql} AND pairKey = ?`;
+        return `${sql} AND ${column} = ?`;
     }
     const placeholders = aliases.map(() => '?').join(', ');
     params.push(...aliases);
-    return `${sql} AND pairKey IN (${placeholders})`;
+    return `${sql} AND ${column} IN (${placeholders})`;
 }
 
 /**
@@ -822,6 +1088,50 @@ export function queryTradeEvents(filters: QueryFilters = {}): TradeEventRecord[]
     } catch (err) {
         logger.warn({ err, filters }, 'Failed to query trade events');
         return [];
+    }
+}
+
+export function queryExecutionQualityEvents(filters: ExecutionQualityQueryFilters = {}): ExecutionQualityEventRecord[] {
+    const db = getFeedbackDb();
+    let sql = 'SELECT * FROM execution_quality_events WHERE 1=1';
+    const params: any[] = [];
+
+    sql = appendPairFilter(sql, params, filters.pairKey ? canonicalizePairKey(filters.pairKey) : undefined, 'pairKeyCanonical');
+    if (filters.sinceMs) {
+        sql += ' AND ts >= ?';
+        params.push(filters.sinceMs);
+    }
+    if (filters.strategy) {
+        sql += ' AND strategy = ?';
+        params.push(filters.strategy);
+    }
+    if (filters.side) {
+        sql += ' AND side = ?';
+        params.push(filters.side);
+    }
+    if (filters.source) {
+        sql += ' AND source = ?';
+        params.push(filters.source);
+    }
+
+    sql += ' ORDER BY ts DESC';
+    try {
+        return db.prepare(sql).all(...params) as ExecutionQualityEventRecord[];
+    } catch (err) {
+        logger.warn({ err, filters }, 'Failed to query execution quality events');
+        return [];
+    }
+}
+
+export function hasExecutionQualityTxHash(txHash: string): boolean {
+    if (!txHash) return false;
+    const db = getFeedbackDb();
+    try {
+        const row = db.prepare('SELECT 1 as found FROM execution_quality_events WHERE txHash = ? LIMIT 1').get(txHash) as { found?: number } | undefined;
+        return row?.found === 1;
+    } catch (err) {
+        logger.warn({ err, txHash }, 'Failed to query execution quality hash existence');
+        return false;
     }
 }
 
@@ -900,17 +1210,19 @@ export function getSnapshotNear(pairKey: string, ts: number, toleranceMs: number
 /**
  * Count records for statistics
  */
-export function countRecords(): { tradeEvents: number; snapshots: number } {
+export function countRecords(): { tradeEvents: number; snapshots: number; executionQualityEvents: number } {
     const db = getFeedbackDb();
     try {
         const events = db.prepare('SELECT COUNT(*) as count FROM trade_events').get() as { count: number };
         const snapshots = db.prepare('SELECT COUNT(*) as count FROM market_snapshots').get() as { count: number };
+        const executionQualityEvents = db.prepare('SELECT COUNT(*) as count FROM execution_quality_events').get() as { count: number };
         return {
             tradeEvents: events.count,
             snapshots: snapshots.count,
+            executionQualityEvents: executionQualityEvents.count,
         };
     } catch (err) {
         logger.warn({ err }, 'Failed to count records');
-        return { tradeEvents: 0, snapshots: 0 };
+        return { tradeEvents: 0, snapshots: 0, executionQualityEvents: 0 };
     }
 }

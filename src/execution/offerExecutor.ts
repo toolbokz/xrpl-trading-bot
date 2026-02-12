@@ -14,6 +14,7 @@ import { FlowRegime } from '../market/flowMetrics';
 import { canonicalizePairKey, decodeXrplCurrencyCode, toXrplCurrency } from '../xrpl/currency';
 import { quarantineTradeRecord, validateTradeIntegrity, warnSuspiciousSlippage } from '../analytics/tradeIntegrity';
 import { computeCanonicalSlippageBps, ExpectedPriceSource } from '../analytics/slippageMath';
+import { buildExecutionQualityMetrics, computeLatencyMetrics } from '../analytics/executionQualityMetrics';
 import type { TradeToastEvent } from '../observability/tradeToastEvents';
 
 export interface OfferParams {
@@ -789,6 +790,14 @@ export class OfferExecutor {
         return f;
     }
 
+    private buildExecutionFlags(flags?: OfferParams['flags']): string[] {
+        const values: string[] = [];
+        if (flags?.immediateOrCancel) values.push('IOC');
+        if (flags?.fillOrKill) values.push('FOK');
+        if (flags?.passive) values.push('PASSIVE');
+        return values;
+    }
+
     private toBookCurrency(currency: string, issuer?: string): { currency: 'XRP' } | { currency: string; issuer: string } {
         if (currency.toUpperCase() === 'XRP') {
             return { currency: 'XRP' };
@@ -1267,6 +1276,8 @@ export class OfferExecutor {
                 isMaker: flags?.passive ?? false,
             });
         }
+        const decisionTs = inflightTrace?.trace.decisionTimeMs ?? null;
+        let eqSubmitTimeMs: number | null = null;
 
         try {
             if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
@@ -1294,7 +1305,7 @@ export class OfferExecutor {
             this.botTxHashSink?.(signed.hash);
 
             // ── Execution quality trace: mark submit ────────────────────────
-            const eqSubmitTimeMs = Date.now();
+            eqSubmitTimeMs = Date.now();
 
             // Wrap submitAndWait with timeout to prevent blocking indefinitely
             let res;
@@ -1313,6 +1324,41 @@ export class OfferExecutor {
                     pair: pairSymbol,
                     hash: signed.hash,
                 }, 'Transaction timeout - finality unknown, requires reconciliation');
+
+                if (intent && executionSide) {
+                    const latency = computeLatencyMetrics({
+                        decisionTs,
+                        submitTs: eqSubmitTimeMs,
+                        validatedTs: null,
+                    });
+                    feedbackEngine.recordExecutionQualityEvent({
+                        txHash: signed.hash,
+                        pairKey: canonicalPair,
+                        side: executionSide,
+                        strategy: this.currentStrategy,
+                        regime: this.currentFlowRegime,
+                        source: 'bot',
+                        intentPrice: intentBaselinePrice ?? intent.price,
+                        expectedPrice: selectedExpectedPrice ?? null,
+                        expectedPriceSource,
+                        decisionMid: this.currentMidPrice,
+                        decisionBid: this.currentBestBid,
+                        decisionAsk: this.currentBestAsk,
+                        fillPrice: null,
+                        amountBase: intent.amount,
+                        filledBase: 0,
+                        filledQuote: 0,
+                        status: 'REJECTED',
+                        rejectReason: 'timeout-unknown-finality',
+                        flags: this.buildExecutionFlags(flags),
+                        decisionTs,
+                        submitTs: eqSubmitTimeMs,
+                        validatedTs: null,
+                        decisionToSubmitMs: latency.decisionToSubmitMs,
+                        submitToValidatedMs: latency.submitToValidatedMs,
+                        decisionToValidatedMs: latency.decisionToValidatedMs,
+                    });
+                }
 
                 return {
                     accepted: false,
@@ -1363,6 +1409,42 @@ export class OfferExecutor {
                             midPriceAtDecision: this.currentMidPrice ?? undefined,
                         });
                     } catch { /* feedback should never crash trading */ }
+
+                    if (executionSide) {
+                        const validatedTs = Date.now();
+                        const latency = computeLatencyMetrics({
+                            decisionTs,
+                            submitTs: eqSubmitTimeMs,
+                            validatedTs,
+                        });
+                        feedbackEngine.recordExecutionQualityEvent({
+                            txHash: res.result.hash ?? null,
+                            pairKey: canonicalPair,
+                            side: executionSide,
+                            strategy: this.currentStrategy,
+                            regime: this.currentFlowRegime,
+                            source: 'bot',
+                            intentPrice: intentBaselinePrice ?? intent.price,
+                            expectedPrice: selectedExpectedPrice ?? null,
+                            expectedPriceSource,
+                            decisionMid: this.currentMidPrice,
+                            decisionBid: this.currentBestBid,
+                            decisionAsk: this.currentBestAsk,
+                            fillPrice: null,
+                            amountBase: intent.amount,
+                            filledBase: 0,
+                            filledQuote: 0,
+                            status: 'REJECTED',
+                            rejectReason: txResult ?? 'unknown-error',
+                            flags: this.buildExecutionFlags(flags),
+                            decisionTs,
+                            submitTs: eqSubmitTimeMs,
+                            validatedTs,
+                            decisionToSubmitMs: latency.decisionToSubmitMs,
+                            submitToValidatedMs: latency.submitToValidatedMs,
+                            decisionToValidatedMs: latency.decisionToValidatedMs,
+                        });
+                    }
                 }
 
                 return { accepted: false, reason: txResult };
@@ -1532,6 +1614,94 @@ export class OfferExecutor {
 
                 // Standard XRPL transaction fee in XRP
                 const txFeeXrp = 0.000012;
+                const validatedTs = Date.now();
+                const latency = computeLatencyMetrics({
+                    decisionTs,
+                    submitTs: eqSubmitTimeMs,
+                    validatedTs,
+                });
+                const executionFlags = [
+                    ...this.buildExecutionFlags(flags),
+                    `SOURCE_${fillExecutionSource.toUpperCase()}`,
+                ];
+                const eqMetrics = buildExecutionQualityMetrics({
+                    side,
+                    intentPrice: intentBaselinePrice ?? intent.price,
+                    midAtDecision: this.currentMidPrice,
+                    bboAtDecision: side === 'buy' ? this.currentBestAsk : this.currentBestBid,
+                    decisionPrice: selectedExpectedPrice ?? intent.price,
+                    fillPrice: actualFillPrice,
+                    amountBase: intent.amount,
+                    filledBase,
+                    midAfter1m: null,
+                    midAfter5m: null,
+                });
+
+                const executionQualityEventId = feedbackEngine.recordExecutionQualityEvent({
+                    txHash: res.result.hash ?? null,
+                    pairKey: canonicalPair,
+                    side,
+                    strategy: this.currentStrategy,
+                    regime: this.currentFlowRegime,
+                    source: 'bot',
+                    intentPrice: intentBaselinePrice ?? intent.price,
+                    expectedPrice: selectedExpectedPrice ?? null,
+                    expectedPriceSource,
+                    decisionMid: this.currentMidPrice,
+                    decisionBid: this.currentBestBid,
+                    decisionAsk: this.currentBestAsk,
+                    fillPrice: actualFillPrice,
+                    amountBase: intent.amount,
+                    filledBase,
+                    filledQuote,
+                    slippageBpsVsIntent: slippageBpsVsIntent ?? eqMetrics.slippageBpsVsIntent,
+                    slippageBpsVsMid: slippageBpsVsMid ?? eqMetrics.slippageBpsVsMid,
+                    slippageBpsVsBbo: slippageBpsVsBbo ?? eqMetrics.slippageBpsVsBbo,
+                    effSpreadBps: eqMetrics.effSpreadBps,
+                    implShortfallQuote: eqMetrics.implShortfallQuote,
+                    fillRatio: fillResult.fillRatio,
+                    status,
+                    rejectReason: integrity.ok ? null : integrity.reasons.join(','),
+                    flags: executionFlags,
+                    guardQuarantined: !integrity.ok,
+                    decisionTs,
+                    submitTs: eqSubmitTimeMs,
+                    validatedTs,
+                    decisionToSubmitMs: latency.decisionToSubmitMs,
+                    submitToValidatedMs: latency.submitToValidatedMs,
+                    decisionToValidatedMs: latency.decisionToValidatedMs,
+                });
+
+                if (
+                    executionQualityEventId
+                    && Number.isFinite(actualFillPrice)
+                    && actualFillPrice > 0
+                    && Number.isFinite(this.currentMidPrice)
+                    && (this.currentMidPrice ?? 0) > 0
+                ) {
+                    const fillTs = Date.now();
+                    const decisionMidForHorizon = this.currentMidPrice as number;
+                    setTimeout(() => {
+                        feedbackEngine.updateExecutionQualityHorizons({
+                            id: executionQualityEventId,
+                            pairKey: canonicalPair,
+                            side,
+                            fillPrice: actualFillPrice,
+                            decisionMid: decisionMidForHorizon,
+                            fillTs,
+                        });
+                    }, 65_000);
+                    setTimeout(() => {
+                        feedbackEngine.updateExecutionQualityHorizons({
+                            id: executionQualityEventId,
+                            pairKey: canonicalPair,
+                            side,
+                            fillPrice: actualFillPrice,
+                            decisionMid: decisionMidForHorizon,
+                            fillTs,
+                        });
+                    }, 305_000);
+                }
 
                 // Record feedback for successful fill
                 if (integrity.ok) {
@@ -1709,6 +1879,42 @@ export class OfferExecutor {
                         midPriceAtDecision: this.currentMidPrice ?? undefined,
                     });
                 } catch { /* feedback should never crash trading */ }
+
+                if (executionSide) {
+                    const failedAt = Date.now();
+                    const latency = computeLatencyMetrics({
+                        decisionTs: inflightTrace?.trace.decisionTimeMs ?? null,
+                        submitTs: eqSubmitTimeMs,
+                        validatedTs: failedAt,
+                    });
+                    feedbackEngine.recordExecutionQualityEvent({
+                        txHash: null,
+                        pairKey: canonicalPair,
+                        side: executionSide,
+                        strategy: this.currentStrategy,
+                        regime: this.currentFlowRegime,
+                        source: 'bot',
+                        intentPrice: intentBaselinePrice ?? intent.price,
+                        expectedPrice: selectedExpectedPrice ?? null,
+                        expectedPriceSource,
+                        decisionMid: this.currentMidPrice,
+                        decisionBid: this.currentBestBid,
+                        decisionAsk: this.currentBestAsk,
+                        fillPrice: null,
+                        amountBase: intent.amount,
+                        filledBase: 0,
+                        filledQuote: 0,
+                        status: 'REJECTED',
+                        rejectReason: err?.message || 'submit-failed',
+                        flags: this.buildExecutionFlags(flags),
+                        decisionTs: inflightTrace?.trace.decisionTimeMs ?? null,
+                        submitTs: eqSubmitTimeMs,
+                        validatedTs: failedAt,
+                        decisionToSubmitMs: latency.decisionToSubmitMs,
+                        submitToValidatedMs: latency.submitToValidatedMs,
+                        decisionToValidatedMs: latency.decisionToValidatedMs,
+                    });
+                }
             }
 
             return { accepted: false, reason: err?.message || 'submit-failed' };

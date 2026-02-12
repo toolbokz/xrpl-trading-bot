@@ -18,11 +18,15 @@
 import {
     TradeEventRecord,
     MarketSnapshotRecord,
+    ExecutionQualityEventRecord,
     TradeAction,
     generateId,
     insertTradeEvent,
+    insertExecutionQualityEvent,
     insertMarketSnapshot,
     insertBatch,
+    updateExecutionQualityHorizons as updateExecutionQualityHorizonsDb,
+    queryExecutionQualityEvents,
     updateTradeEventPostFill1s,
     updateTradeEventPostFill3s,
     queryTradeEvents,
@@ -30,12 +34,18 @@ import {
     pruneOldData,
     closeFeedbackDb,
     QueryFilters,
+    ExecutionQualityQueryFilters,
     getFeedbackDb,
 } from './feedbackDb';
 import { FlowMetrics, FlowRegime, hasAdverseSelectionRisk } from '../market/flowMetrics';
 import { OrderBookState } from '../utils/types';
 import { logger } from './logger';
-import { canonicalizePairKey } from '../xrpl/currency';
+import { canonicalizePairKey, getPairKeyAliases } from '../xrpl/currency';
+import {
+    buildExecutionQualityMetrics,
+    computeImpactBps,
+    computeRealizedSpreadBps,
+} from './executionQualityMetrics';
 import { computeCanonicalSlippageBps, warnInvalidSlippageInputs } from './slippageMath';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -110,6 +120,127 @@ export interface TradeEventInput {
     postSignal3s?: number | null;
     /** Execution source: AMM pool, DEX order book, mixed, or unknown. */
     executionSource?: 'amm' | 'orderbook' | 'mixed' | 'unknown' | null;
+}
+
+export interface ExecutionQualityEventInput {
+    eventId?: string | null;
+    txHash?: string | null;
+    ts?: number;
+    pairKey: string;
+    side: 'buy' | 'sell';
+    strategy?: string | null;
+    regime?: FlowRegime | null;
+    source?: 'bot' | 'manual' | 'unknown';
+    intentPrice?: number | null;
+    expectedPrice?: number | null;
+    expectedPriceSource?: 'intent' | 'mid' | 'bbo' | 'fallback_intent' | null;
+    decisionMid?: number | null;
+    decisionBid?: number | null;
+    decisionAsk?: number | null;
+    fillPrice?: number | null;
+    amountBase?: number | null;
+    filledBase?: number | null;
+    filledQuote?: number | null;
+    slippageBpsVsIntent?: number | null;
+    slippageBpsVsMid?: number | null;
+    slippageBpsVsBbo?: number | null;
+    effSpreadBps?: number | null;
+    realizedSpreadBps1m?: number | null;
+    realizedSpreadBps5m?: number | null;
+    impactBps1m?: number | null;
+    impactBps5m?: number | null;
+    implShortfallQuote?: number | null;
+    fillRatio?: number | null;
+    status?: 'FILLED' | 'PARTIAL' | 'REJECTED';
+    rejectReason?: string | null;
+    flags?: string[] | null;
+    guardQuarantined?: boolean | null;
+    decisionTs?: number | null;
+    submitTs?: number | null;
+    validatedTs?: number | null;
+    decisionToSubmitMs?: number | null;
+    submitToValidatedMs?: number | null;
+    decisionToValidatedMs?: number | null;
+}
+
+export interface ExecutionQualityFilters {
+    pairKey?: string;
+    sinceMs?: number;
+    strategy?: string;
+    side?: 'buy' | 'sell';
+    source?: 'bot' | 'manual' | 'unknown';
+    bucketMs?: number;
+}
+
+export interface ExecutionQualitySummary {
+    events: number;
+    fills: number;
+    rejects: number;
+    partials: number;
+    coverage1m: number;
+    coverage5m: number;
+    avgSlippageBpsVsIntent: number | null;
+    avgSlippageBpsVsMid: number | null;
+    avgSlippageBpsVsBbo: number | null;
+    avgEffSpreadBps: number | null;
+    avgRealizedSpreadBps1m: number | null;
+    avgRealizedSpreadBps5m: number | null;
+    avgImpactBps1m: number | null;
+    avgImpactBps5m: number | null;
+    avgFillRatio: number | null;
+    avgDecisionToSubmitMs: number | null;
+    avgSubmitToValidatedMs: number | null;
+    avgDecisionToValidatedMs: number | null;
+}
+
+export interface ExecutionQualityBucket {
+    ts: number;
+    count: number;
+    avgSlippageBpsVsIntent: number | null;
+    avgEffSpreadBps: number | null;
+    avgRealizedSpreadBps1m: number | null;
+    avgRealizedSpreadBps5m: number | null;
+    avgImpactBps1m: number | null;
+    avgImpactBps5m: number | null;
+    avgFillRatio: number | null;
+    avgDecisionToValidatedMs: number | null;
+}
+
+export interface ExecutionQualityHistogramBin {
+    min: number;
+    max: number;
+    count: number;
+}
+
+export interface ExecutionQualityBreakdownRow {
+    key: string;
+    count: number;
+    avgSlippageBpsVsIntent: number | null;
+    avgEffSpreadBps: number | null;
+    avgFillRatio: number | null;
+}
+
+export interface ExecutionQualityAnomalies {
+    suspiciousSlippageSpikes: number;
+    partialFillAnomalies: number;
+    quoteBaseIntegrityViolations: number;
+}
+
+export interface ExecutionQualityAnalytics {
+    summary: ExecutionQualitySummary;
+    series: ExecutionQualityBucket[];
+    histograms: {
+        slippageBps: ExecutionQualityHistogramBin[];
+        spreadBps: ExecutionQualityHistogramBin[];
+        postTradeDriftBps: ExecutionQualityHistogramBin[];
+    };
+    breakdowns: {
+        byPair: ExecutionQualityBreakdownRow[];
+        byStrategy: ExecutionQualityBreakdownRow[];
+        bySide: ExecutionQualityBreakdownRow[];
+        byRegime: ExecutionQualityBreakdownRow[];
+    };
+    anomalies: ExecutionQualityAnomalies;
 }
 
 /**
@@ -571,6 +702,108 @@ class FeedbackEngine {
             insertBatch(eventRecords, snapshotRecord);
         } catch (err) {
             logger.warn({ err, eventCount: events.length }, 'Failed to record batch');
+        }
+    }
+
+    recordExecutionQualityEvent(input: ExecutionQualityEventInput): string | null {
+        if (!this.ensureInitialized()) return null;
+
+        try {
+            const canonicalPair = canonicalizePairKey(input.pairKey);
+            const aliases = getPairKeyAliases(canonicalPair);
+            const metrics = buildExecutionQualityMetrics({
+                side: input.side,
+                intentPrice: input.intentPrice ?? null,
+                midAtDecision: input.decisionMid ?? null,
+                bboAtDecision: input.side === 'buy' ? (input.decisionAsk ?? null) : (input.decisionBid ?? null),
+                decisionPrice: input.expectedPrice ?? input.intentPrice ?? null,
+                fillPrice: input.fillPrice ?? null,
+                amountBase: input.amountBase ?? null,
+                filledBase: input.filledBase ?? null,
+                midAfter1m: null,
+                midAfter5m: null,
+            });
+
+            const event: ExecutionQualityEventRecord = {
+                id: generateId(),
+                ts: input.ts ?? Date.now(),
+                eventId: input.eventId ?? null,
+                txHash: input.txHash ?? null,
+                pairKeyCanonical: canonicalPair,
+                pairAliases: JSON.stringify(aliases),
+                side: input.side,
+                strategy: input.strategy ?? null,
+                regime: input.regime ?? null,
+                source: input.source ?? 'unknown',
+                intentPrice: input.intentPrice ?? null,
+                expectedPrice: input.expectedPrice ?? null,
+                expectedPriceSource: input.expectedPriceSource ?? null,
+                decisionMid: input.decisionMid ?? null,
+                decisionBid: input.decisionBid ?? null,
+                decisionAsk: input.decisionAsk ?? null,
+                fillPrice: input.fillPrice ?? null,
+                amountBase: input.amountBase ?? null,
+                filledBase: input.filledBase ?? null,
+                filledQuote: input.filledQuote ?? null,
+                slippageBpsVsIntent: input.slippageBpsVsIntent ?? metrics.slippageBpsVsIntent,
+                slippageBpsVsMid: input.slippageBpsVsMid ?? metrics.slippageBpsVsMid,
+                slippageBpsVsBbo: input.slippageBpsVsBbo ?? metrics.slippageBpsVsBbo,
+                effSpreadBps: input.effSpreadBps ?? metrics.effSpreadBps,
+                realizedSpreadBps1m: input.realizedSpreadBps1m ?? null,
+                realizedSpreadBps5m: input.realizedSpreadBps5m ?? null,
+                impactBps1m: input.impactBps1m ?? null,
+                impactBps5m: input.impactBps5m ?? null,
+                implShortfallQuote: input.implShortfallQuote ?? metrics.implShortfallQuote,
+                fillRatio: input.fillRatio ?? metrics.fillRatio,
+                status: input.status ?? null,
+                rejectReason: input.rejectReason ?? null,
+                flags: input.flags ? JSON.stringify(input.flags) : null,
+                guardQuarantined: input.guardQuarantined == null ? null : (input.guardQuarantined ? 1 : 0),
+                decisionTs: input.decisionTs ?? null,
+                submitTs: input.submitTs ?? null,
+                validatedTs: input.validatedTs ?? null,
+                decisionToSubmitMs: input.decisionToSubmitMs ?? null,
+                submitToValidatedMs: input.submitToValidatedMs ?? null,
+                decisionToValidatedMs: input.decisionToValidatedMs ?? null,
+            };
+
+            return insertExecutionQualityEvent(event);
+        } catch (err) {
+            logger.warn({ err, pairKey: input.pairKey, txHash: input.txHash }, 'Failed to record execution quality event');
+            return null;
+        }
+    }
+
+    updateExecutionQualityHorizons(input: {
+        id: string;
+        pairKey: string;
+        side: 'buy' | 'sell';
+        fillPrice: number;
+        decisionMid: number;
+        fillTs: number;
+    }): void {
+        if (!this.ensureInitialized()) return;
+        try {
+            const pair = canonicalizePairKey(input.pairKey);
+            const snapshot1m = getSnapshotNear(pair, input.fillTs + 60_000, 120_000);
+            const snapshot5m = getSnapshotNear(pair, input.fillTs + 300_000, 180_000);
+            const midAfter1m = snapshot1m?.midPrice ?? null;
+            const midAfter5m = snapshot5m?.midPrice ?? null;
+
+            const realizedSpreadBps1m = computeRealizedSpreadBps(input.side, input.fillPrice, input.decisionMid, midAfter1m);
+            const realizedSpreadBps5m = computeRealizedSpreadBps(input.side, input.fillPrice, input.decisionMid, midAfter5m);
+            const impactBps1m = computeImpactBps(input.side, input.decisionMid, midAfter1m);
+            const impactBps5m = computeImpactBps(input.side, input.decisionMid, midAfter5m);
+
+            updateExecutionQualityHorizonsDb({
+                id: input.id,
+                realizedSpreadBps1m,
+                realizedSpreadBps5m,
+                impactBps1m,
+                impactBps5m,
+            });
+        } catch (err) {
+            logger.warn({ err, id: input.id }, 'Failed to update execution quality horizons');
         }
     }
 
@@ -1054,6 +1287,248 @@ class FeedbackEngine {
             logger.warn({ err }, 'Failed to get cost summary');
             return this.emptyCostSummary();
         }
+    }
+
+    getExecutionQualityAnalytics(filters: ExecutionQualityFilters = {}): ExecutionQualityAnalytics {
+        if (!this.ensureInitialized()) {
+            return this.emptyExecutionQualityAnalytics(filters.bucketMs ?? 60_000);
+        }
+
+        try {
+            const bucketMs = Math.max(1_000, Math.min(86_400_000, filters.bucketMs ?? 60_000));
+            const queryFilters: ExecutionQualityQueryFilters = {};
+            if (filters.pairKey) queryFilters.pairKey = filters.pairKey;
+            if (filters.sinceMs != null) queryFilters.sinceMs = filters.sinceMs;
+            if (filters.strategy) queryFilters.strategy = filters.strategy;
+            if (filters.side) queryFilters.side = filters.side;
+            if (filters.source) queryFilters.source = filters.source;
+
+            const events = queryExecutionQualityEvents(queryFilters);
+
+            const fills = events.filter((e) => e.status === 'FILLED' || e.status === 'PARTIAL');
+            const rejects = events.filter((e) => e.status === 'REJECTED');
+            const partials = events.filter((e) => e.status === 'PARTIAL');
+
+            const summary: ExecutionQualitySummary = {
+                events: events.length,
+                fills: fills.length,
+                rejects: rejects.length,
+                partials: partials.length,
+                coverage1m: fills.length > 0 ? fills.filter((e) => e.realizedSpreadBps1m != null).length / fills.length : 0,
+                coverage5m: fills.length > 0 ? fills.filter((e) => e.realizedSpreadBps5m != null).length / fills.length : 0,
+                avgSlippageBpsVsIntent: this.avg(fills.map((e) => e.slippageBpsVsIntent)),
+                avgSlippageBpsVsMid: this.avg(fills.map((e) => e.slippageBpsVsMid)),
+                avgSlippageBpsVsBbo: this.avg(fills.map((e) => e.slippageBpsVsBbo)),
+                avgEffSpreadBps: this.avg(fills.map((e) => e.effSpreadBps)),
+                avgRealizedSpreadBps1m: this.avg(fills.map((e) => e.realizedSpreadBps1m)),
+                avgRealizedSpreadBps5m: this.avg(fills.map((e) => e.realizedSpreadBps5m)),
+                avgImpactBps1m: this.avg(fills.map((e) => e.impactBps1m)),
+                avgImpactBps5m: this.avg(fills.map((e) => e.impactBps5m)),
+                avgFillRatio: this.avg(fills.map((e) => e.fillRatio)),
+                avgDecisionToSubmitMs: this.avg(events.map((e) => e.decisionToSubmitMs)),
+                avgSubmitToValidatedMs: this.avg(events.map((e) => e.submitToValidatedMs)),
+                avgDecisionToValidatedMs: this.avg(events.map((e) => e.decisionToValidatedMs)),
+            };
+
+            const series = this.buildExecutionQualitySeries(events, bucketMs);
+            const slippageValues = fills
+                .map((e) => e.slippageBpsVsIntent)
+                .filter((v): v is number => v != null && Number.isFinite(v));
+            const spreadValues = fills
+                .map((e) => e.effSpreadBps)
+                .filter((v): v is number => v != null && Number.isFinite(v));
+            const driftValues = fills
+                .map((e) => e.impactBps1m ?? e.impactBps5m)
+                .filter((v): v is number => v != null && Number.isFinite(v));
+
+            const histograms = {
+                slippageBps: this.buildHistogram(slippageValues),
+                spreadBps: this.buildHistogram(spreadValues),
+                postTradeDriftBps: this.buildHistogram(driftValues),
+            };
+
+            const breakdowns = {
+                byPair: this.buildExecutionQualityBreakdown(events, (e) => e.pairKeyCanonical),
+                byStrategy: this.buildExecutionQualityBreakdown(events, (e) => e.strategy ?? 'unknown'),
+                bySide: this.buildExecutionQualityBreakdown(events, (e) => e.side ?? 'unknown'),
+                byRegime: this.buildExecutionQualityBreakdown(events, (e) => e.regime ?? 'unknown'),
+            };
+
+            const anomalies: ExecutionQualityAnomalies = {
+                suspiciousSlippageSpikes: fills.filter((e) => {
+                    const s = e.slippageBpsVsIntent;
+                    return s != null && Number.isFinite(s) && (s < -100 || s > 500);
+                }).length,
+                partialFillAnomalies: partials.filter((e) => (e.fillRatio ?? 0) < 0.999).length,
+                quoteBaseIntegrityViolations: fills.filter((e) => {
+                    if (!Number.isFinite(e.fillPrice ?? null) || (e.fillPrice ?? 0) <= 0) return true;
+                    if (!Number.isFinite(e.filledBase ?? null) || (e.filledBase ?? -1) < 0) return true;
+                    if ((e.amountBase ?? 0) > 0 && (e.filledBase ?? 0) > (e.amountBase ?? 0) + 1e-9) return true;
+                    return false;
+                }).length,
+            };
+
+            return {
+                summary,
+                series,
+                histograms,
+                breakdowns,
+                anomalies,
+            };
+        } catch (err) {
+            logger.warn({ err, filters }, 'Failed to compute execution quality analytics');
+            return this.emptyExecutionQualityAnalytics(filters.bucketMs ?? 60_000);
+        }
+    }
+
+    private emptyExecutionQualityAnalytics(bucketMs: number): ExecutionQualityAnalytics {
+        return {
+            summary: {
+                events: 0,
+                fills: 0,
+                rejects: 0,
+                partials: 0,
+                coverage1m: 0,
+                coverage5m: 0,
+                avgSlippageBpsVsIntent: null,
+                avgSlippageBpsVsMid: null,
+                avgSlippageBpsVsBbo: null,
+                avgEffSpreadBps: null,
+                avgRealizedSpreadBps1m: null,
+                avgRealizedSpreadBps5m: null,
+                avgImpactBps1m: null,
+                avgImpactBps5m: null,
+                avgFillRatio: null,
+                avgDecisionToSubmitMs: null,
+                avgSubmitToValidatedMs: null,
+                avgDecisionToValidatedMs: null,
+            },
+            series: this.buildExecutionQualitySeries([], bucketMs),
+            histograms: {
+                slippageBps: this.buildHistogram([]),
+                spreadBps: this.buildHistogram([]),
+                postTradeDriftBps: this.buildHistogram([]),
+            },
+            breakdowns: {
+                byPair: [],
+                byStrategy: [],
+                bySide: [],
+                byRegime: [],
+            },
+            anomalies: {
+                suspiciousSlippageSpikes: 0,
+                partialFillAnomalies: 0,
+                quoteBaseIntegrityViolations: 0,
+            },
+        };
+    }
+
+    private avg(values: Array<number | null | undefined>): number | null {
+        let sum = 0;
+        let count = 0;
+        for (const value of values) {
+            if (value != null && Number.isFinite(value)) {
+                sum += value;
+                count++;
+            }
+        }
+        return count > 0 ? sum / count : null;
+    }
+
+    private buildExecutionQualitySeries(events: ExecutionQualityEventRecord[], bucketMs: number): ExecutionQualityBucket[] {
+        const buckets = new Map<number, {
+            count: number;
+            slippage: Array<number | null>;
+            effSpread: Array<number | null>;
+            realized1m: Array<number | null>;
+            realized5m: Array<number | null>;
+            impact1m: Array<number | null>;
+            impact5m: Array<number | null>;
+            fillRatio: Array<number | null>;
+            decisionToValidated: Array<number | null>;
+        }>();
+
+        for (const event of events) {
+            const bucketTs = Math.floor(event.ts / bucketMs) * bucketMs;
+            const bucket = buckets.get(bucketTs) ?? {
+                count: 0,
+                slippage: [],
+                effSpread: [],
+                realized1m: [],
+                realized5m: [],
+                impact1m: [],
+                impact5m: [],
+                fillRatio: [],
+                decisionToValidated: [],
+            };
+
+            bucket.count += 1;
+            bucket.slippage.push(event.slippageBpsVsIntent);
+            bucket.effSpread.push(event.effSpreadBps);
+            bucket.realized1m.push(event.realizedSpreadBps1m);
+            bucket.realized5m.push(event.realizedSpreadBps5m);
+            bucket.impact1m.push(event.impactBps1m);
+            bucket.impact5m.push(event.impactBps5m);
+            bucket.fillRatio.push(event.fillRatio);
+            bucket.decisionToValidated.push(event.decisionToValidatedMs);
+            buckets.set(bucketTs, bucket);
+        }
+
+        return Array.from(buckets.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(([ts, bucket]) => ({
+                ts,
+                count: bucket.count,
+                avgSlippageBpsVsIntent: this.avg(bucket.slippage),
+                avgEffSpreadBps: this.avg(bucket.effSpread),
+                avgRealizedSpreadBps1m: this.avg(bucket.realized1m),
+                avgRealizedSpreadBps5m: this.avg(bucket.realized5m),
+                avgImpactBps1m: this.avg(bucket.impact1m),
+                avgImpactBps5m: this.avg(bucket.impact5m),
+                avgFillRatio: this.avg(bucket.fillRatio),
+                avgDecisionToValidatedMs: this.avg(bucket.decisionToValidated),
+            }));
+    }
+
+    private buildHistogram(values: number[]): ExecutionQualityHistogramBin[] {
+        const edges = [-1000, -500, -200, -100, -50, -20, -10, 0, 10, 20, 50, 100, 200, 500, 1000, 2000];
+        const bins: ExecutionQualityHistogramBin[] = [];
+        for (let i = 0; i < edges.length - 1; i++) {
+            bins.push({ min: edges[i]!, max: edges[i + 1]!, count: 0 });
+        }
+
+        for (const value of values) {
+            for (const bin of bins) {
+                if (value >= bin.min && value < bin.max) {
+                    bin.count += 1;
+                    break;
+                }
+            }
+        }
+        return bins;
+    }
+
+    private buildExecutionQualityBreakdown(
+        events: ExecutionQualityEventRecord[],
+        keySelector: (event: ExecutionQualityEventRecord) => string
+    ): ExecutionQualityBreakdownRow[] {
+        const groups = new Map<string, ExecutionQualityEventRecord[]>();
+        for (const event of events) {
+            const key = keySelector(event) || 'unknown';
+            const list = groups.get(key) ?? [];
+            list.push(event);
+            groups.set(key, list);
+        }
+
+        return Array.from(groups.entries())
+            .map(([key, group]) => ({
+                key,
+                count: group.length,
+                avgSlippageBpsVsIntent: this.avg(group.map((e) => e.slippageBpsVsIntent)),
+                avgEffSpreadBps: this.avg(group.map((e) => e.effSpreadBps)),
+                avgFillRatio: this.avg(group.map((e) => e.fillRatio)),
+            }))
+            .sort((a, b) => b.count - a.count);
     }
 
     /**

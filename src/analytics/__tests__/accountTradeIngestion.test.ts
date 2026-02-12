@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const recorded: Array<Record<string, unknown>> = [];
+const { hasExecutionQualityTxHash, recordExecutionQualityEvent } = vi.hoisted(() => ({
+    hasExecutionQualityTxHash: vi.fn(() => false),
+    recordExecutionQualityEvent: vi.fn(),
+}));
 
 vi.mock('../tradeHistory', () => ({
     tradeHistory: {
@@ -10,6 +14,16 @@ vi.mock('../tradeHistory', () => ({
             recorded.push(fullTrade);
             return fullTrade;
         }),
+    },
+}));
+
+vi.mock('../feedbackDb', () => ({
+    hasExecutionQualityTxHash,
+}));
+
+vi.mock('../feedbackEngine', () => ({
+    feedbackEngine: {
+        recordExecutionQualityEvent,
     },
 }));
 
@@ -76,6 +90,7 @@ describe('AccountTradeIngestionService', () => {
     beforeEach(() => {
         recorded.length = 0;
         vi.clearAllMocks();
+        hasExecutionQualityTxHash.mockReturnValue(false);
     });
 
     it('ingests external wallet fill with source=manual', () => {
@@ -86,6 +101,7 @@ describe('AccountTradeIngestionService', () => {
         expect(recorded[0]?.source).toBe('manual');
         expect(recorded[0]?.side).toBe('BUY');
         expect(recorded[0]?.filled).toBeCloseTo(1, 8);
+        expect(recordExecutionQualityEvent).toHaveBeenCalledTimes(1);
     });
 
     it('tags bot-submitted hash as source=bot', () => {
@@ -116,4 +132,3 @@ describe('AccountTradeIngestionService', () => {
         expect(recorded).toHaveLength(0);
     });
 });
-
