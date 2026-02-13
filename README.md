@@ -559,6 +559,77 @@ Tick phases: `riskReset`, `reserveCheck`, `bookRefresh`, `snapshot`, `feedStall`
 
 ---
 
+## Diagnostics & Analytics
+
+The dashboard includes a **Diagnostics** tab (`src/ui/app/page.tsx`) with DB-backed analytics panels.
+
+### Execution Quality Dashboard
+
+- Backed by `execution_quality_events` in `data/feedback.sqlite` (not in-memory only).
+- Measures execution quality (slippage/spread/latency/fill quality) with:
+  - time series
+  - histograms
+  - breakdown tables
+  - anomaly counters
+- Filter contract: `pairKey, sinceMs, strategy, side, source, bucketMs`
+  - Legacy compatibility: `window` is accepted and mapped to `sinceMs`.
+- Ingestion fallback writes execution-quality rows only when executor did not already persist the same `txHash`.
+
+### True Edge Attribution Panel
+
+- Backed by `edge_attribution_events` in `data/feedback.sqlite`.
+- Decomposes edge into signal/execution/drift using sign-safe BUY/SELL formulas and PnL identity checks.
+- Executor writes attribution on final fills; delayed horizon enrichment populates 1m/5m fields.
+- Ingestion fallback writes attribution only if executor row is absent (dedupe by `txHash`).
+- API response shape: `{ summary, series, histograms, breakdowns, topTrades }`.
+
+### Pair Aliasing and Dedupe
+
+- Pair filters accept human and hex aliases (`XRP/RLUSD` and `XRP/524C555344000000000000000000000000000000`).
+- Backend canonicalizes pair keys internally, so alias queries return consistent counts.
+- Duplicate lifecycle writes are dedupe-safe by `txHash` in executor/ingestion persistence paths.
+
+---
+
+## API Endpoints
+
+### `GET /api/analytics/execution-quality`
+
+- Filters:
+  - `pairKey`
+  - `sinceMs`
+  - `strategy`
+  - `side`
+  - `source`
+  - `bucketMs`
+  - legacy: `window` (fallback to `sinceMs`)
+- Response keys:
+  - `summary` (fills/rejects/partials, avg slippage/spread/latency coverage)
+  - `series` (bucketed time series)
+  - `histograms` (`slippageBps`, `spreadBps`, `postTradeDriftBps`)
+  - `breakdowns` (`byPair`, `byStrategy`, `bySide`, `byRegime`)
+  - `anomalies` (suspicious slippage spikes, partial fill anomalies, quote/base integrity violations)
+  - `filters` (resolved request filters)
+
+### `GET /api/analytics/edge-attribution`
+
+- Filters:
+  - `pairKey`
+  - `sinceMs`
+  - `strategy`
+  - `side`
+  - `source`
+  - `bucketMs`
+- Response keys:
+  - `summary` (coverage + average signal/execution/drift/pnl metrics)
+  - `series` (bucketed attribution series)
+  - `histograms` (`executionEdgeBps`, `driftBps`)
+  - `breakdowns` (`byPair`, `byStrategy`, `bySide`, `byRegime`)
+  - `topTrades` (`worstExecution`, `adverseSelection`)
+  - `filters` (resolved request filters)
+
+---
+
 ## API Reference
 
 All API routes are wrapped with `withLocalApi` middleware (`src/ui/lib/localApi/withLocalApi.ts`):
@@ -603,7 +674,8 @@ All API routes are wrapped with `withLocalApi` middleware (`src/ui/lib/localApi/
 |---|---|---|
 | `/api/analytics/summary` | GET | Aggregated P&L, win rate, trade count, drawdown. |
 | `/api/analytics/costs` | GET | Cost realism breakdown (spread, impact, fees). |
-| `/api/analytics/execution-quality` | GET | P50/P95 slippage, latency, fill ratios. |
+| `/api/analytics/execution-quality` | GET | DB-backed diagnostics: `summary/series/histograms/breakdowns/anomalies` with filters (`pairKey,sinceMs,strategy,side,source,bucketMs`, plus `window` fallback). |
+| `/api/analytics/edge-attribution` | GET | True edge attribution diagnostics: `summary/series/histograms/breakdowns/topTrades` with the same filters. |
 | `/api/analytics/governance/state` | GET | Capital protection mode, metrics, and disabled strategies. |
 | `/api/analytics/regimes/policy` | GET | Current regime policy (size multipliers, disabled regimes). |
 | `/api/analytics/regimes/recompute` | POST | Force regime policy recomputation. |
@@ -1190,6 +1262,54 @@ npx vitest run src/runtime/__tests__/shutdown.test.ts
 # Run tests matching a pattern
 npx vitest run --grep "pair switch"
 ```
+
+### Diagnostics Analytics Test Coverage
+
+- `src/ui/pages/api/analytics/__tests__/execution-quality.test.ts` — execution-quality API filter parsing and legacy `window` compatibility.
+- `src/ui/pages/api/analytics/__tests__/edge-attribution.test.ts` — edge-attribution API filters and response contract.
+- `src/analytics/__tests__/executionQualityPersistence.test.ts` — DB persistence + pair alias filtering for execution-quality rows.
+- `src/analytics/__tests__/edgeAttributionPersistence.test.ts` — DB persistence + pair alias filtering for edge-attribution rows.
+- `src/analytics/__tests__/executionQualityMetrics.test.ts` — BUY/SELL sign-safe execution-quality metric formulas.
+- `src/analytics/__tests__/edgeAttributionMetrics.test.ts` — edge attribution formulas + PnL identity checks.
+- `src/analytics/__tests__/postFillSchedule.test.ts` — delayed 1s/3s post-fill enrichment scheduling behavior.
+- `src/analytics/__tests__/accountTradeIngestion.test.ts` — ingestion fallback behavior and txHash dedupe-safe writes.
+
+### Diagnostics Build Validation
+
+```bash
+npm run build:backend
+npm run build:frontend
+```
+
+---
+
+## Manual Validation
+
+```bash
+curl "http://127.0.0.1:3000/api/analytics/execution-quality?pairKey=XRP/RLUSD&bucketMs=60000"
+```
+
+Expect keys: `summary, series, histograms, breakdowns, anomalies, filters`.
+
+```bash
+curl ".../execution-quality?pairKey=XRP/RLUSD"
+curl ".../execution-quality?pairKey=XRP/524C555344000000000000000000000000000000"
+```
+
+Expect same counts for canonical pair data.
+
+```bash
+curl -s "http://127.0.0.1:3000/api/analytics/edge-attribution?pairKey=XRP/RLUSD&bucketMs=60000" | jq
+```
+
+Expect keys: `summary, series, histograms.executionEdgeBps, histograms.driftBps, breakdowns, topTrades`.
+
+```bash
+curl -s ".../edge-attribution?pairKey=XRP/RLUSD" | jq '.summary.events'
+curl -s ".../edge-attribution?pairKey=XRP/524C555344000000000000000000000000000000" | jq '.summary.events'
+```
+
+Expect same event count.
 
 ### Test Environment
 
