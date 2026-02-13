@@ -14,6 +14,12 @@ describe('RiskStressPanel', () => {
                     drawdownPct: null,
                     drawdownVelocity: null,
                     maxDrawdownPct: null,
+                    hardRiskState: null,
+                    hardRiskReasons: [],
+                    drawdownConfidence: null,
+                    hardRiskTradesCount: null,
+                    hardRiskPeakEquity: null,
+                    hardRiskEquityNow: null,
                 }}
                 spread={{
                     currentSpreadBps: null,

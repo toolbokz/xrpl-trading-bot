@@ -34,6 +34,12 @@ export interface RollingRiskMetrics {
     expectancyBps: number;
     /** Maximum drawdown percentage (0-100) */
     drawdownPct: number;
+    /** Whether drawdown is statistically meaningful for hard risk enforcement */
+    drawdownConfidence?: boolean;
+    /** Rolling equity peak used to compute drawdown */
+    peakEquity?: number;
+    /** Current rolling equity value */
+    equityNow?: number;
     /** Average slippage in basis points */
     avgSlippageBps: number;
     /** Partial fill rate (0-1) */
@@ -462,6 +468,9 @@ export class CapitalProtectionEngine {
             profitFactor: rollingMetrics.profitFactor,
             expectancyBps: rollingMetrics.expectancyBps,
             drawdownPct: rollingMetrics.drawdownPct,
+            drawdownConfidence: rollingMetrics.drawdownConfidence ?? false,
+            peakEquity: rollingMetrics.peakEquity ?? 0,
+            equityNow: rollingMetrics.equityNow ?? 0,
             avgSlippageBps: rollingMetrics.avgSlippageBps,
             partialFillRate: rollingMetrics.partialFillRate,
             winRate: rollingMetrics.winRate,
@@ -478,6 +487,9 @@ export class CapitalProtectionEngine {
             profitFactor: 1,
             expectancyBps: 0,
             drawdownPct: 0,
+            drawdownConfidence: false,
+            peakEquity: 0,
+            equityNow: 0,
             avgSlippageBps: 0,
             partialFillRate: 0,
             winRate: 0,

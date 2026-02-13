@@ -15,6 +15,9 @@ interface GovernanceState {
         profitFactor: number;
         expectancyBps: number;
         drawdownPct: number;
+        drawdownConfidence: boolean;
+        peakEquity: number;
+        equityNow: number;
         avgSlippageBps: number;
         partialFillRate: number;
         winRate: number;
@@ -237,6 +240,12 @@ export function GovernancePanel({ compact = false, enabled = true }: { compact?:
                                         </span>
                                     </div>
                                     <div className="flex items-center justify-between text-slate-300">
+                                        <span className="text-slate-500">DD Conf</span>
+                                        <span className={clsx(state.metrics.drawdownConfidence ? 'text-slate-200' : 'text-amber-300')}>
+                                            {state.metrics.drawdownConfidence ? 'yes' : 'low'}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-slate-300">
                                         <span className="text-slate-500">PF</span>
                                         <span className={clsx(state.metrics.profitFactor < state.thresholds.minProfitFactor && 'text-danger')}>
                                             {state.metrics.profitFactor.toFixed(2)}
@@ -317,6 +326,12 @@ export function GovernancePanel({ compact = false, enabled = true }: { compact?:
                                     inverse={true}
                                     icon={TrendingDown}
                                 />
+                                <div className="text-[10px] text-slate-500">
+                                    Drawdown confidence: <span className={clsx(state.metrics.drawdownConfidence ? 'text-slate-300' : 'text-amber-300')}>
+                                        {state.metrics.drawdownConfidence ? 'qualified' : 'low-confidence'}
+                                    </span>
+                                    {' '}| Peak equity: <span className="font-mono text-slate-300">{state.metrics.peakEquity.toFixed(4)}</span>
+                                </div>
 
                                 <MetricBar
                                     label="Profit Factor"

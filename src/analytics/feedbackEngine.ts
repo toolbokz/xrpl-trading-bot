@@ -491,6 +491,62 @@ export interface AnalyticsResponse {
     profitFactorSeries: ProfitFactorPoint[];
 }
 
+export interface RollingDrawdownMetrics {
+    drawdownPct: number;
+    drawdownConfidence: boolean;
+    peakEquity: number;
+    equityNow: number;
+}
+
+const DEFAULT_DRAWDOWN_PEAK_EPSILON = 1e-6;
+
+/**
+ * Compute rolling drawdown metrics from a chronological PnL series.
+ *
+ * This helper is intentionally pure so risk-critical drawdown behavior is
+ * easy to test without DB/runtime dependencies.
+ */
+export function computeRollingDrawdownMetricsFromPnl(
+    pnlSeries: number[],
+    peakEpsilon: number = DEFAULT_DRAWDOWN_PEAK_EPSILON,
+): RollingDrawdownMetrics {
+    const epsilon = Number.isFinite(peakEpsilon) && peakEpsilon > 0
+        ? peakEpsilon
+        : DEFAULT_DRAWDOWN_PEAK_EPSILON;
+
+    let equity = 0;
+    let peak = 0;
+    let maxDrawdown = 0;
+
+    for (const rawPnl of pnlSeries) {
+        const pnl = Number.isFinite(rawPnl) ? rawPnl : 0;
+        equity += pnl;
+        if (equity > peak) {
+            peak = equity;
+        }
+        if (peak > epsilon) {
+            const dd = ((peak - equity) / peak) * 100;
+            if (Number.isFinite(dd) && dd > maxDrawdown) {
+                maxDrawdown = dd;
+            }
+        }
+    }
+
+    const peakEquity = Number.isFinite(peak) ? Math.max(0, peak) : 0;
+    const equityNow = Number.isFinite(equity) ? equity : 0;
+    const drawdownConfidence = peakEquity > epsilon;
+    const drawdownPct = drawdownConfidence
+        ? (Number.isFinite(maxDrawdown) ? Math.max(0, maxDrawdown) : 0)
+        : 0;
+
+    return {
+        drawdownPct,
+        drawdownConfidence,
+        peakEquity,
+        equityNow,
+    };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Feedback Engine Class
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1963,6 +2019,9 @@ class FeedbackEngine {
         profitFactor: number;
         expectancyBps: number;
         drawdownPct: number;
+        drawdownConfidence: boolean;
+        peakEquity: number;
+        equityNow: number;
         avgSlippageBps: number;
         partialFillRate: number;
         winRate: number;
@@ -2051,33 +2110,23 @@ class FeedbackEngine {
             // Partial fill rate
             const partialFillRate = tradesCount > 0 ? partialCount / tradesCount : 0;
 
-            // Compute drawdown from equity curve
-            let equity = 0;
-            let peak = 0;
-            let maxDrawdown = 0;
-
-            // Process chronologically (reverse the sorted array)
+            // Compute drawdown from equity curve (chronological order)
+            const pnlSeriesChronological: number[] = [];
             for (let i = lookback.length - 1; i >= 0; i--) {
                 const event = lookback[i];
                 if (!event) continue;
-                const pnl = this.computeEventPnl(event);
-                equity += pnl;
-                if (equity > peak) {
-                    peak = equity;
-                }
-                if (peak > 0) {
-                    const dd = ((peak - equity) / peak) * 100;
-                    if (dd > maxDrawdown) {
-                        maxDrawdown = dd;
-                    }
-                }
+                pnlSeriesChronological.push(this.computeEventPnl(event));
             }
+            const drawdown = computeRollingDrawdownMetricsFromPnl(pnlSeriesChronological);
 
             return {
                 tradesCount,
                 profitFactor: Number.isFinite(profitFactor) ? profitFactor : 100,
                 expectancyBps: Number.isFinite(expectancyBps) ? expectancyBps : 0,
-                drawdownPct: maxDrawdown,
+                drawdownPct: drawdown.drawdownPct,
+                drawdownConfidence: drawdown.drawdownConfidence,
+                peakEquity: drawdown.peakEquity,
+                equityNow: drawdown.equityNow,
                 avgSlippageBps,
                 partialFillRate,
                 winRate,
@@ -2096,6 +2145,9 @@ class FeedbackEngine {
         profitFactor: number;
         expectancyBps: number;
         drawdownPct: number;
+        drawdownConfidence: boolean;
+        peakEquity: number;
+        equityNow: number;
         avgSlippageBps: number;
         partialFillRate: number;
         winRate: number;
@@ -2105,6 +2157,9 @@ class FeedbackEngine {
             profitFactor: 1,
             expectancyBps: 0,
             drawdownPct: 0,
+            drawdownConfidence: false,
+            peakEquity: 0,
+            equityNow: 0,
             avgSlippageBps: 0,
             partialFillRate: 0,
             winRate: 0,

@@ -14,6 +14,23 @@ interface AnalyticsSummaryResponse {
     drawdownVelocity?: number;
 }
 
+interface BotRiskResponse {
+    hardRisk?: {
+        result?: {
+            riskState?: 'CLEAR' | 'WARNING' | 'BLOCKED';
+            riskBlockReasons?: string[];
+            warningReasons?: string[];
+            metrics?: {
+                drawdownConfidence?: boolean;
+                tradesCount?: number;
+                peakEquity?: number;
+                equityNow?: number;
+                drawdownPct?: number;
+            };
+        };
+    };
+}
+
 export interface RiskStressData {
     adverseRate: number | null;
     sampleCount: number;
@@ -21,6 +38,12 @@ export interface RiskStressData {
     drawdownPct: number | null;
     drawdownVelocity: number | null;
     maxDrawdownPct: number | null;
+    hardRiskState: 'CLEAR' | 'WARNING' | 'BLOCKED' | null;
+    hardRiskReasons: string[];
+    drawdownConfidence: boolean | null;
+    hardRiskTradesCount: number | null;
+    hardRiskPeakEquity: number | null;
+    hardRiskEquityNow: number | null;
 }
 
 export interface UseRiskStressState {
@@ -42,6 +65,12 @@ const EMPTY_DATA: RiskStressData = {
     drawdownPct: null,
     drawdownVelocity: null,
     maxDrawdownPct: null,
+    hardRiskState: null,
+    hardRiskReasons: [],
+    drawdownConfidence: null,
+    hardRiskTradesCount: null,
+    hardRiskPeakEquity: null,
+    hardRiskEquityNow: null,
 };
 
 export function useRiskStress({
@@ -66,12 +95,16 @@ export function useRiskStress({
 
         try {
             const pairQuery = pairKey ? `?pairKey=${encodeURIComponent(pairKey)}` : '';
-            const [adverseRes, analyticsRes] = await Promise.all([
+            const [adverseRes, analyticsRes, riskRes] = await Promise.all([
                 fetch(`/api/analytics/adverse-selection-rate${pairQuery}`, {
                     signal: controller.signal,
                     cache: 'no-store',
                 }),
                 fetch(`/api/analytics/summary${pairKey ? `?pair=${encodeURIComponent(pairKey)}` : ''}`, {
+                    signal: controller.signal,
+                    cache: 'no-store',
+                }),
+                fetch('/api/bot/risk', {
                     signal: controller.signal,
                     cache: 'no-store',
                 }),
@@ -97,6 +130,28 @@ export function useRiskStress({
                     : null;
                 next.drawdownVelocity = Number.isFinite(analytics.drawdownVelocity)
                     ? analytics.drawdownVelocity ?? null
+                    : null;
+            }
+
+            if (riskRes.ok) {
+                const risk = await riskRes.json() as BotRiskResponse;
+                const hardRisk = risk.hardRisk?.result;
+                const metrics = hardRisk?.metrics;
+                next.hardRiskState = hardRisk?.riskState ?? null;
+                next.hardRiskReasons = hardRisk?.riskBlockReasons
+                    ?? hardRisk?.warningReasons
+                    ?? [];
+                next.drawdownConfidence = typeof metrics?.drawdownConfidence === 'boolean'
+                    ? metrics.drawdownConfidence
+                    : null;
+                next.hardRiskTradesCount = Number.isFinite(metrics?.tradesCount)
+                    ? metrics?.tradesCount ?? null
+                    : null;
+                next.hardRiskPeakEquity = Number.isFinite(metrics?.peakEquity)
+                    ? metrics?.peakEquity ?? null
+                    : null;
+                next.hardRiskEquityNow = Number.isFinite(metrics?.equityNow)
+                    ? metrics?.equityNow ?? null
                     : null;
             }
 

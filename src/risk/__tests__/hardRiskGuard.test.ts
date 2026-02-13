@@ -20,6 +20,10 @@ function clearInput(): HardRiskInput {
         currentExposureNotional: 0,
         inventorySkewPct: 0,
         drawdownPct: 0,
+        tradesCount: 100,
+        peakEquity: 10,
+        equityNow: 10,
+        drawdownConfidence: true,
         runtimeReady: true,
         marketDataValid: true,
         balanceStalenessMs: 0,
@@ -33,6 +37,8 @@ function tightConfig(): HardRiskConfig {
         maxExposureNotional: 1000,
         maxInventorySkewPct: 50,
         maxDrawdownPct: 5,
+        minTradesForDrawdown: 20,
+        minPeakEquityForDrawdown: 1,
         maxBalanceStalenessMs: 60_000,
         minFeedHealthScore: 30,
         warningThresholdRatio: 0.8,
@@ -68,6 +74,10 @@ describe('HardRiskGuard', () => {
             expect(result.metrics.currentExposureNotional).toBe(0);
             expect(result.metrics.inventorySkewPct).toBe(0);
             expect(result.metrics.drawdownPct).toBe(0);
+            expect(result.metrics.drawdownConfidence).toBe(true);
+            expect(result.metrics.tradesCount).toBe(100);
+            expect(result.metrics.peakEquity).toBe(10);
+            expect(result.metrics.equityNow).toBe(10);
             expect(result.metrics.runtimeReady).toBe(true);
             expect(result.metrics.marketDataValid).toBe(true);
             expect(result.metrics.balancesFresh).toBe(true);
@@ -139,6 +149,22 @@ describe('HardRiskGuard', () => {
             const result = guard.evaluate(input);
             expect(result.riskBlockReasons).not.toContain('drawdown-breached');
         });
+
+        it('does not block on drawdown breach when confidence is low', () => {
+            const input = {
+                ...clearInput(),
+                drawdownPct: 50,
+                tradesCount: 2,
+                peakEquity: 0.01,
+                drawdownConfidence: false,
+            };
+            const result = guard.evaluate(input);
+            expect(result.executionAllowed).toBe(true);
+            expect(result.riskState).toBe('WARNING');
+            expect(result.riskBlockReasons).not.toContain('drawdown-breached');
+            expect(result.warningReasons).toContain('drawdown-breached');
+            expect(result.metrics.drawdownConfidence).toBe(false);
+        });
     });
 
     describe('Block condition 4: runtime not ready', () => {
@@ -201,6 +227,10 @@ describe('HardRiskGuard', () => {
                 currentExposureNotional: 2000,
                 inventorySkewPct: -90,
                 drawdownPct: 10,
+                tradesCount: 100,
+                peakEquity: 10,
+                equityNow: 9,
+                drawdownConfidence: true,
                 runtimeReady: false,
                 marketDataValid: false,
                 balanceStalenessMs: 200_000,
@@ -497,6 +527,8 @@ describe('HardRiskGuard', () => {
             expect(config.maxExposureNotional).toBe(5_000);
             expect(config.maxInventorySkewPct).toBe(80);
             expect(config.maxDrawdownPct).toBe(7);
+            expect(config.minTradesForDrawdown).toBe(50);
+            expect(config.minPeakEquityForDrawdown).toBe(1.0);
             expect(config.maxBalanceStalenessMs).toBe(120_000);
             expect(config.minFeedHealthScore).toBe(40);
             expect(config.warningThresholdRatio).toBe(0.8);
@@ -559,6 +591,10 @@ describe('HardRiskGuard', () => {
                 currentExposureNotional: 123.45,
                 inventorySkewPct: -67,
                 drawdownPct: 2.5,
+                tradesCount: 111,
+                peakEquity: 12.5,
+                equityNow: 11.75,
+                drawdownConfidence: true,
                 runtimeReady: true,
                 marketDataValid: true,
                 balanceStalenessMs: 5000,
@@ -568,6 +604,10 @@ describe('HardRiskGuard', () => {
             expect(result.metrics.currentExposureNotional).toBe(123.45);
             expect(result.metrics.inventorySkewPct).toBe(-67);
             expect(result.metrics.drawdownPct).toBe(2.5);
+            expect(result.metrics.drawdownConfidence).toBe(true);
+            expect(result.metrics.tradesCount).toBe(111);
+            expect(result.metrics.peakEquity).toBe(12.5);
+            expect(result.metrics.equityNow).toBe(11.75);
         });
     });
 });
@@ -584,6 +624,8 @@ describe('loadHardRiskConfig', () => {
         delete process.env.HARD_RISK_MAX_EXPOSURE;
         delete process.env.HARD_RISK_MAX_SKEW_PCT;
         delete process.env.HARD_RISK_MAX_DRAWDOWN_PCT;
+        delete process.env.HARD_RISK_MIN_TRADES_FOR_DRAWDOWN;
+        delete process.env.HARD_RISK_MIN_PEAK_EQUITY;
         delete process.env.HARD_RISK_MAX_BALANCE_STALE_MS;
         delete process.env.HARD_RISK_MIN_FEED_HEALTH;
     });
@@ -609,6 +651,18 @@ describe('loadHardRiskConfig', () => {
         process.env.HARD_RISK_MAX_DRAWDOWN_PCT = '3.5';
         const config = loadHardRiskConfig();
         expect(config.maxDrawdownPct).toBe(3.5);
+    });
+
+    it('parses HARD_RISK_MIN_TRADES_FOR_DRAWDOWN', () => {
+        process.env.HARD_RISK_MIN_TRADES_FOR_DRAWDOWN = '75';
+        const config = loadHardRiskConfig();
+        expect(config.minTradesForDrawdown).toBe(75);
+    });
+
+    it('parses HARD_RISK_MIN_PEAK_EQUITY', () => {
+        process.env.HARD_RISK_MIN_PEAK_EQUITY = '2.5';
+        const config = loadHardRiskConfig();
+        expect(config.minPeakEquityForDrawdown).toBe(2.5);
     });
 
     it('parses HARD_RISK_MAX_BALANCE_STALE_MS', () => {

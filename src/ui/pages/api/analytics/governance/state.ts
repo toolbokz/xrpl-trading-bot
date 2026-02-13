@@ -21,6 +21,9 @@ export interface GovernanceStateResponse {
             profitFactor: number;
             expectancyBps: number;
             drawdownPct: number;
+            drawdownConfidence: boolean;
+            peakEquity: number;
+            equityNow: number;
             avgSlippageBps: number;
             partialFillRate: number;
             winRate: number;
@@ -98,6 +101,9 @@ function handler(req: LocalRequest, res: NextApiResponse<GovernanceStateResponse
                     profitFactor: decision.metrics.profitFactor,
                     expectancyBps: decision.metrics.expectancyBps,
                     drawdownPct: decision.metrics.drawdownPct,
+                    drawdownConfidence: decision.metrics.drawdownConfidence ?? false,
+                    peakEquity: decision.metrics.peakEquity ?? 0,
+                    equityNow: decision.metrics.equityNow ?? 0,
                     avgSlippageBps: decision.metrics.avgSlippageBps,
                     partialFillRate: decision.metrics.partialFillRate,
                     winRate: decision.metrics.winRate,

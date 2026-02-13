@@ -96,6 +96,24 @@ export function RiskStressPanel({ data, spread, loading = false, error = null }:
                     </div>
                 )}
 
+                {!loading && !error && data.hardRiskState === 'BLOCKED' && (
+                    <div className="flex items-start gap-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-red-300">
+                        <AlertTriangle size={12} className="mt-0.5" />
+                        <span className="text-[11px]">
+                            Blocked by Hard Risk: {data.hardRiskReasons.length > 0 ? data.hardRiskReasons.join(', ') : 'unknown'}
+                        </span>
+                    </div>
+                )}
+
+                {!loading && !error && data.hardRiskState === 'WARNING' && (
+                    <div className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-amber-300">
+                        <AlertTriangle size={12} className="mt-0.5" />
+                        <span className="text-[11px]">
+                            Hard Risk warning: {data.hardRiskReasons.length > 0 ? data.hardRiskReasons.join(', ') : 'warning active'}
+                        </span>
+                    </div>
+                )}
+
                 {!loading && !error && view === 'overview' && (
                     <>
                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -123,6 +141,12 @@ export function RiskStressPanel({ data, spread, loading = false, error = null }:
                                 value={spread.currentSpreadBps == null ? '—' : `${spread.currentSpreadBps.toFixed(1)} bps`}
                                 tone={spread.currentSpreadBps != null && spread.currentSpreadBps > 150 ? 'text-amber-300' : 'text-slate-200'}
                                 sub={spread.updatedAtMs ? `upd ${new Date(spread.updatedAtMs).toLocaleTimeString([], { hour12: false })}` : 'runtime cache'}
+                            />
+                            <MetricCard
+                                label="DD Confidence"
+                                value={data.drawdownConfidence == null ? '—' : (data.drawdownConfidence ? 'qualified' : 'low')}
+                                tone={data.drawdownConfidence == null ? 'text-slate-400' : (data.drawdownConfidence ? 'text-emerald-300' : 'text-amber-300')}
+                                sub={`trades ${data.hardRiskTradesCount ?? 0}, peak ${data.hardRiskPeakEquity == null ? '—' : data.hardRiskPeakEquity.toFixed(3)}`}
                             />
                         </div>
 

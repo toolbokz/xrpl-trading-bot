@@ -1158,10 +1158,15 @@ export class TradingRuntime {
             const tickMid = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : bestBid || bestAsk;
             if (tickMid > 0) this.exposureTracker.updateMidPrice(tickMid);
 
+            const governanceMetrics = this.lastGovernanceDecision?.metrics;
             const hardRiskInput: HardRiskInput = {
                 currentExposureNotional: this.exposureTracker.getNotionalExposure(),
                 inventorySkewPct: this.exposureTracker.getInventorySkewPct(),
-                drawdownPct: this.lastGovernanceDecision?.metrics.drawdownPct ?? 0,
+                drawdownPct: governanceMetrics?.drawdownPct ?? 0,
+                tradesCount: governanceMetrics?.tradesCount ?? 0,
+                peakEquity: governanceMetrics?.peakEquity ?? 0,
+                equityNow: governanceMetrics?.equityNow ?? 0,
+                drawdownConfidence: governanceMetrics?.drawdownConfidence ?? false,
                 runtimeReady: this.fsm.getState() === 'READY',
                 marketDataValid: this.lastDataValid,
                 balanceStalenessMs: nowMs - (this.lastBalanceSnapshotMs || nowMs),

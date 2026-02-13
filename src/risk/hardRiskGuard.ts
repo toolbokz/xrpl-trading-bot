@@ -9,7 +9,7 @@
  * Block conditions (any TRUE → BLOCK):
  *   1. Exposure limit exceeded
  *   2. Inventory skew beyond threshold
- *   3. Max drawdown breached
+ *   3. Max drawdown breached (only when drawdown confidence is high)
  *   4. Runtime FSM not READY
  *   5. Market data invalid
  *   6. Balances stale
@@ -73,6 +73,14 @@ export interface HardRiskMetrics {
     inventorySkewPct: number;
     /** Current drawdown percentage (0–100). */
     drawdownPct: number;
+    /** Whether drawdown is confidence-qualified for hard blocking. */
+    drawdownConfidence: boolean;
+    /** Trades backing the rolling drawdown estimate. */
+    tradesCount: number;
+    /** Rolling equity peak used to compute drawdown. */
+    peakEquity: number;
+    /** Current rolling equity value. */
+    equityNow: number;
     /** Whether the runtime FSM is READY. */
     runtimeReady: boolean;
     /** Whether market data is valid. */
@@ -126,6 +134,10 @@ export interface HardRiskConfig {
     maxInventorySkewPct: number;
     /** Max drawdown percentage before block (default: 7). */
     maxDrawdownPct: number;
+    /** Minimum trades required before drawdown can hard-block (default: 50). */
+    minTradesForDrawdown: number;
+    /** Minimum peak equity required before drawdown can hard-block (default: 1.0). */
+    minPeakEquityForDrawdown: number;
     /** Max balance staleness before block (ms, default: 120 000). */
     maxBalanceStalenessMs: number;
     /** Minimum health score for feed health (default: 40). */
@@ -140,6 +152,8 @@ const DEFAULT_CONFIG: HardRiskConfig = {
     maxExposureNotional: 5_000,
     maxInventorySkewPct: 80,
     maxDrawdownPct: 7,
+    minTradesForDrawdown: 50,
+    minPeakEquityForDrawdown: 1.0,
     maxBalanceStalenessMs: 120_000,
     minFeedHealthScore: 40,
     warningThresholdRatio: 0.8,
@@ -156,6 +170,14 @@ export interface HardRiskInput {
     inventorySkewPct: number;
     /** Current rolling drawdown percentage (0–100). */
     drawdownPct: number;
+    /** Number of trades backing rolling drawdown (optional; defaults to 0). */
+    tradesCount?: number;
+    /** Rolling peak equity used for drawdown (optional; defaults to 0). */
+    peakEquity?: number;
+    /** Current rolling equity (optional; defaults to 0). */
+    equityNow?: number;
+    /** Upstream confidence signal for drawdown validity (optional). */
+    drawdownConfidence?: boolean;
     /** Whether the runtime FSM is in READY state. */
     runtimeReady: boolean;
     /** Whether the latest market data snapshot is structurally valid. */
@@ -211,12 +233,25 @@ export class HardRiskGuard {
         const now = Date.now();
         const blockReasons: HardRiskBlockReason[] = [];
         const warningReasons: HardRiskBlockReason[] = [];
+        const addWarning = (reason: HardRiskBlockReason): void => {
+            if (!warningReasons.includes(reason)) {
+                warningReasons.push(reason);
+            }
+        };
+
+        const drawdownPct = Number.isFinite(input.drawdownPct) ? Math.max(0, input.drawdownPct) : 0;
+        const tradesCount = Number.isFinite(input.tradesCount) ? Math.max(0, input.tradesCount ?? 0) : 0;
+        const peakEquity = Number.isFinite(input.peakEquity) ? Math.max(0, input.peakEquity ?? 0) : 0;
+        const equityNow = Number.isFinite(input.equityNow) ? (input.equityNow ?? 0) : 0;
+        const drawdownConfidence = (input.drawdownConfidence ?? true)
+            && tradesCount >= this.config.minTradesForDrawdown
+            && peakEquity >= this.config.minPeakEquityForDrawdown;
 
         // ── 1. Exposure limit ────────────────────────────────────────────
         if (input.currentExposureNotional > this.config.maxExposureNotional) {
             blockReasons.push('exposure-limit-exceeded');
         } else if (input.currentExposureNotional > this.config.maxExposureNotional * this.config.warningThresholdRatio) {
-            warningReasons.push('exposure-limit-exceeded');
+            addWarning('exposure-limit-exceeded');
         }
 
         // ── 2. Inventory skew ────────────────────────────────────────────
@@ -224,14 +259,18 @@ export class HardRiskGuard {
         if (absSkew > this.config.maxInventorySkewPct) {
             blockReasons.push('inventory-skew-exceeded');
         } else if (absSkew > this.config.maxInventorySkewPct * this.config.warningThresholdRatio) {
-            warningReasons.push('inventory-skew-exceeded');
+            addWarning('inventory-skew-exceeded');
         }
 
-        // ── 3. Drawdown ─────────────────────────────────────────────────
-        if (input.drawdownPct > this.config.maxDrawdownPct) {
-            blockReasons.push('drawdown-breached');
-        } else if (input.drawdownPct > this.config.maxDrawdownPct * this.config.warningThresholdRatio) {
-            warningReasons.push('drawdown-breached');
+        // ── 3. Drawdown (confidence-gated) ──────────────────────────────
+        if (drawdownPct > this.config.maxDrawdownPct) {
+            if (drawdownConfidence) {
+                blockReasons.push('drawdown-breached');
+            } else {
+                addWarning('drawdown-breached');
+            }
+        } else if (drawdownPct > this.config.maxDrawdownPct * this.config.warningThresholdRatio) {
+            addWarning('drawdown-breached');
         }
 
         // ── 4. Runtime FSM not READY ────────────────────────────────────
@@ -248,7 +287,7 @@ export class HardRiskGuard {
         if (input.balanceStalenessMs > this.config.maxBalanceStalenessMs) {
             blockReasons.push('balances-stale');
         } else if (input.balanceStalenessMs > this.config.maxBalanceStalenessMs * this.config.warningThresholdRatio) {
-            warningReasons.push('balances-stale');
+            addWarning('balances-stale');
         }
 
         // ── 7. Feed degraded ────────────────────────────────────────────
@@ -256,7 +295,7 @@ export class HardRiskGuard {
             blockReasons.push('feed-degraded');
         } else if (input.feedHealthScore < this.config.minFeedHealthScore / this.config.warningThresholdRatio) {
             // Warning when score is between minFeedHealthScore and minFeedHealthScore / warningRatio
-            warningReasons.push('feed-degraded');
+            addWarning('feed-degraded');
         }
 
         // ── Derive aggregate state ──────────────────────────────────────
@@ -267,7 +306,11 @@ export class HardRiskGuard {
         const metrics: HardRiskMetrics = {
             currentExposureNotional: input.currentExposureNotional,
             inventorySkewPct: input.inventorySkewPct,
-            drawdownPct: input.drawdownPct,
+            drawdownPct,
+            drawdownConfidence,
+            tradesCount,
+            peakEquity,
+            equityNow,
             runtimeReady: input.runtimeReady,
             marketDataValid: input.marketDataValid,
             balancesFresh: input.balanceStalenessMs <= this.config.maxBalanceStalenessMs,
@@ -381,6 +424,10 @@ function emptyResult(): HardRiskResult {
             currentExposureNotional: 0,
             inventorySkewPct: 0,
             drawdownPct: 0,
+            drawdownConfidence: false,
+            tradesCount: 0,
+            peakEquity: 0,
+            equityNow: 0,
             runtimeReady: false,
             marketDataValid: false,
             balancesFresh: false,
@@ -408,6 +455,10 @@ export function loadHardRiskConfig(): Partial<HardRiskConfig> {
     if (maxSkew !== undefined) config.maxInventorySkewPct = maxSkew;
     const maxDD = toNumber(process.env.HARD_RISK_MAX_DRAWDOWN_PCT);
     if (maxDD !== undefined) config.maxDrawdownPct = maxDD;
+    const minTradesForDrawdown = toNumber(process.env.HARD_RISK_MIN_TRADES_FOR_DRAWDOWN);
+    if (minTradesForDrawdown !== undefined) config.minTradesForDrawdown = minTradesForDrawdown;
+    const minPeakEquityForDrawdown = toNumber(process.env.HARD_RISK_MIN_PEAK_EQUITY);
+    if (minPeakEquityForDrawdown !== undefined) config.minPeakEquityForDrawdown = minPeakEquityForDrawdown;
     const maxBalanceStale = toNumber(process.env.HARD_RISK_MAX_BALANCE_STALE_MS);
     if (maxBalanceStale !== undefined) config.maxBalanceStalenessMs = maxBalanceStale;
     const minFeedHealth = toNumber(process.env.HARD_RISK_MIN_FEED_HEALTH);
