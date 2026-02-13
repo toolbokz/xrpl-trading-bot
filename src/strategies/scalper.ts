@@ -276,6 +276,10 @@ export class ScalperStrategy implements Strategy {
                 }, 'Scalper: ✅ Entered LONG position');
             } else {
                 logger.info({ result: res }, 'Scalper: ❌ BUY order not accepted');
+                reject('unknown', {
+                    reason: 'offer-rejected',
+                    executorReason: res.reason ?? null,
+                });
             }
             return;
         }
@@ -340,6 +344,10 @@ export class ScalperStrategy implements Strategy {
                     }, 'Scalper: ✅ Exited LONG position');
                 } else {
                     logger.info({ result: res }, 'Scalper: ❌ SELL order not accepted');
+                    reject('unknown', {
+                        reason: 'offer-rejected',
+                        executorReason: res.reason ?? null,
+                    });
                 }
             } else {
                 logger.info('Scalper: ⏳ Holding LONG - waiting for take profit or stop loss');

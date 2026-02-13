@@ -109,6 +109,7 @@ import {
     StrategyDecisionFunnelMap,
     StrategyEventContext,
     StrategySubmitTelemetryEvent,
+    applySubmitTelemetryToFunnel,
     createStrategyDecisionFunnel,
     cloneStrategyDecisionFunnelMap,
 } from '../observability/strategyDecisionFunnel';
@@ -1290,9 +1291,13 @@ export class TradingRuntime {
                     }, 'Skipping strategy - disabled by capital protection');
                     this.recordStrategyRejected(
                         strategy.name,
-                        'governanceStrategyDisabled',
+                        // Keep bucket names strategy-local and stable.
+                        'healthNotOk',
                         strategyEventContext,
-                        { reasons: governanceDecision.reasons },
+                        {
+                            reason: 'governance-strategy-disabled',
+                            reasons: governanceDecision.reasons,
+                        },
                     );
                     continue;
                 }
@@ -1306,9 +1311,13 @@ export class TradingRuntime {
                     }, 'Skipping strategy - regime disabled by capital protection');
                     this.recordStrategyRejected(
                         strategy.name,
-                        'governanceRegimeDisabled',
+                        'regimeNotAllowed',
                         strategyEventContext,
-                        { reasons: governanceDecision.reasons, regime },
+                        {
+                            reason: 'governance-regime-disabled',
+                            reasons: governanceDecision.reasons,
+                            regime,
+                        },
                     );
                     continue;
                 }
@@ -1350,9 +1359,10 @@ export class TradingRuntime {
                         }, 'Skipping strategy - regime disabled by regime policy');
                         this.recordStrategyRejected(
                             strategy.name,
-                            'regimePolicyDisabled',
+                            'regimeNotAllowed',
                             strategyEventContext,
                             {
+                                reason: 'regime-policy-disabled',
                                 regime,
                                 isRegimeDisabledGlobal,
                                 isRegimeDisabledStrategy,
@@ -1383,9 +1393,9 @@ export class TradingRuntime {
                         }, 'Skipping strategy - regime disabled by adaptive learning');
                         this.recordStrategyRejected(
                             strategy.name,
-                            'adaptiveRegimeDisabled',
+                            'regimeNotAllowed',
                             strategyEventContext,
-                            { regime },
+                            { reason: 'adaptive-regime-disabled', regime },
                         );
                         continue;
                     }
@@ -1643,17 +1653,14 @@ export class TradingRuntime {
 
     private recordSubmitTelemetry(event: StrategySubmitTelemetryEvent): void {
         const funnel = this.ensureStrategyFunnel(event.strategy);
+        applySubmitTelemetryToFunnel(funnel, event);
         if (event.stage === 'attempt') {
-            funnel.submitAttemptCount += 1;
             this.observabilityBus.emitSubmitAttempt({
                 pairKey: event.pairKey,
                 runtimeState: this.fsm.getState(),
                 strategy: event.strategy,
             });
         } else if (event.stage === 'success') {
-            funnel.submitSuccessCount += 1;
-            if (event.txHash) funnel.lastTxHash = event.txHash;
-            funnel.lastSubmitError = null;
             this.observabilityBus.emitSubmitSuccess({
                 pairKey: event.pairKey,
                 runtimeState: this.fsm.getState(),
@@ -1661,8 +1668,6 @@ export class TradingRuntime {
                 txHash: event.txHash ?? null,
             });
         } else {
-            funnel.submitFailCount += 1;
-            funnel.lastSubmitError = event.errorCode ?? 'submit-failed';
             this.observabilityBus.emitSubmitFail({
                 pairKey: event.pairKey,
                 runtimeState: this.fsm.getState(),

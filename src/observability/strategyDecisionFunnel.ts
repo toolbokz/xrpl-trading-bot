@@ -76,3 +76,29 @@ export function cloneStrategyDecisionFunnelMap(
     }
     return out;
 }
+
+/**
+ * Apply submit-path telemetry to a single strategy funnel.
+ * Pure helper used by runtime aggregation and tests.
+ */
+export function applySubmitTelemetryToFunnel(
+    funnel: StrategyDecisionFunnel,
+    event: StrategySubmitTelemetryEvent,
+): void {
+    if (event.stage === 'attempt') {
+        funnel.submitAttemptCount += 1;
+        return;
+    }
+
+    if (event.stage === 'success') {
+        funnel.submitSuccessCount += 1;
+        if (event.txHash) {
+            funnel.lastTxHash = event.txHash;
+        }
+        funnel.lastSubmitError = null;
+        return;
+    }
+
+    funnel.submitFailCount += 1;
+    funnel.lastSubmitError = event.errorCode ?? 'submit-failed';
+}

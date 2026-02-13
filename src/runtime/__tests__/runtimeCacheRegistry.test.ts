@@ -146,6 +146,20 @@ describe('RuntimeCacheRegistry', () => {
     describe('pair-switch reset', () => {
         it('reset() clears all feed entries to null', () => {
             registry.update(makeUpdateInput());
+            registry.updateStrategyFunnel('XRP/RLUSD', {
+                'orderbook-scalper': {
+                    strategyTicks: 1,
+                    candidatesBuilt: 0,
+                    rejectedCount: 1,
+                    rejectedByReason: { regimeNotAllowed: 1 },
+                    approvedCount: 0,
+                    submitAttemptCount: 0,
+                    submitSuccessCount: 0,
+                    submitFailCount: 0,
+                    lastSubmitError: null,
+                    lastTxHash: null,
+                },
+            });
             // Pre-condition: all feeds populated
             for (const ft of ALL_FEED_TYPES) {
                 expect(registry.getFeed(ft)).not.toBeNull();
@@ -169,6 +183,7 @@ describe('RuntimeCacheRegistry', () => {
             expect(snapshot.spreadRegime).toBeNull();
             expect(snapshot.spreadDistribution).toBeNull();
             expect(snapshot.background).toBeNull();
+            expect(snapshot.strategyFunnel).toBeNull();
         });
 
         it('reset() clears execution quality counters', () => {
@@ -261,6 +276,62 @@ describe('RuntimeCacheRegistry', () => {
             const snapshot = registry.getSnapshot();
             expect(snapshot.pairKey).toBe('XRP/RLUSD');
             expect(snapshot.background?.fairValue.xrpMid).toBe(1.0);
+        });
+
+        it('updateStrategyFunnel rejects data with different pairKey', () => {
+            registry.update(makeUpdateInput({ pairKey: 'XRP/RLUSD' }));
+
+            registry.updateStrategyFunnel('XRP/USD', {
+                'orderbook-scalper': {
+                    strategyTicks: 1,
+                    candidatesBuilt: 0,
+                    rejectedCount: 1,
+                    rejectedByReason: { cooldown: 1 },
+                    approvedCount: 0,
+                    submitAttemptCount: 0,
+                    submitSuccessCount: 0,
+                    submitFailCount: 0,
+                    lastSubmitError: null,
+                    lastTxHash: null,
+                },
+            });
+
+            expect(registry.getSnapshot().strategyFunnel).toBeNull();
+        });
+
+        it('updateStrategyFunnel stores funnel state for matching pair', () => {
+            registry.update(makeUpdateInput({ pairKey: 'XRP/RLUSD' }));
+
+            registry.updateStrategyFunnel('XRP/RLUSD', {
+                'orderbook-scalper': {
+                    strategyTicks: 10,
+                    candidatesBuilt: 3,
+                    rejectedCount: 7,
+                    rejectedByReason: { minEdge: 4, regimeNotAllowed: 3 },
+                    approvedCount: 3,
+                    submitAttemptCount: 2,
+                    submitSuccessCount: 1,
+                    submitFailCount: 1,
+                    lastSubmitError: 'tecUNFUNDED_OFFER',
+                    lastTxHash: 'ABC123',
+                },
+            });
+
+            const snapshot = registry.getSnapshot();
+            expect(snapshot.strategyFunnel).toEqual({
+                'orderbook-scalper': {
+                    strategyTicks: 10,
+                    candidatesBuilt: 3,
+                    rejectedCount: 7,
+                    rejectedByReason: { minEdge: 4, regimeNotAllowed: 3 },
+                    approvedCount: 3,
+                    submitAttemptCount: 2,
+                    submitSuccessCount: 1,
+                    submitFailCount: 1,
+                    lastSubmitError: 'tecUNFUNDED_OFFER',
+                    lastTxHash: 'ABC123',
+                },
+            });
         });
     });
 

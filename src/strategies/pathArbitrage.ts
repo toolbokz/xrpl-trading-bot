@@ -425,6 +425,13 @@ export class PathArbitrageStrategy implements Strategy {
                 // Record trade for circuit breaker
                 // In paper trading, assume we got the expected edge
                 this.circuitBreaker.recordTrade(edgeBps);
+            } else {
+                reject('unknown', {
+                    reason: 'offer-rejected',
+                    executorReason: res.reason ?? null,
+                    edgeBps,
+                    side,
+                });
             }
             return;
         }

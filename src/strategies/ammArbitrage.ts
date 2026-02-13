@@ -199,6 +199,12 @@ export class AMMArbitrageStrategy implements Strategy {
                 diffBps: diffBps.toFixed(2),
                 regime: flow?.regime ?? 'unknown',
             }, 'AMM Arb: ✅ Executed AMM arbitrage leg');
+        } else {
+            logger.info({ side, result: res }, 'AMM Arb: ❌ Order not accepted');
+            reject('unknown', {
+                reason: 'offer-rejected',
+                executorReason: res.reason ?? null,
+            });
         }
     }
 }

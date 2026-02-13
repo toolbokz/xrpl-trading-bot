@@ -297,8 +297,8 @@ export class RuntimeCacheRegistry {
         if (this.pairKey && pairKey !== this.pairKey) return; // reject cross-pair updates
         if (!this.pairKey) {
             this.pairKey = pairKey;
-            this.asOfMs = Date.now();
         }
+        this.asOfMs = Date.now();
         this.strategyFunnel = cloneStrategyFunnel(data);
     }
 
