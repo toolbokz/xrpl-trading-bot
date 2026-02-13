@@ -566,8 +566,8 @@ The dashboard includes a **Diagnostics** tab (`src/ui/app/page.tsx`) with DB-bac
 ### Execution Quality Dashboard
 
 - Backed by `execution_quality_events` in `data/feedback.sqlite` (not in-memory only).
-- Measures execution quality (slippage/spread/latency/fill quality) with:
-  - time series
+- Diagnostics UI panel includes:
+  - time series for `slippage`, `effective spread`, `realized spread`, `fill ratio`, and `latency`
   - histograms
   - breakdown tables
   - anomaly counters
@@ -577,10 +577,11 @@ The dashboard includes a **Diagnostics** tab (`src/ui/app/page.tsx`) with DB-bac
 
 ### True Edge Attribution Panel
 
-- Backed by `edge_attribution_events` in `data/feedback.sqlite`.
-- Decomposes edge into signal/execution/drift using sign-safe BUY/SELL formulas and PnL identity checks.
+- Edge attribution math is implemented as pure utilities with BUY/SELL sign safety and PnL identity checks.
+- Backed by `edge_attribution_events` in `data/feedback.sqlite` with DB indexes for analytics queries.
 - Executor writes attribution on final fills; delayed horizon enrichment populates 1m/5m fields.
 - Ingestion fallback writes attribution only if executor row is absent (dedupe by `txHash`).
+- Diagnostics UI panel includes cards, time series, histograms, breakdowns, and top-trade tables.
 - API response shape: `{ summary, series, histograms, breakdowns, topTrades }`.
 
 ### Pair Aliasing and Dedupe
@@ -588,6 +589,18 @@ The dashboard includes a **Diagnostics** tab (`src/ui/app/page.tsx`) with DB-bac
 - Pair filters accept human and hex aliases (`XRP/RLUSD` and `XRP/524C555344000000000000000000000000000000`).
 - Backend canonicalizes pair keys internally, so alias queries return consistent counts.
 - Duplicate lifecycle writes are dedupe-safe by `txHash` in executor/ingestion persistence paths.
+
+### Recent Diagnostics Additions
+
+- `src/analytics/executionQuality.ts`
+- `src/ui/components/ExecutionQualityPanel.tsx`
+- `src/ui/pages/api/analytics/execution-quality.ts`
+- `src/analytics/edgeAttributionMetrics.ts`
+- `src/ui/components/EdgeAttributionPanel.tsx`
+- `src/ui/pages/api/analytics/edge-attribution.ts`
+- `src/execution/offerExecutor.ts`
+- `src/analytics/feedbackEngine.ts`
+- `src/analytics/accountTradeIngestion.ts`
 
 ---
 
