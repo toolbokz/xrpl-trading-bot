@@ -376,6 +376,23 @@ function DashboardPageContent() {
             : 0;
         const scannerState = !bgView ? 'OFF' : bgView.health.degraded ? 'ERR' : 'OK';
         const scannerTone = !bgView ? 'neutral' : bgView.health.degraded ? 'warn' : 'ok';
+        const volatilityStop = runtimeCache.data?.snapshot?.volatilityStop ?? null;
+        const volatilityReadyValue = !volatilityStop
+            ? 'N/A'
+            : !volatilityStop.enabled
+                ? 'OFF'
+                : (volatilityStop.volReady ? 'YES' : 'NO');
+        const volatilityReadyTone: 'ok' | 'bad' | 'warn' | 'neutral' = !volatilityStop
+            ? 'neutral'
+            : !volatilityStop.enabled
+                ? 'neutral'
+                : (volatilityStop.volReady ? 'ok' : 'warn');
+        const volatilityBpsValue = volatilityStop
+            ? `${volatilityStop.volBps.toFixed(1)} bps`
+            : 'N/A';
+        const stopLossBpsValue = volatilityStop
+            ? `${volatilityStop.stopLossBpsUsed.toFixed(1)} bps`
+            : 'N/A';
 
         return [
             { key: 'state', label: 'Run', value: bot.status, tone: bot.status === 'RUNNING' ? 'ok' : bot.status === 'ERROR' ? 'bad' : 'warn' },
@@ -392,11 +409,14 @@ function DashboardPageContent() {
             { key: 'venue', label: 'XRPL', value: connected ? 'UP' : 'DOWN', tone: connected ? 'ok' : 'warn' },
             { key: 'risk', label: 'Risk', value: `Exp ${exposurePct.toFixed(0)}%`, tone: dd >= 8 ? 'warn' : 'neutral' },
             { key: 'capital', label: 'Capital', value: bot.risk.killSwitch ? 'PROTECT' : 'NORMAL', tone: bot.risk.killSwitch ? 'warn' : 'ok' },
+            { key: 'vol-ready', label: 'Vol Ready', value: volatilityReadyValue, tone: volatilityReadyTone },
+            { key: 'vol-bps', label: 'Vol', value: volatilityBpsValue, tone: volatilityReadyTone },
+            { key: 'stop-bps', label: 'Stop Bps', value: stopLossBpsValue, tone: volatilityStop?.enabled ? 'warn' : 'neutral' },
             { key: 'scanner', label: 'Scanner', value: scannerState, tone: scannerTone },
             { key: 'samples', label: 'Samples', value: String(bgView?.fairValue.sources.length ?? 0), tone: (bgView?.fairValue.sources.length ?? 0) < 1 ? 'warn' : 'neutral' },
             { key: 'book', label: 'Book', value: marketHealth.data?.orderBook.stale ? 'STALE' : 'FRESH', tone: marketHealth.data?.orderBook.stale ? 'warn' : 'ok' },
         ] as Array<{ key: string; label: string; value: string; tone: 'ok' | 'bad' | 'warn' | 'neutral' }>;
-    }, [bot.status, bot.pnlToday, bot.pnlTotal, bot.winRate, bot.openPosition, bot.baseBalance, bot.baseCurrency, bot.quoteBalance, bot.quoteCurrency, bot.risk.currentExposure, bot.risk.maxExposure, bot.risk.killSwitch, connected, riskStress.data.drawdownPct, bgView, marketHealth.data?.orderBook.stale]);
+    }, [bot.status, bot.pnlToday, bot.pnlTotal, bot.winRate, bot.openPosition, bot.baseBalance, bot.baseCurrency, bot.quoteBalance, bot.quoteCurrency, bot.risk.currentExposure, bot.risk.maxExposure, bot.risk.killSwitch, connected, riskStress.data.drawdownPct, bgView, marketHealth.data?.orderBook.stale, runtimeCache.data?.snapshot?.volatilityStop]);
 
     const activePairPriceDisplay = useMemo(() => {
         const pairLabel = selectedPairKey || `${bot.baseCurrency}/${bot.quoteCurrency || 'QUOTE'}`;

@@ -1897,5 +1897,24 @@
     "source": "bot",
     "id": "1770980997526-qra4n33",
     "timestamp": 1770980997526
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.37154,
+    "priceQuotePerBase": 1.37154,
+    "amount": 0.25,
+    "amountBase": 0.25,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "hash": "30325AC332927C8B5EB49DC43E19B21A8D683D61150FD9280DAA9E1F0ACFA495",
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1770989270409-gn1av7w",
+    "timestamp": 1770989270409
   }
 ]

@@ -36,6 +36,13 @@ export interface RuntimeCacheLightSnapshot {
             p90Bps: number | null;
         };
     } | null;
+    volatilityStop: {
+        enabled: boolean;
+        volBps: number;
+        volReady: boolean;
+        stopLossBpsUsed: number;
+        source: string;
+    } | null;
 }
 
 export interface RuntimeCacheResponse {

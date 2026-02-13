@@ -75,6 +75,7 @@ import {
     SnapshotValidator,
 } from '../market/snapshotValidator';
 import { RuntimeCacheRegistry } from './runtimeCacheRegistry';
+import type { VolatilityStopCacheSnapshot } from './runtimeCacheRegistry';
 import {
     PairSwitchOrchestrator,
     PairSwitchActions,
@@ -124,6 +125,7 @@ import { SpreadDistributionSampler, type SpreadDistributionSnapshot } from '../a
 import { BackgroundMarketScanner } from '../market/backgroundScanner/backgroundMarketScanner';
 import type { BackgroundScannerSnapshot } from '../market/backgroundScanner/types';
 import { AccountTradeIngestionService } from '../analytics/accountTradeIngestion';
+import { VolatilityEstimator, resolveAdaptiveStopLossBps } from '../market/volatilityEstimator';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -134,7 +136,10 @@ const cloneConfig = (cfg: AppConfig): AppConfig => ({
     enableTestnetFaucet: cfg.enableTestnetFaucet,
     paperTrading: cfg.paperTrading,
     risk: { ...cfg.risk, issuerBlacklist: new Set(cfg.risk.issuerBlacklist) },
-    strategy: { ...cfg.strategy },
+    strategy: {
+        ...cfg.strategy,
+        volatilityStop: cfg.strategy.volatilityStop ? { ...cfg.strategy.volatilityStop } : undefined,
+    },
     flow: { ...cfg.flow },
     backgroundScanner: { ...cfg.backgroundScanner },
     analytics: { ...cfg.analytics },
@@ -255,6 +260,12 @@ export class TradingRuntime {
     private accountTradeIngestion: AccountTradeIngestionService | null = null;
     /** Edge-detection flag for scanner degraded/recovered observability. */
     private scannerWasDegraded = false;
+    /** Per-pair EWMA volatility estimator for optional adaptive stop-loss sizing. */
+    private readonly volatilityEstimator: VolatilityEstimator;
+    /** Latest volatility-adaptive stop snapshot for strategy context + API visibility. */
+    private currentVolatilityStop: VolatilityStopCacheSnapshot | null = null;
+    /** Edge-detection flag: emit VOL_STOP_READY once per pair session. */
+    private volatilityStopReadyEmitted = false;
     /** Whether the last snapshot passed structural validation. */
     private lastDataValid = true;
     /** Reasons the last snapshot failed validation (empty when valid). */
@@ -293,6 +304,19 @@ export class TradingRuntime {
         }
 
         this.baseConfig = config ?? loadConfig();
+        const volatilityEstimatorConfig = {
+            ...(Number.isFinite(this.baseConfig.strategy.volatilityStop?.alpha)
+                ? { alpha: this.baseConfig.strategy.volatilityStop!.alpha }
+                : {}),
+            ...(Number.isFinite(this.baseConfig.strategy.volatilityStop?.warmupMs)
+                ? { warmupMs: this.baseConfig.strategy.volatilityStop!.warmupMs }
+                : {}),
+            ...(Number.isFinite(this.baseConfig.strategy.volatilityStop?.minSamples)
+                ? { minSamples: this.baseConfig.strategy.volatilityStop!.minSamples }
+                : {}),
+        };
+        this.volatilityEstimator = new VolatilityEstimator(volatilityEstimatorConfig);
+        this.currentVolatilityStop = this.buildVolatilityStopSnapshot(Date.now());
         this.fsm = new RuntimeFSM();
         this.pairResolver = new ExecutionPairResolver(loadExecutionPairResolverConfig());
         this.spreadDistributionSampler.setPairKey(this.getActivePair());
@@ -399,6 +423,10 @@ export class TradingRuntime {
         // Reset spread distribution sampling for new pair
         this.spreadDistributionSampler.reset();
         this.spreadDistributionSampler.setPairKey(this.getActivePair());
+        // Reset volatility estimator for the new pair (warmup restarts).
+        this.volatilityEstimator.reset(Date.now());
+        this.currentVolatilityStop = this.buildVolatilityStopSnapshot(Date.now());
+        this.volatilityStopReadyEmitted = false;
         // Invalidate pair resolver cache to force re-resolution for new pair
         this.pairResolver.invalidate();
         this.strategyDecisionFunnels = {};
@@ -851,6 +879,7 @@ export class TradingRuntime {
 
             const bestBid = orderBookState.bids[0]?.price ?? 0;
             const bestAsk = orderBookState.asks[0]?.price ?? 0;
+            this.updateVolatilityStopState(pairKey, nowMs, bestBid, bestAsk);
             this.spreadDistributionSampler.ingest(bestBid, bestAsk, nowMs);
             const spreadDistribution = this.spreadDistributionSampler.maybeCompute(nowMs);
 
@@ -1261,6 +1290,7 @@ export class TradingRuntime {
                 globalSizeMultiplier,
                 globalCooldownMs,
                 entryGate: this.entryGate,
+                volatilityStop: this.currentVolatilityStop ?? undefined,
                 // regimePolicy will be set per-strategy below
             };
 
@@ -1684,6 +1714,51 @@ export class TradingRuntime {
         this.syncStrategyFunnelToCache(event.pairKey);
     }
 
+    private buildVolatilityStopSnapshot(nowMs: number): VolatilityStopCacheSnapshot {
+        const volCfg = this.baseConfig.strategy.volatilityStop;
+        const volState = this.volatilityEstimator.getState();
+        const volBps = this.volatilityEstimator.getVolBps();
+        const volReady = this.volatilityEstimator.isReady(nowMs);
+        const resolved = resolveAdaptiveStopLossBps({
+            fixedStopLossBps: this.baseConfig.strategy.stopLossBps,
+            volBps,
+            volReady,
+            config: volCfg,
+        });
+
+        return {
+            enabled: volCfg?.enabled === true,
+            volBps,
+            volReady,
+            stopLossBpsUsed: resolved.stopLossBpsUsed,
+            enhancedStopBpsUsed: resolved.enhancedStopBpsUsed,
+            source: resolved.source,
+            sampleCount: volState.sampleCount,
+        };
+    }
+
+    private updateVolatilityStopState(pairKey: string, nowMs: number, bestBid: number, bestAsk: number): void {
+        const midPrice = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : Number.NaN;
+        this.volatilityEstimator.update(midPrice, nowMs);
+        this.currentVolatilityStop = this.buildVolatilityStopSnapshot(nowMs);
+
+        if (this.currentVolatilityStop.enabled && this.currentVolatilityStop.volReady && !this.volatilityStopReadyEmitted) {
+            this.volatilityStopReadyEmitted = true;
+            this.observabilityBus.emit({
+                eventType: 'VOL_STOP_READY',
+                pairKey,
+                runtimeState: this.fsm.getState(),
+                detail: {
+                    volBps: Number(this.currentVolatilityStop.volBps.toFixed(2)),
+                    sampleCount: this.currentVolatilityStop.sampleCount,
+                    stopLossBpsUsed: Number(this.currentVolatilityStop.stopLossBpsUsed.toFixed(2)),
+                    source: this.currentVolatilityStop.source,
+                },
+                nowMs,
+            });
+        }
+    }
+
     /**
      * Push latest tick data into the cache registry.
      */
@@ -1710,6 +1785,7 @@ export class TradingRuntime {
             orderbook: this.currentOrderBookSnapshot,
             lastTrade: this.currentNormalizedTrade,
             liquidity: this.liquidityIntelligence?.getSnapshot() ?? null,
+            volatilityStop: this.currentVolatilityStop,
             spreadDistribution,
             strategyFunnel: cloneStrategyDecisionFunnelMap(this.strategyDecisionFunnels),
         });

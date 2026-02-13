@@ -13,6 +13,7 @@ import {
 } from '../market/flowMetrics';
 import { resolveIssuerForRisk } from '../market/executionPairResolver';
 import { getExecutionOrderFlags, getExecutionOrderType } from '../execution/orderType';
+import { resolveAdaptiveStopLossBps, type VolatilityStopResolution } from '../market/volatilityEstimator';
 
 interface PositionState {
     side: 'flat' | 'long' | 'short';
@@ -28,6 +29,19 @@ const DEFAULT_FLOW_CONFIG: Partial<FlowConfig> = {
     enableAdverseSelectionProtection: true,
     maxQuoteSkewBps: 10,
 };
+
+export function resolveScalperStopLossBps(input: {
+    fixedStopLossBps: number;
+    volatilityStopConfig: StrategyConfig['volatilityStop'] | undefined;
+    volatilityStopContext: StrategyContext['volatilityStop'] | undefined;
+}): VolatilityStopResolution {
+    return resolveAdaptiveStopLossBps({
+        fixedStopLossBps: input.fixedStopLossBps,
+        volBps: input.volatilityStopContext?.volBps ?? 0,
+        volReady: input.volatilityStopContext?.volReady ?? false,
+        config: input.volatilityStopConfig,
+    });
+}
 
 export class ScalperStrategy implements Strategy {
     name = 'orderbook-scalper';
@@ -290,17 +304,25 @@ export class ScalperStrategy implements Strategy {
             const exitCrossFactor = 1 - ((this.config.exitCrossBps ?? 0) / 10_000);
             const targetExit = Math.max(bestBid, targetExitBase * exitCrossFactor);
             const takeProfit = targetExit > this.position.entryPrice;
-            const stopLossLevel = this.position.entryPrice * (1 - this.config.stopLossBps / 10_000);
+            const stopLossResolution = resolveScalperStopLossBps({
+                fixedStopLossBps: this.config.stopLossBps,
+                volatilityStopConfig: this.config.volatilityStop,
+                volatilityStopContext: ctx.volatilityStop,
+            });
+            const stopLossLevel = this.position.entryPrice * (1 - stopLossResolution.stopLossBpsUsed / 10_000);
             const isStopLoss = bestBid < stopLossLevel;
 
             // Enhanced stop-loss during trending down regime
             const enhancedStopLoss = flow?.regime === 'trendingDown' &&
-                bestBid < this.position.entryPrice * (1 - this.config.stopLossBps / 20_000);
+                bestBid < this.position.entryPrice * (1 - stopLossResolution.enhancedStopBpsUsed / 10_000);
 
             logger.info({
                 entryPrice: this.position.entryPrice.toFixed(6),
                 targetExit: targetExit.toFixed(6),
                 stopLossLevel: stopLossLevel.toFixed(6),
+                stopLossBpsUsed: stopLossResolution.stopLossBpsUsed.toFixed(2),
+                enhancedStopBpsUsed: stopLossResolution.enhancedStopBpsUsed.toFixed(2),
+                stopLossSource: stopLossResolution.source,
                 currentBid: bestBid.toFixed(6),
                 takeProfit,
                 isStopLoss,

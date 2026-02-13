@@ -5,6 +5,7 @@ import { CapitalProtectionDecision } from '../risk/capitalProtection';
 import { RegimePolicy, RegimeSizePolicy } from '../analytics/regimePolicy';
 import { EntryGate } from './entryGate';
 import { StrategyFunnelRecorder } from '../observability/strategyDecisionFunnel';
+import type { VolatilityStopSource } from '../market/volatilityEstimator';
 
 /**
  * Regime policy context for a specific strategy
@@ -24,6 +25,15 @@ export interface StrategyRegimePolicyContext {
     policy: RegimePolicy | null;
     /** Size policy details for current regime */
     currentRegimeSizePolicy: RegimeSizePolicy | null;
+}
+
+export interface StrategyVolatilityStopContext {
+    enabled: boolean;
+    volBps: number;
+    volReady: boolean;
+    stopLossBpsUsed: number;
+    enhancedStopBpsUsed: number;
+    source: VolatilityStopSource;
 }
 
 export interface StrategyContext {
@@ -47,6 +57,8 @@ export interface StrategyContext {
     regimePolicy?: StrategyRegimePolicyContext | undefined;
     /** Entry gate helper (shared across strategies) */
     entryGate?: EntryGate | undefined;
+    /** Optional runtime volatility stop context (for scalper adaptive stops). */
+    volatilityStop?: StrategyVolatilityStopContext | undefined;
     /** Current pair key for telemetry (e.g. XRP/RLUSD) */
     pairKey?: string | undefined;
     /** Runtime FSM state for telemetry context */

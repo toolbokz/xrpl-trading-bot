@@ -29,6 +29,13 @@ interface LightRuntimeCacheSnapshot {
             p90Bps: number | null;
         };
     } | null;
+    volatilityStop: {
+        enabled: boolean;
+        volBps: number;
+        volReady: boolean;
+        stopLossBpsUsed: number;
+        source: string;
+    } | null;
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -56,6 +63,13 @@ export async function GET(): Promise<NextResponse> {
         orderbookMidPrice,
         orderbookSpreadBps: ob?.spreadBps ?? null,
         spreadDistribution: snapshot.spreadDistribution ?? null,
+        volatilityStop: snapshot.volatilityStop ? {
+            enabled: snapshot.volatilityStop.enabled,
+            volBps: snapshot.volatilityStop.volBps,
+            volReady: snapshot.volatilityStop.volReady,
+            stopLossBpsUsed: snapshot.volatilityStop.stopLossBpsUsed,
+            source: snapshot.volatilityStop.source,
+        } : null,
     };
 
     return NextResponse.json({

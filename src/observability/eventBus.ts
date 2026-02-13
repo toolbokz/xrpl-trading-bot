@@ -59,6 +59,7 @@ export const OBSERVABILITY_EVENT_TYPES = [
     'SUBMIT_FAIL',
     'ORDER_PLACED',
     'ORDER_FILLED',
+    'VOL_STOP_READY',
 ] as const;
 
 export type ObservabilityEventType = typeof OBSERVABILITY_EVENT_TYPES[number];

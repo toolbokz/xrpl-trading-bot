@@ -140,8 +140,19 @@ Configuration is loaded in `src/config/index.ts` from `.env` in project root/CWD
 | `AMM_ARB_MIN_PROFIT_BPS` | `15` | AMM arb minimum expected edge. |
 | `PATH_ARB_ENABLED` | `false` | Path arb disabled by default. |
 | `PATH_ARB_DRY_RUN` | `true` | When enabled, default path arb mode is dry-run. |
+| `VOL_STOP_ENABLED` | `false` | Enables volatility-adaptive stop-loss for scalper exits (default off = legacy fixed stops). |
 | `FLOW_ENABLE_REGIME_FILTER` | `true` | Strategy gating by regime. |
 | `FLOW_ENABLE_ADVERSE_SELECTION` | `true` | Adverse-selection protection. |
+
+### Volatility-Adaptive Stops (Optional)
+
+When `VOL_STOP_ENABLED=true`, scalper stop-loss bps are derived from EWMA mid-price volatility:
+
+- warmup phase: fixed `STOP_LOSS_BPS` is used until `VOL_STOP_MIN_SAMPLES` or `VOL_STOP_WARMUP_MS` is reached,
+- adaptive phase: `VOL_STOP_MULTIPLIER * volBps`, clamped to `[VOL_STOP_MIN_BPS, VOL_STOP_MAX_BPS]`,
+- enhanced stop in downtrend remains half-stop behavior, using adaptive stop unless `VOL_STOP_USE_FOR_ENHANCED=false`.
+
+Default is off, so existing stop-loss behavior is unchanged.
 
 ### Observability / API Caching Variables
 

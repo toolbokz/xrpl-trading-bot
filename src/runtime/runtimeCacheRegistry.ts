@@ -21,6 +21,7 @@ import type { LiquiditySnapshot as LiquidityIntelligenceSnapshot } from '../mark
 import type { SpreadDistributionSnapshot } from '../analytics/spreadDistribution';
 import type { BackgroundScannerSnapshot } from '../market/backgroundScanner/types';
 import type { StrategyDecisionFunnelMap } from '../observability/strategyDecisionFunnel';
+import type { VolatilityStopResolution } from '../market/volatilityEstimator';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Feed types (used as cache partition keys)
@@ -96,6 +97,13 @@ export interface LiquidityCacheSnapshot {
     snapshot: LiquidityIntelligenceSnapshot;
 }
 
+export interface VolatilityStopCacheSnapshot extends VolatilityStopResolution {
+    enabled: boolean;
+    volBps: number;
+    volReady: boolean;
+    sampleCount: number;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified cache entry
 // ─────────────────────────────────────────────────────────────────────────────
@@ -126,6 +134,7 @@ export interface RuntimeCacheSnapshot {
     executionQuality: CacheEntry<ExecutionQualitySnapshot> | null;
     spreadRegime: CacheEntry<SpreadRegimeSnapshot> | null;
     liquidity: CacheEntry<LiquidityCacheSnapshot> | null;
+    volatilityStop: VolatilityStopCacheSnapshot | null;
     spreadDistribution?: SpreadDistributionSnapshot | null;
     background?: BackgroundScannerSnapshot | null;
     strategyFunnel?: StrategyDecisionFunnelMap | null;
@@ -146,6 +155,7 @@ export interface CacheUpdateInput {
     orderbook: OrderBookSnapshot | null;
     lastTrade: NormalizedTrade | null;
     liquidity: LiquidityIntelligenceSnapshot | null;
+    volatilityStop?: VolatilityStopCacheSnapshot | null;
     spreadDistribution?: SpreadDistributionSnapshot | null;
     strategyFunnel?: StrategyDecisionFunnelMap | null;
 }
@@ -169,6 +179,7 @@ export class RuntimeCacheRegistry {
     private executionQuality: CacheEntry<ExecutionQualitySnapshot> | null = null;
     private spreadRegime: CacheEntry<SpreadRegimeSnapshot> | null = null;
     private liquidity: CacheEntry<LiquidityCacheSnapshot> | null = null;
+    private volatilityStop: VolatilityStopCacheSnapshot | null = null;
     private spreadDistribution: SpreadDistributionSnapshot | null = null;
     private background: BackgroundScannerSnapshot | null = null;
     private strategyFunnel: StrategyDecisionFunnelMap | null = null;
@@ -257,6 +268,8 @@ export class RuntimeCacheRegistry {
             });
         }
 
+        this.volatilityStop = input.volatilityStop ?? null;
+
         // Spread distribution (optional, observability-only)
         if (input.spreadDistribution) {
             this.spreadDistribution = input.spreadDistribution;
@@ -320,6 +333,7 @@ export class RuntimeCacheRegistry {
         this.executionQuality = null;
         this.spreadRegime = null;
         this.liquidity = null;
+        this.volatilityStop = null;
         this.spreadDistribution = null;
         this.background = null;
         this.strategyFunnel = null;
@@ -346,6 +360,7 @@ export class RuntimeCacheRegistry {
             executionQuality: this.executionQuality,
             spreadRegime: this.spreadRegime,
             liquidity: this.liquidity,
+            volatilityStop: this.volatilityStop,
             spreadDistribution: this.spreadDistribution,
             background: this.background,
             strategyFunnel: this.strategyFunnel,

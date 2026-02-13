@@ -90,6 +90,22 @@ export interface StrategyConfig {
      * Higher value crosses more toward the opposite side for better fill odds.
      */
     exitCrossBps: number;
+    /**
+     * Optional volatility-adaptive stop-loss configuration for scalper exits.
+     * Defaults preserve legacy fixed-stop behavior (`enabled=false`).
+     */
+    volatilityStop?: VolatilityStopConfig | undefined;
+}
+
+export interface VolatilityStopConfig {
+    enabled: boolean;
+    warmupMs: number;
+    minSamples: number;
+    alpha: number;
+    multiplier: number;
+    minBps: number;
+    maxBps: number;
+    useForEnhanced: boolean;
 }
 
 /**
@@ -141,6 +157,10 @@ const toNumber = (val: EnvNumber, fallback: number): number => {
     const parsed = Number(val);
     return Number.isFinite(parsed) ? parsed : fallback;
 };
+
+const clamp = (value: number, min: number, max: number): number => (
+    Math.min(max, Math.max(min, value))
+);
 
 const issuerBlacklistFromEnv = (): Set<string> => {
     const raw = process.env.ISSUER_BLACKLIST;
@@ -206,6 +226,16 @@ export const loadConfig = (): AppConfig => {
         orderBookStaleMs: toNumber(process.env.ORDERBOOK_STALE_MS, 5_000), // Default 5 seconds
         entryCrossBps: Math.max(0, toNumber(process.env.SCALPER_ENTRY_CROSS_BPS, 2)),
         exitCrossBps: Math.max(0, toNumber(process.env.SCALPER_EXIT_CROSS_BPS, 2)),
+        volatilityStop: {
+            enabled: toBool(process.env.VOL_STOP_ENABLED as EnvBool, false),
+            warmupMs: Math.max(0, toNumber(process.env.VOL_STOP_WARMUP_MS, 60_000)),
+            minSamples: Math.max(1, Math.floor(toNumber(process.env.VOL_STOP_MIN_SAMPLES, 50))),
+            alpha: clamp(toNumber(process.env.VOL_STOP_ALPHA, 0.2), 0.001, 1),
+            multiplier: Math.max(0, toNumber(process.env.VOL_STOP_MULTIPLIER, 2.0)),
+            minBps: Math.max(1, toNumber(process.env.VOL_STOP_MIN_BPS, 50)),
+            maxBps: Math.max(1, toNumber(process.env.VOL_STOP_MAX_BPS, 250)),
+            useForEnhanced: toBool(process.env.VOL_STOP_USE_FOR_ENHANCED as EnvBool, true),
+        },
     };
 
     const flow: FlowConfig = {
