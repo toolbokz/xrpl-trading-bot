@@ -124,6 +124,8 @@ describe('determineProtectionMode', () => {
         lookbackTrades: 200,
         minTrades: 50,
         maxRollingDrawdownPct: 7,
+        minTradesForDrawdown: 50,
+        minPeakEquityForDrawdown: 1.0,
         minProfitFactor: 1.1,
         minExpectancyBps: -2,
         maxAvgSlippageBps: 30,
@@ -140,6 +142,9 @@ describe('determineProtectionMode', () => {
         profitFactor: 1.5,
         expectancyBps: 10,
         drawdownPct: 3,
+        drawdownConfidence: true,
+        peakEquity: 10,
+        equityNow: 9.7,
         avgSlippageBps: 15,
         partialFillRate: 0.1,
         winRate: 0.55,
@@ -263,6 +268,33 @@ describe('determineProtectionMode', () => {
         const result = determineProtectionMode(metrics, baseConfig);
         expect(result.mode).toBe('SHUTDOWN');
     });
+
+    it('does NOT block on high drawdown when confidence gate is not met', () => {
+        const metrics: RollingRiskMetrics = {
+            ...healthyMetrics,
+            tradesCount: 50,
+            drawdownPct: 407.55,
+            drawdownConfidence: true, // Upstream says true, but CP gate still requires peak threshold.
+            peakEquity: 0.1923209, // Below minPeakEquityForDrawdown (1.0)
+            equityNow: 0.1907102,
+        };
+        const result = determineProtectionMode(metrics, baseConfig);
+        expect(result.mode).toBe('ALLOW');
+        expect(result.reasons.some((r) => r.includes('Drawdown not confidence-qualified'))).toBe(true);
+    });
+
+    it('does NOT block on high drawdown when drawdownConfidence=false', () => {
+        const metrics: RollingRiskMetrics = {
+            ...healthyMetrics,
+            drawdownPct: 120,
+            drawdownConfidence: false,
+            peakEquity: 10,
+            equityNow: -2,
+        };
+        const result = determineProtectionMode(metrics, baseConfig);
+        expect(result.mode).toBe('ALLOW');
+        expect(result.reasons.some((r) => r.includes('Drawdown not confidence-qualified'))).toBe(true);
+    });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -275,6 +307,8 @@ describe('CapitalProtectionEngine', () => {
         lookbackTrades: 100,
         minTrades: 10,
         maxRollingDrawdownPct: 10,
+        minTradesForDrawdown: 10,
+        minPeakEquityForDrawdown: 1.0,
         minProfitFactor: 1.0,
         minExpectancyBps: -5,
         maxAvgSlippageBps: 50,
@@ -319,6 +353,9 @@ describe('CapitalProtectionEngine', () => {
             profitFactor: 0.8,
             expectancyBps: -10,
             drawdownPct: 15,
+            drawdownConfidence: true,
+            peakEquity: 5,
+            equityNow: 4,
             avgSlippageBps: 60,
             partialFillRate: 0.2,
             winRate: 0.4,
@@ -343,6 +380,9 @@ describe('CapitalProtectionEngine', () => {
             profitFactor: 1.5,
             expectancyBps: 10,
             drawdownPct: 3,
+            drawdownConfidence: true,
+            peakEquity: 5,
+            equityNow: 4.8,
             avgSlippageBps: 20,
             partialFillRate: 0.1,
             winRate: 0.55,
@@ -369,6 +409,9 @@ describe('CapitalProtectionEngine', () => {
                 profitFactor: 0,
                 expectancyBps: 0,
                 drawdownPct: 0,
+                drawdownConfidence: false,
+                peakEquity: 0,
+                equityNow: 0,
                 avgSlippageBps: 0,
                 partialFillRate: 0,
                 winRate: 0,
@@ -394,6 +437,9 @@ describe('CapitalProtectionEngine', () => {
             profitFactor: 0.9, // Low PF triggers THROTTLE
             expectancyBps: 10,
             drawdownPct: 3,
+            drawdownConfidence: true,
+            peakEquity: 5,
+            equityNow: 4.8,
             avgSlippageBps: 20,
             partialFillRate: 0.1,
             winRate: 0.55,
@@ -417,6 +463,9 @@ describe('CapitalProtectionEngine', () => {
             profitFactor: 1.5,
             expectancyBps: 10,
             drawdownPct: 3,
+            drawdownConfidence: true,
+            peakEquity: 5,
+            equityNow: 4.8,
             avgSlippageBps: 20,
             partialFillRate: 0.1,
             winRate: 0.55,

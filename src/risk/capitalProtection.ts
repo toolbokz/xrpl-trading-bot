@@ -84,6 +84,10 @@ export interface CapitalProtectionConfig {
     minTrades: number;
     /** Max rolling drawdown % before PAUSE/SHUTDOWN (default: 7) */
     maxRollingDrawdownPct: number;
+    /** Minimum trades required before drawdown can hard-enforce PAUSE/SHUTDOWN (default: CP_MIN_TRADES). */
+    minTradesForDrawdown?: number;
+    /** Minimum rolling peak equity required before drawdown can hard-enforce PAUSE/SHUTDOWN (default: 1.0). */
+    minPeakEquityForDrawdown?: number;
     /** Min profit factor before THROTTLE (default: 1.10) */
     minProfitFactor: number;
     /** Min expectancy in bps before THROTTLE (default: -2) */
@@ -233,6 +237,23 @@ export function determineProtectionMode(
     config: CapitalProtectionConfig
 ): { mode: ProtectionMode; reasons: string[] } {
     const reasons: string[] = [];
+    const toFinite = (value: number | undefined, fallback: number): number => (
+        Number.isFinite(value) ? (value as number) : fallback
+    );
+    const drawdownPct = Math.max(0, toFinite(metrics.drawdownPct, 0));
+    const tradesCount = Math.max(0, toFinite(metrics.tradesCount, 0));
+    const minTradesForDrawdown = Math.max(
+        0,
+        toFinite(config.minTradesForDrawdown, config.minTrades),
+    );
+    const minPeakEquityForDrawdown = Math.max(
+        0,
+        toFinite(config.minPeakEquityForDrawdown, 1.0),
+    );
+    const peakEquity = Math.max(0, toFinite(metrics.peakEquity, 0));
+    const drawdownConfidence = (metrics.drawdownConfidence ?? true)
+        && tradesCount >= minTradesForDrawdown
+        && peakEquity >= minPeakEquityForDrawdown;
 
     // Insufficient data - be cautious but allow with warning
     if (metrics.tradesCount < config.minTrades) {
@@ -248,15 +269,24 @@ export function determineProtectionMode(
 
     // Extreme drawdown triggers shutdown
     const extremeDrawdownThreshold = config.maxRollingDrawdownPct * 1.5;
-    if (metrics.drawdownPct >= extremeDrawdownThreshold) {
-        reasons.push(`Extreme drawdown: ${metrics.drawdownPct.toFixed(1)}% >= ${extremeDrawdownThreshold.toFixed(1)}%`);
+    if (drawdownPct >= extremeDrawdownThreshold && drawdownConfidence) {
+        reasons.push(`Extreme drawdown: ${drawdownPct.toFixed(1)}% >= ${extremeDrawdownThreshold.toFixed(1)}%`);
         return { mode: 'SHUTDOWN', reasons };
     }
 
     // PAUSE checks
-    if (metrics.drawdownPct >= config.maxRollingDrawdownPct) {
-        reasons.push(`Drawdown breach: ${metrics.drawdownPct.toFixed(1)}% >= ${config.maxRollingDrawdownPct}%`);
+    if (drawdownPct >= config.maxRollingDrawdownPct && drawdownConfidence) {
+        reasons.push(`Drawdown breach: ${drawdownPct.toFixed(1)}% >= ${config.maxRollingDrawdownPct}%`);
         return { mode: 'PAUSE', reasons };
+    }
+
+    // Drawdown can be informational even when confidence gate blocks hard enforcement.
+    if (drawdownPct >= config.maxRollingDrawdownPct && !drawdownConfidence) {
+        reasons.push(
+            `Drawdown not confidence-qualified (${drawdownPct.toFixed(1)}%): `
+            + `trades=${tradesCount}/${minTradesForDrawdown}, `
+            + `peakEquity=${peakEquity.toFixed(6)}/${minPeakEquityForDrawdown}`,
+        );
     }
 
     // THROTTLE checks - accumulate reasons
@@ -279,10 +309,13 @@ export function determineProtectionMode(
     }
 
     if (throttleReasons.length > 0) {
-        return { mode: 'THROTTLE', reasons: throttleReasons };
+        return { mode: 'THROTTLE', reasons: [...reasons, ...throttleReasons] };
     }
 
     // All checks pass
+    if (reasons.length > 0) {
+        return { mode: 'ALLOW', reasons };
+    }
     return { mode: 'ALLOW', reasons: ['All metrics within acceptable ranges'] };
 }
 
@@ -538,6 +571,8 @@ export function loadCapitalProtectionConfig(): CapitalProtectionConfig {
         lookbackTrades: toNumber(process.env.CP_LOOKBACK_TRADES, 200),
         minTrades: toNumber(process.env.CP_MIN_TRADES, 50),
         maxRollingDrawdownPct: toNumber(process.env.CP_MAX_ROLLING_DRAWDOWN_PCT, 7),
+        minTradesForDrawdown: toNumber(process.env.CP_MIN_TRADES_FOR_DRAWDOWN, toNumber(process.env.CP_MIN_TRADES, 50)),
+        minPeakEquityForDrawdown: toNumber(process.env.CP_MIN_PEAK_EQUITY_FOR_DRAWDOWN, 1.0),
         minProfitFactor: toNumber(process.env.CP_MIN_PROFIT_FACTOR, 1.10),
         minExpectancyBps: toNumber(process.env.CP_MIN_EXPECTANCY_BPS, -2),
         maxAvgSlippageBps: toNumber(process.env.CP_MAX_AVG_SLIPPAGE_BPS, 30),
