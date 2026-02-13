@@ -20,6 +20,7 @@ import { RuntimeState } from './runtimeFsm';
 import type { LiquiditySnapshot as LiquidityIntelligenceSnapshot } from '../market/liquidityIntelligence';
 import type { SpreadDistributionSnapshot } from '../analytics/spreadDistribution';
 import type { BackgroundScannerSnapshot } from '../market/backgroundScanner/types';
+import type { StrategyDecisionFunnelMap } from '../observability/strategyDecisionFunnel';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Feed types (used as cache partition keys)
@@ -127,6 +128,7 @@ export interface RuntimeCacheSnapshot {
     liquidity: CacheEntry<LiquidityCacheSnapshot> | null;
     spreadDistribution?: SpreadDistributionSnapshot | null;
     background?: BackgroundScannerSnapshot | null;
+    strategyFunnel?: StrategyDecisionFunnelMap | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,6 +147,7 @@ export interface CacheUpdateInput {
     lastTrade: NormalizedTrade | null;
     liquidity: LiquidityIntelligenceSnapshot | null;
     spreadDistribution?: SpreadDistributionSnapshot | null;
+    strategyFunnel?: StrategyDecisionFunnelMap | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,6 +171,7 @@ export class RuntimeCacheRegistry {
     private liquidity: CacheEntry<LiquidityCacheSnapshot> | null = null;
     private spreadDistribution: SpreadDistributionSnapshot | null = null;
     private background: BackgroundScannerSnapshot | null = null;
+    private strategyFunnel: StrategyDecisionFunnelMap | null = null;
 
     // Execution quality counters (accumulated across ticks, reset on pair switch)
     private allowedTicks = 0;
@@ -257,6 +261,10 @@ export class RuntimeCacheRegistry {
         if (input.spreadDistribution) {
             this.spreadDistribution = input.spreadDistribution;
         }
+
+        if (input.strategyFunnel) {
+            this.strategyFunnel = cloneStrategyFunnel(input.strategyFunnel);
+        }
     }
 
     /**
@@ -283,6 +291,18 @@ export class RuntimeCacheRegistry {
     }
 
     /**
+     * Update strategy funnel counters (observability-only).
+     */
+    updateStrategyFunnel(pairKey: string, data: StrategyDecisionFunnelMap): void {
+        if (this.pairKey && pairKey !== this.pairKey) return; // reject cross-pair updates
+        if (!this.pairKey) {
+            this.pairKey = pairKey;
+            this.asOfMs = Date.now();
+        }
+        this.strategyFunnel = cloneStrategyFunnel(data);
+    }
+
+    /**
      * Reset all caches.
      * MUST be called on every pair switch to prevent cross-pair contamination.
      */
@@ -302,6 +322,7 @@ export class RuntimeCacheRegistry {
         this.liquidity = null;
         this.spreadDistribution = null;
         this.background = null;
+        this.strategyFunnel = null;
         this.allowedTicks = 0;
         this.blockedTicks = 0;
     }
@@ -327,6 +348,7 @@ export class RuntimeCacheRegistry {
             liquidity: this.liquidity,
             spreadDistribution: this.spreadDistribution,
             background: this.background,
+            strategyFunnel: this.strategyFunnel,
         };
     }
 
@@ -393,4 +415,15 @@ export class RuntimeCacheRegistry {
             data,
         };
     }
+}
+
+function cloneStrategyFunnel(data: StrategyDecisionFunnelMap): StrategyDecisionFunnelMap {
+    const out: StrategyDecisionFunnelMap = {};
+    for (const [strategy, funnel] of Object.entries(data)) {
+        out[strategy] = {
+            ...funnel,
+            rejectedByReason: { ...funnel.rejectedByReason },
+        };
+    }
+    return out;
 }

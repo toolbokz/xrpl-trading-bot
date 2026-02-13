@@ -16,6 +16,7 @@ import { quarantineTradeRecord, validateTradeIntegrity, warnSuspiciousSlippage }
 import { computeCanonicalSlippageBps, ExpectedPriceSource } from '../analytics/slippageMath';
 import { buildExecutionQualityMetrics, computeLatencyMetrics } from '../analytics/executionQualityMetrics';
 import type { TradeToastEvent } from '../observability/tradeToastEvents';
+import type { StrategySubmitTelemetryEvent } from '../observability/strategyDecisionFunnel';
 
 export interface OfferParams {
     side: 'buy' | 'sell';
@@ -96,6 +97,7 @@ export class OfferExecutor {
     private regimePolicySizeMultiplier: number = 1.0;
     private tradeToastEmitter: ((event: TradeToastEvent) => void) | null = null;
     private botTxHashSink: ((hash: string) => void) | null = null;
+    private submitTelemetrySink: ((event: StrategySubmitTelemetryEvent) => void) | null = null;
 
     constructor(
         private readonly client: Client,
@@ -189,6 +191,13 @@ export class OfferExecutor {
      */
     setBotTxHashSink(sink: ((hash: string) => void) | null): void {
         this.botTxHashSink = sink;
+    }
+
+    /**
+     * Optional sink for strategy submit telemetry.
+     */
+    setSubmitTelemetrySink(sink: ((event: StrategySubmitTelemetryEvent) => void) | null): void {
+        this.submitTelemetrySink = sink;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1303,6 +1312,12 @@ export class OfferExecutor {
             logger.info({ tx: safePrepared, pair: pairSymbol }, 'Autofilled XRPL transaction');
             const signed = this.wallet.sign(prepared);
             this.botTxHashSink?.(signed.hash);
+            this.emitSubmitTelemetry({
+                strategy: this.currentStrategy,
+                pairKey: canonicalPair,
+                stage: 'attempt',
+                txHash: signed.hash,
+            });
 
             // ── Execution quality trace: mark submit ────────────────────────
             eqSubmitTimeMs = Date.now();
@@ -1360,6 +1375,14 @@ export class OfferExecutor {
                     });
                 }
 
+                this.emitSubmitTelemetry({
+                    strategy: this.currentStrategy,
+                    pairKey: canonicalPair,
+                    stage: 'fail',
+                    txHash: signed.hash,
+                    errorCode: 'timeout-unknown-finality',
+                });
+
                 return {
                     accepted: false,
                     reason: 'timeout-unknown-finality',
@@ -1372,6 +1395,13 @@ export class OfferExecutor {
             const txResult = this.extractTxResult(res.result.meta);
             const success = txResult === 'tesSUCCESS';
             if (!success) {
+                this.emitSubmitTelemetry({
+                    strategy: this.currentStrategy,
+                    pairKey: canonicalPair,
+                    stage: 'fail',
+                    txHash: res.result.hash ?? signed.hash,
+                    errorCode: txResult ?? 'unknown-error',
+                });
                 this.risk.registerFailure();
 
                 // Record failed trade
@@ -1449,6 +1479,12 @@ export class OfferExecutor {
 
                 return { accepted: false, reason: txResult };
             }
+            this.emitSubmitTelemetry({
+                strategy: this.currentStrategy,
+                pairKey: canonicalPair,
+                stage: 'success',
+                txHash: res.result.hash ?? signed.hash,
+            });
             this.risk.resetFailures();
 
             // Parse actual fill amounts from transaction metadata (P2-8: Partial fill handling)
@@ -1906,6 +1942,12 @@ export class OfferExecutor {
             };
         } catch (err: any) {
             logger.error({ err, txType: tx?.TransactionType, tx, pair: pairSymbol }, 'XRPL submission failed');
+            this.emitSubmitTelemetry({
+                strategy: this.currentStrategy,
+                pairKey: canonicalPair,
+                stage: 'fail',
+                errorCode: err?.message || 'submit-failed',
+            });
             this.risk.registerFailure();
 
             // Record error trade
@@ -1979,6 +2021,15 @@ export class OfferExecutor {
             }
 
             return { accepted: false, reason: err?.message || 'submit-failed' };
+        }
+    }
+
+    private emitSubmitTelemetry(event: StrategySubmitTelemetryEvent): void {
+        if (!this.submitTelemetrySink) return;
+        try {
+            this.submitTelemetrySink(event);
+        } catch (err) {
+            logger.debug({ err }, 'Submit telemetry sink failed');
         }
     }
 

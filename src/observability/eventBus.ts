@@ -52,6 +52,11 @@ export const OBSERVABILITY_EVENT_TYPES = [
     'SCANNER_DEGRADED',
     'SCANNER_RECOVERED',
     'FAIR_VALUE_UPDATED',
+    'STRATEGY_REJECTED',
+    'STRATEGY_APPROVED',
+    'SUBMIT_ATTEMPT',
+    'SUBMIT_SUCCESS',
+    'SUBMIT_FAIL',
     'ORDER_PLACED',
     'ORDER_FILLED',
 ] as const;
@@ -559,6 +564,128 @@ export class ObservabilityBus {
                 confidence: params.confidence,
                 sourcesUsed: params.sourcesUsed,
                 divergenceBpsVsXrpRlusd: params.divergenceBpsVsXrpRlusd,
+            },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit STRATEGY_REJECTED when a strategy exits early.
+     */
+    emitStrategyRejected(params: {
+        pairKey: string;
+        runtimeState: string;
+        strategy: string;
+        reasonCode: string;
+        regime?: string | null;
+        spreadBps?: number | null;
+        healthScore?: number | null;
+        detail?: Record<string, unknown>;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'STRATEGY_REJECTED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: {
+                strategy: params.strategy,
+                reasonCode: params.reasonCode,
+                regime: params.regime ?? null,
+                spreadBps: params.spreadBps ?? null,
+                healthScore: params.healthScore ?? null,
+                ...(params.detail ?? {}),
+            },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit STRATEGY_APPROVED when a strategy approves an order candidate.
+     */
+    emitStrategyApproved(params: {
+        pairKey: string;
+        runtimeState: string;
+        strategy: string;
+        side?: 'buy' | 'sell';
+        sizeBase?: number;
+        expectedPriceSource?: string;
+        detail?: Record<string, unknown>;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'STRATEGY_APPROVED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: {
+                strategy: params.strategy,
+                side: params.side,
+                sizeBase: params.sizeBase,
+                expectedPriceSource: params.expectedPriceSource,
+                ...(params.detail ?? {}),
+            },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit SUBMIT_ATTEMPT when the executor starts submission.
+     */
+    emitSubmitAttempt(params: {
+        pairKey: string;
+        runtimeState: string;
+        strategy: string;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'SUBMIT_ATTEMPT',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: { strategy: params.strategy },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit SUBMIT_SUCCESS when the executor receives a successful ledger result.
+     */
+    emitSubmitSuccess(params: {
+        pairKey: string;
+        runtimeState: string;
+        strategy: string;
+        txHash?: string | null;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'SUBMIT_SUCCESS',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: {
+                strategy: params.strategy,
+                txHash: params.txHash ?? null,
+            },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit SUBMIT_FAIL when submission fails or is rejected.
+     */
+    emitSubmitFail(params: {
+        pairKey: string;
+        runtimeState: string;
+        strategy: string;
+        txHash?: string | null;
+        errorCode?: string | null;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'SUBMIT_FAIL',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            detail: {
+                strategy: params.strategy,
+                txHash: params.txHash ?? null,
+                errorCode: params.errorCode ?? null,
             },
             nowMs: params.nowMs,
         });

@@ -4,6 +4,7 @@ import { FlowMetrics, FlowRegime } from '../market/flowMetrics';
 import { CapitalProtectionDecision } from '../risk/capitalProtection';
 import { RegimePolicy, RegimeSizePolicy } from '../analytics/regimePolicy';
 import { EntryGate } from './entryGate';
+import { StrategyFunnelRecorder } from '../observability/strategyDecisionFunnel';
 
 /**
  * Regime policy context for a specific strategy
@@ -46,6 +47,14 @@ export interface StrategyContext {
     regimePolicy?: StrategyRegimePolicyContext | undefined;
     /** Entry gate helper (shared across strategies) */
     entryGate?: EntryGate | undefined;
+    /** Current pair key for telemetry (e.g. XRP/RLUSD) */
+    pairKey?: string | undefined;
+    /** Runtime FSM state for telemetry context */
+    runtimeState?: string | undefined;
+    /** Current market health score (0-100) for telemetry context */
+    healthScore?: number | undefined;
+    /** Strategy decision funnel recorder (observability-only). */
+    strategyFunnel?: StrategyFunnelRecorder | undefined;
 }
 
 import { TradingPair } from '../config';

@@ -66,10 +66,20 @@ export class ScalperStrategy implements Strategy {
     async tick(ctx: StrategyContext): Promise<void> {
         const state = this.tracker.getState();
         const flow = ctx.flow;
+        const reject = (reasonCode: string, detail?: Record<string, unknown>) => {
+            ctx.strategyFunnel?.markRejected(reasonCode, detail);
+        };
+        const markCandidateBuilt = () => {
+            ctx.strategyFunnel?.markCandidateBuilt();
+        };
+        const markApproved = (side: 'buy' | 'sell', sizeBase: number, expectedPriceSource: string) => {
+            ctx.strategyFunnel?.markApproved({ side, sizeBase, expectedPriceSource });
+        };
 
         // Log order book state
         if (!state.bids.length || !state.asks.length) {
             logger.info({ bids: state.bids.length, asks: state.asks.length }, 'Scalper: ❌ No bids or asks in order book');
+            reject('bookStale', { bids: state.bids.length, asks: state.asks.length });
             return;
         }
 
@@ -78,12 +88,14 @@ export class ScalperStrategy implements Strategy {
         const bookAge = Date.now() - state.lastUpdated;
         if (bookAge > stalenessMs) {
             logger.info({ bookAge, stalenessMs }, 'Scalper: ❌ Order book stale, skipping tick');
+            reject('bookStale', { bookAge, stalenessMs });
             return; // stale book
         }
 
         const cooldownRemaining = (this.position.cooldownUntil ?? 0) - Date.now();
         if (cooldownRemaining > 0) {
             logger.info({ cooldownRemaining: Math.round(cooldownRemaining / 1000) }, 'Scalper: ⏳ In cooldown period (seconds remaining)');
+            reject('cooldown', { cooldownRemaining });
             return;
         }
 
@@ -107,6 +119,7 @@ export class ScalperStrategy implements Strategy {
                     regime: flow.regime,
                     reason: getRegimeDescription(flow.regime),
                 }, 'Scalper: ⚠️ Skipping tick - regime unsafe for market-making');
+                reject('regimeNotAllowed', { regime: flow.regime });
                 return;
             }
         }
@@ -121,6 +134,11 @@ export class ScalperStrategy implements Strategy {
                     vwapDeviationBps: flow.vwapDeviationBps.toFixed(1),
                     regime: flow.regime,
                 }, 'Scalper: 🛑 Adverse selection risk detected - retreating');
+                reject('adverseSelection', {
+                    signalStrength: flow.signalStrength,
+                    vwapDeviationBps: flow.vwapDeviationBps,
+                    regime: flow.regime,
+                });
                 return;
             }
         }
@@ -128,6 +146,7 @@ export class ScalperStrategy implements Strategy {
         const issuer = resolveIssuerForRisk(this.pair);
         if (!issuer) {
             logger.info({ pair: this.pair }, 'Scalper: ❌ No issuer resolved for trading pair');
+            reject('unknown', { reason: 'issuer-unresolved' });
             return;
         }
 
@@ -140,6 +159,7 @@ export class ScalperStrategy implements Strategy {
 
         if (adjustedPositionSize <= 0) {
             logger.debug({ sizeMultiplier, regime: flow?.regime }, 'Scalper: ⚠️ Position size zero after regime adjustment');
+            reject('unknown', { reason: 'position-size-zero', sizeMultiplier, regime: flow?.regime });
             return;
         }
 
@@ -153,6 +173,10 @@ export class ScalperStrategy implements Strategy {
                 positionSize: adjustedPositionSize.toFixed(4),
                 potentialLoss: riskIntent.potentialLoss.toFixed(4)
             }, 'Scalper: ❌ Risk engine rejected trade intent');
+            reject('healthNotOk', {
+                reason: 'risk-intent-rejected',
+                positionSize: adjustedPositionSize,
+            });
             return;
         }
 
@@ -166,6 +190,10 @@ export class ScalperStrategy implements Strategy {
             });
             if (!decision.allowed) {
                 ctx.entryGate.logDecision(this.name, decision);
+                reject('healthNotOk', {
+                    reason: 'entry-gate-blocked',
+                    gateReasons: decision.reasons,
+                });
                 return;
             }
         }
@@ -199,11 +227,16 @@ export class ScalperStrategy implements Strategy {
                 spreadBps: spreadBps.toFixed(2),
                 minSpreadBps: this.config.minSpreadBps
             }, 'Scalper: ❌ Spread too narrow (need higher spread to profit)');
+            reject('minEdge', {
+                spreadBps,
+                minSpreadBps: this.config.minSpreadBps,
+            });
             return;
         }
 
         if (bestBid <= 0 || bestAsk <= 0 || bestBid >= bestAsk) {
             logger.info({ bestBid, bestAsk }, 'Scalper: ❌ Invalid prices (bid >= ask or zero prices)');
+            reject('spreadTooWide', { bestBid, bestAsk });
             return;
         }
 
@@ -224,6 +257,8 @@ export class ScalperStrategy implements Strategy {
                 skewApplied: skewBps.toFixed(2),
                 entryCrossBps: this.config.entryCrossBps ?? 0,
             }, 'Scalper: 🚀 Placing BUY order');
+            markCandidateBuilt();
+            markApproved('buy', adjustedPositionSize, 'bestBid');
 
             const res = await this.executor.placeOffer({
                 side: 'buy',
@@ -281,6 +316,8 @@ export class ScalperStrategy implements Strategy {
                     reason: exitReason,
                     exitCrossBps: this.config.exitCrossBps ?? 0,
                 }, 'Scalper: 🚀 Placing SELL order');
+                markCandidateBuilt();
+                markApproved('sell', adjustedPositionSize, 'bestAsk');
 
                 const res = await this.executor.placeOffer({
                     side: 'sell',

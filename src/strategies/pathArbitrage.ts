@@ -190,8 +190,19 @@ export class PathArbitrageStrategy implements Strategy {
     }
 
     async tick(ctx: StrategyContext): Promise<void> {
+        const reject = (reasonCode: string, detail?: Record<string, unknown>) => {
+            ctx.strategyFunnel?.markRejected(reasonCode, detail);
+        };
+        const markCandidateBuilt = () => {
+            ctx.strategyFunnel?.markCandidateBuilt();
+        };
+        const markApproved = (side: 'buy' | 'sell', sizeBase: number, expectedPriceSource: string) => {
+            ctx.strategyFunnel?.markApproved({ side, sizeBase, expectedPriceSource });
+        };
+
         // Feature flag check
         if (!this.pathArbConfig.enabled) {
+            reject('pathArbDisabled');
             return;
         }
 
@@ -203,12 +214,23 @@ export class PathArbitrageStrategy implements Strategy {
 
         // Circuit breaker check
         if (this.circuitBreaker.isTripped()) {
+            reject('cooldown', { reason: 'circuit-breaker-tripped' });
             return;
         }
 
-        if (ctx.ledgerIndex === this.lastLedger) return;
+        if (ctx.ledgerIndex === this.lastLedger) {
+            reject('cooldown', { reason: 'duplicate-ledger', ledgerIndex: ctx.ledgerIndex });
+            return;
+        }
         this.lastLedger = ctx.ledgerIndex;
-        if (!ctx.orderBook.bids.length || !ctx.orderBook.asks.length) return;
+        if (!ctx.orderBook.bids.length || !ctx.orderBook.asks.length) {
+            reject('routeUnavailable', {
+                reason: 'book-empty',
+                bids: ctx.orderBook.bids.length,
+                asks: ctx.orderBook.asks.length,
+            });
+            return;
+        }
 
         // ─────────────────────────────────────────────────────────────────────
         // Flow Regime Filter (skip dangerous regimes)
@@ -229,6 +251,7 @@ export class PathArbitrageStrategy implements Strategy {
                     regime: flow.regime,
                     reason: getRegimeDescription(flow.regime),
                 }, 'Path Arb: ⚠️ Skipping tick - regime unsafe for arbitrage');
+                reject('regimeNotAllowed', { regime: flow.regime });
                 return;
             }
         }
@@ -238,6 +261,7 @@ export class PathArbitrageStrategy implements Strategy {
         const bookAge = Date.now() - ctx.orderBook.lastUpdated;
         if (bookAge > stalenessMs) {
             logger.debug({ bookAge, stalenessMs }, 'PathArb: order book stale, skipping tick');
+            reject('poolStale', { reason: 'order-book-stale', bookAge, stalenessMs });
             return;
         }
 
@@ -245,6 +269,10 @@ export class PathArbitrageStrategy implements Strategy {
             const decision = ctx.entryGate.shouldEnter();
             if (!decision.allowed) {
                 ctx.entryGate.logDecision(this.name, decision);
+                reject('healthNotOk', {
+                    reason: 'entry-gate-blocked',
+                    gateReasons: decision.reasons,
+                });
                 return;
             }
         }
@@ -257,6 +285,7 @@ export class PathArbitrageStrategy implements Strategy {
 
         if (adjustedPositionSize <= 0) {
             logger.debug({ sizeMultiplier, regime: flow?.regime }, 'Path Arb: ⚠️ Position size zero after regime adjustment');
+            reject('cooldown', { reason: 'position-size-zero', sizeMultiplier, regime: flow?.regime });
             return;
         }
 
@@ -266,6 +295,7 @@ export class PathArbitrageStrategy implements Strategy {
         const resolved = resolvePair(this.pair, { failOnUnresolvable: false });
         if (!resolved.executable) {
             logger.debug({ blockReason: resolved.blockReason }, 'Path Arb: pair not executable');
+            reject('routeUnavailable', { reason: resolved.blockReason ?? 'pair-not-executable' });
             return;
         }
 
@@ -284,6 +314,10 @@ export class PathArbitrageStrategy implements Strategy {
                     positionSize: adjustedPositionSize.toFixed(4),
                     potentialLoss: riskIntent.potentialLoss.toFixed(4)
                 }, 'Path Arb: ❌ Risk engine rejected trade intent');
+                reject('healthNotOk', {
+                    reason: 'risk-intent-rejected',
+                    positionSize: adjustedPositionSize,
+                });
                 return;
             }
         }
@@ -293,7 +327,10 @@ export class PathArbitrageStrategy implements Strategy {
         const baseIssued = base.currency === 'XRP' ? null : (base as Extract<typeof base, { issuer: string }>);
         const quoteIssued = quote.currency === 'XRP' ? null : (quote as Extract<typeof quote, { issuer: string }>);
         const issuer = extractPrimaryIssuer(resolved);
-        if (!issuer) return;
+        if (!issuer) {
+            reject('routeUnavailable', { reason: 'issuer-unavailable' });
+            return;
+        }
 
         const destAmount = quoteIssued
             ? { currency: quoteIssued.currency, issuer: quoteIssued.issuer, value: adjustedPositionSize.toString() }
@@ -312,21 +349,38 @@ export class PathArbitrageStrategy implements Strategy {
             destination_amount: destAmount,
         });
 
-        if (!paths.result?.alternatives?.length) return;
+        if (!paths.result?.alternatives?.length) {
+            reject('routeUnavailable', { reason: 'no-path-alternatives' });
+            return;
+        }
         const best = paths.result.alternatives[0] as any;
         const sourceValue = this.amountToNumber(best.source_amount as Amount | string | undefined);
         const destValue = adjustedPositionSize; // requested destination amount
-        if (!Number.isFinite(sourceValue) || sourceValue <= 0 || destValue <= 0) return;
+        if (!Number.isFinite(sourceValue) || sourceValue <= 0 || destValue <= 0) {
+            reject('routeUnavailable', { reason: 'invalid-path-amounts', sourceValue, destValue });
+            return;
+        }
         const computedRate = sourceValue / destValue;
         const bestBid = ctx.orderBook.bids[0]?.price ?? 0;
         const bestAsk = ctx.orderBook.asks[0]?.price ?? 0;
         const bookMid = (bestBid + bestAsk) / 2;
         const edgeBps = ((bookMid - computedRate) / computedRate) * 10_000;
-        if (edgeBps < this.config.pathArbMinProfitBps) return;
+        if (edgeBps < this.config.pathArbMinProfitBps) {
+            reject('minProfitBps', {
+                edgeBps,
+                minProfitBps: this.config.pathArbMinProfitBps,
+            });
+            return;
+        }
 
         const side: 'buy' | 'sell' = edgeBps > 0 ? 'buy' : 'sell';
         const price = side === 'buy' ? ctx.orderBook.bids[0]?.price ?? 0 : ctx.orderBook.asks[0]?.price ?? 0;
-        if (!price) return;
+        if (!price) {
+            reject('routeUnavailable', { reason: 'missing-side-price', side });
+            return;
+        }
+
+        markCandidateBuilt();
 
         // Dry-run mode: log but don't execute
         if (this.pathArbConfig.dryRun) {
@@ -345,11 +399,13 @@ export class PathArbitrageStrategy implements Strategy {
             );
             // Record simulated trade for circuit breaker testing
             this.circuitBreaker.recordTrade(edgeBps);
+            reject('cooldown', { reason: 'dry-run-mode', edgeBps });
             return;
         }
 
         // Paper trading mode
         if (this.paperTrading) {
+            markApproved(side, adjustedPositionSize, side === 'buy' ? 'bestBid' : 'bestAsk');
             const res = await this.executor.placeOffer({
                 side,
                 price,
@@ -375,6 +431,7 @@ export class PathArbitrageStrategy implements Strategy {
 
         // Live execution
         try {
+            markApproved(side, adjustedPositionSize, side === 'buy' ? 'bestBid' : 'bestAsk');
             const res = await this.executor.placeOffer({
                 side,
                 price,
@@ -395,11 +452,13 @@ export class PathArbitrageStrategy implements Strategy {
                 this.circuitBreaker.recordTrade(edgeBps);
             } else {
                 logger.warn({ side, price: price.toFixed(6), edgeBps: edgeBps.toFixed(2) }, 'Path Arb: ❌ Offer rejected');
+                reject('unknown', { reason: 'offer-rejected', edgeBps, side });
             }
         } catch (err: any) {
             logger.error({ err: err?.message, side, price: price.toFixed(6), edgeBps: edgeBps.toFixed(2) }, 'Path Arb: ❌ Execution error');
             // Record as loss on execution error
             this.circuitBreaker.recordTrade(-Math.abs(edgeBps));
+            reject('unknown', { reason: err?.message ?? 'execution-error', edgeBps, side });
         }
     }
 

@@ -103,6 +103,15 @@ import {
 } from '../risk/hardRiskGuard';
 import { ExposureTracker, ExposureSnapshot } from '../risk/exposureTracker';
 import { ObservabilityBus } from '../observability/eventBus';
+import {
+    StrategyApprovalEvent,
+    StrategyDecisionFunnel,
+    StrategyDecisionFunnelMap,
+    StrategyEventContext,
+    StrategySubmitTelemetryEvent,
+    createStrategyDecisionFunnel,
+    cloneStrategyDecisionFunnelMap,
+} from '../observability/strategyDecisionFunnel';
 import { EventLoopLagTracker, loadEventLoopLagConfig, type EventLoopLagState } from '../monitoring/eventLoopLag';
 import { enforceSafetyPolicy } from '../security/safetyPolicy';
 import { LiquidityIntelligence, LiquiditySnapshot, loadLiquidityConfig } from '../market/liquidityIntelligence';
@@ -223,6 +232,8 @@ export class TradingRuntime {
     private readonly exposureTracker = new ExposureTracker();
     /** Observability event bus — structured event stream for forensic debugging. */
     private readonly observabilityBus = new ObservabilityBus();
+    /** Per-strategy decision funnel counters (observability-only, no execution impact). */
+    private strategyDecisionFunnels: StrategyDecisionFunnelMap = {};
     /** Liquidity intelligence engine — dynamic liquidity scoring per tick. */
     private liquidityIntelligence: LiquidityIntelligence | null = null;
     /** Spread distribution sampler — rolling percentiles for observability. */
@@ -389,6 +400,11 @@ export class TradingRuntime {
         this.spreadDistributionSampler.setPairKey(this.getActivePair());
         // Invalidate pair resolver cache to force re-resolution for new pair
         this.pairResolver.invalidate();
+        this.strategyDecisionFunnels = {};
+        for (const strategy of this.strategies) {
+            this.ensureStrategyFunnel(strategy.name);
+        }
+        this.syncStrategyFunnelToCache(this.getActivePair());
     }
 
     async start(): Promise<void> {
@@ -527,6 +543,11 @@ export class TradingRuntime {
                 new AMMArbitrageStrategy(amm, config.strategy, config.tradingPair, executor, risk, config.flow),
                 new PathArbitrageStrategy(client, config.strategy, config.tradingPair, executor, config.paperTrading, risk, config.flow),
             ];
+            this.strategyDecisionFunnels = {};
+            for (const strategy of this.strategies) {
+                this.ensureStrategyFunnel(strategy.name);
+            }
+            this.syncStrategyFunnelToCache(this.getActivePair());
 
             this.xrpl = xrpl;
             this.tracker = tracker;
@@ -535,6 +556,7 @@ export class TradingRuntime {
             executor.setExecutionQualityCollector(this.executionQualityCollector);
             executor.setExposureTracker(this.exposureTracker);
             executor.setBotTxHashSink((hash) => this.accountTradeIngestion?.registerBotTxHash(hash));
+            executor.setSubmitTelemetrySink((event) => this.recordSubmitTelemetry(event));
             executor.setTradeToastEmitter((event) => {
                 if (event.type === 'ORDER_PLACED') {
                     const detail: {
@@ -1245,6 +1267,15 @@ export class TradingRuntime {
                 // Rate limit strategy execution to prevent CPU spikes
                 await throttleStrategy();
 
+                const strategyEventContext: StrategyEventContext = {
+                    pairKey,
+                    regime,
+                    spreadBps: Number.isFinite(orderBookState.spread) ? orderBookState.spread : null,
+                    healthScore: Number.isFinite(gateResult.healthScore) ? gateResult.healthScore : null,
+                    fsmState: this.fsm.getState(),
+                };
+                this.recordStrategyTick(strategy.name, pairKey);
+
                 // Ensure fill/reject analytics are attributed to the strategy
                 // currently being evaluated in this tick.
                 if (this.executor) {
@@ -1257,6 +1288,12 @@ export class TradingRuntime {
                         strategy: strategy.name,
                         reasons: governanceDecision.reasons,
                     }, 'Skipping strategy - disabled by capital protection');
+                    this.recordStrategyRejected(
+                        strategy.name,
+                        'governanceStrategyDisabled',
+                        strategyEventContext,
+                        { reasons: governanceDecision.reasons },
+                    );
                     continue;
                 }
 
@@ -1267,6 +1304,12 @@ export class TradingRuntime {
                         regime,
                         reasons: governanceDecision.reasons,
                     }, 'Skipping strategy - regime disabled by capital protection');
+                    this.recordStrategyRejected(
+                        strategy.name,
+                        'governanceRegimeDisabled',
+                        strategyEventContext,
+                        { reasons: governanceDecision.reasons, regime },
+                    );
                     continue;
                 }
 
@@ -1305,6 +1348,16 @@ export class TradingRuntime {
                             global: isRegimeDisabledGlobal,
                             strategySpecific: isRegimeDisabledStrategy,
                         }, 'Skipping strategy - regime disabled by regime policy');
+                        this.recordStrategyRejected(
+                            strategy.name,
+                            'regimePolicyDisabled',
+                            strategyEventContext,
+                            {
+                                regime,
+                                isRegimeDisabledGlobal,
+                                isRegimeDisabledStrategy,
+                            },
+                        );
                         continue;
                     }
 
@@ -1328,6 +1381,12 @@ export class TradingRuntime {
                             strategy: strategy.name,
                             regime,
                         }, 'Skipping strategy - regime disabled by adaptive learning');
+                        this.recordStrategyRejected(
+                            strategy.name,
+                            'adaptiveRegimeDisabled',
+                            strategyEventContext,
+                            { regime },
+                        );
                         continue;
                     }
 
@@ -1353,6 +1412,10 @@ export class TradingRuntime {
                 const strategyCtx = {
                     ...ctx,
                     regimePolicy: regimePolicyContext,
+                    pairKey,
+                    runtimeState: this.fsm.getState(),
+                    healthScore: gateResult.healthScore,
+                    strategyFunnel: this.buildStrategyFunnelRecorder(strategy.name, strategyEventContext),
                 };
 
                 await strategy.tick(strategyCtx);
@@ -1496,6 +1559,121 @@ export class TradingRuntime {
         }
     }
 
+    private ensureStrategyFunnel(strategyName: string): StrategyDecisionFunnel {
+        const existing = this.strategyDecisionFunnels[strategyName];
+        if (existing) return existing;
+        const created = createStrategyDecisionFunnel();
+        this.strategyDecisionFunnels[strategyName] = created;
+        return created;
+    }
+
+    private syncStrategyFunnelToCache(pairKey?: string): void {
+        const effectivePairKey = pairKey ?? this.getActivePair();
+        if (!effectivePairKey) return;
+        this.cacheRegistry.updateStrategyFunnel(
+            effectivePairKey,
+            cloneStrategyDecisionFunnelMap(this.strategyDecisionFunnels),
+        );
+    }
+
+    private recordStrategyTick(strategyName: string, pairKey: string): void {
+        const funnel = this.ensureStrategyFunnel(strategyName);
+        funnel.strategyTicks += 1;
+        this.syncStrategyFunnelToCache(pairKey);
+    }
+
+    private recordStrategyCandidate(strategyName: string, pairKey: string): void {
+        const funnel = this.ensureStrategyFunnel(strategyName);
+        funnel.candidatesBuilt += 1;
+        this.syncStrategyFunnelToCache(pairKey);
+    }
+
+    private recordStrategyRejected(
+        strategyName: string,
+        reasonCode: string,
+        context: StrategyEventContext,
+        detail?: Record<string, unknown>,
+    ): void {
+        const funnel = this.ensureStrategyFunnel(strategyName);
+        funnel.rejectedCount += 1;
+        funnel.rejectedByReason[reasonCode] = (funnel.rejectedByReason[reasonCode] ?? 0) + 1;
+        this.observabilityBus.emitStrategyRejected({
+            pairKey: context.pairKey,
+            runtimeState: context.fsmState,
+            strategy: strategyName,
+            reasonCode,
+            regime: context.regime,
+            spreadBps: context.spreadBps,
+            healthScore: context.healthScore,
+            ...(detail ? { detail } : {}),
+        });
+        this.syncStrategyFunnelToCache(context.pairKey);
+    }
+
+    private recordStrategyApproved(
+        strategyName: string,
+        context: StrategyEventContext,
+        event?: StrategyApprovalEvent,
+    ): void {
+        const funnel = this.ensureStrategyFunnel(strategyName);
+        funnel.approvedCount += 1;
+        this.observabilityBus.emitStrategyApproved({
+            pairKey: context.pairKey,
+            runtimeState: context.fsmState,
+            strategy: strategyName,
+            ...(event?.side ? { side: event.side } : {}),
+            ...(typeof event?.sizeBase === 'number' ? { sizeBase: event.sizeBase } : {}),
+            ...(event?.expectedPriceSource ? { expectedPriceSource: event.expectedPriceSource } : {}),
+            ...(event ? { detail: event } : {}),
+        });
+        this.syncStrategyFunnelToCache(context.pairKey);
+    }
+
+    private buildStrategyFunnelRecorder(strategyName: string, context: StrategyEventContext) {
+        return {
+            markCandidateBuilt: () => this.recordStrategyCandidate(strategyName, context.pairKey),
+            markRejected: (reasonCode: string, detail?: Record<string, unknown>) => {
+                this.recordStrategyRejected(strategyName, reasonCode, context, detail);
+            },
+            markApproved: (event?: StrategyApprovalEvent) => {
+                this.recordStrategyApproved(strategyName, context, event);
+            },
+        };
+    }
+
+    private recordSubmitTelemetry(event: StrategySubmitTelemetryEvent): void {
+        const funnel = this.ensureStrategyFunnel(event.strategy);
+        if (event.stage === 'attempt') {
+            funnel.submitAttemptCount += 1;
+            this.observabilityBus.emitSubmitAttempt({
+                pairKey: event.pairKey,
+                runtimeState: this.fsm.getState(),
+                strategy: event.strategy,
+            });
+        } else if (event.stage === 'success') {
+            funnel.submitSuccessCount += 1;
+            if (event.txHash) funnel.lastTxHash = event.txHash;
+            funnel.lastSubmitError = null;
+            this.observabilityBus.emitSubmitSuccess({
+                pairKey: event.pairKey,
+                runtimeState: this.fsm.getState(),
+                strategy: event.strategy,
+                txHash: event.txHash ?? null,
+            });
+        } else {
+            funnel.submitFailCount += 1;
+            funnel.lastSubmitError = event.errorCode ?? 'submit-failed';
+            this.observabilityBus.emitSubmitFail({
+                pairKey: event.pairKey,
+                runtimeState: this.fsm.getState(),
+                strategy: event.strategy,
+                txHash: event.txHash ?? null,
+                errorCode: event.errorCode ?? 'submit-failed',
+            });
+        }
+        this.syncStrategyFunnelToCache(event.pairKey);
+    }
+
     /**
      * Push latest tick data into the cache registry.
      */
@@ -1523,6 +1701,7 @@ export class TradingRuntime {
             lastTrade: this.currentNormalizedTrade,
             liquidity: this.liquidityIntelligence?.getSnapshot() ?? null,
             spreadDistribution,
+            strategyFunnel: cloneStrategyDecisionFunnelMap(this.strategyDecisionFunnels),
         });
     }
 
@@ -2341,6 +2520,7 @@ export class TradingRuntime {
         this.hardRiskGuard.reset();
         this.exposureTracker.reset();
         this.observabilityBus.clear();
+        this.strategyDecisionFunnels = {};
 
         // Reset FSM to BOOTING for potential restart
         this.fsm.reset();

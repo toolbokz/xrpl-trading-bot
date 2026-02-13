@@ -37,10 +37,30 @@ export class AMMArbitrageStrategy implements Strategy {
     }
 
     async tick(ctx: StrategyContext): Promise<void> {
-        if (ctx.ledgerIndex === this.lastLedger) return;
+        const reject = (reasonCode: string, detail?: Record<string, unknown>) => {
+            ctx.strategyFunnel?.markRejected(reasonCode, detail);
+        };
+        const markCandidateBuilt = () => {
+            ctx.strategyFunnel?.markCandidateBuilt();
+        };
+        const markApproved = (side: 'buy' | 'sell', sizeBase: number, expectedPriceSource: string) => {
+            ctx.strategyFunnel?.markApproved({ side, sizeBase, expectedPriceSource });
+        };
+
+        if (ctx.ledgerIndex === this.lastLedger) {
+            reject('cooldown', { reason: 'duplicate-ledger', ledgerIndex: ctx.ledgerIndex });
+            return;
+        }
         this.lastLedger = ctx.ledgerIndex;
         const { orderBook, flow } = ctx;
-        if (!orderBook.bids.length || !orderBook.asks.length) return;
+        if (!orderBook.bids.length || !orderBook.asks.length) {
+            reject('routeUnavailable', {
+                reason: 'book-empty',
+                bids: orderBook.bids.length,
+                asks: orderBook.asks.length,
+            });
+            return;
+        }
 
         // ─────────────────────────────────────────────────────────────────────
         // Flow Regime Filter (skip dangerous regimes)
@@ -60,6 +80,7 @@ export class AMMArbitrageStrategy implements Strategy {
                     regime: flow.regime,
                     reason: getRegimeDescription(flow.regime),
                 }, 'AMM Arb: ⚠️ Skipping tick - regime unsafe for arbitrage');
+                reject('regimeNotAllowed', { regime: flow.regime });
                 return;
             }
         }
@@ -68,13 +89,20 @@ export class AMMArbitrageStrategy implements Strategy {
             const decision = ctx.entryGate.shouldEnter();
             if (!decision.allowed) {
                 ctx.entryGate.logDecision(this.name, decision);
+                reject('healthNotOk', {
+                    reason: 'entry-gate-blocked',
+                    gateReasons: decision.reasons,
+                });
                 return;
             }
         }
 
         const firstBid = orderBook.bids[0];
         const firstAsk = orderBook.asks[0];
-        if (!firstBid || !firstAsk) return;
+        if (!firstBid || !firstAsk) {
+            reject('routeUnavailable', { reason: 'missing-bbo' });
+            return;
+        }
 
         const bestBid = firstBid.price;
         const bestAsk = firstAsk.price;
@@ -86,14 +114,26 @@ export class AMMArbitrageStrategy implements Strategy {
             resolvedLegs.base,
             resolvedLegs.quote,
         );
-        if (!ammInfo || !ammInfo.tradingFee || !Number.isFinite(ammInfo.tradingFee)) return;
-        if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk) || bestBid <= 0 || bestAsk <= 0) return;
+        if (!ammInfo || !ammInfo.tradingFee || !Number.isFinite(ammInfo.tradingFee)) {
+            reject('poolStale', { reason: 'amm-info-unavailable' });
+            return;
+        }
+        if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk) || bestBid <= 0 || bestAsk <= 0) {
+            reject('routeUnavailable', { reason: 'invalid-bbo', bestBid, bestAsk });
+            return;
+        }
 
         const ammPrice = ammInfo.price ?? (bestBid + bestAsk) / 2;
         const bookMid = (bestBid + bestAsk) / 2;
         const diffBps = ((bookMid - ammPrice) / ammPrice) * 10_000;
 
-        if (Math.abs(diffBps) < this.config.ammArbMinProfitBps) return;
+        if (Math.abs(diffBps) < this.config.ammArbMinProfitBps) {
+            reject('minProfitBps', {
+                diffBps,
+                minProfitBps: this.config.ammArbMinProfitBps,
+            });
+            return;
+        }
 
         // ─────────────────────────────────────────────────────────────────────
         // Position Sizing (scale based on regime)
@@ -103,6 +143,7 @@ export class AMMArbitrageStrategy implements Strategy {
 
         if (adjustedPositionSize <= 0) {
             logger.debug({ sizeMultiplier, regime: flow?.regime }, 'AMM Arb: ⚠️ Position size zero after regime adjustment');
+            reject('cooldown', { reason: 'position-size-zero', sizeMultiplier, regime: flow?.regime });
             return;
         }
 
@@ -121,6 +162,10 @@ export class AMMArbitrageStrategy implements Strategy {
                     positionSize: adjustedPositionSize.toFixed(4),
                     potentialLoss: riskIntent.potentialLoss.toFixed(4)
                 }, 'AMM Arb: ❌ Risk engine rejected trade intent');
+                reject('healthNotOk', {
+                    reason: 'risk-intent-rejected',
+                    positionSize: adjustedPositionSize,
+                });
                 return;
             }
         }
@@ -137,6 +182,8 @@ export class AMMArbitrageStrategy implements Strategy {
             sizeMultiplier: sizeMultiplier.toFixed(2),
             regime: flow?.regime ?? 'unknown',
         }, 'AMM Arb: 🎯 Executing arbitrage opportunity');
+        markCandidateBuilt();
+        markApproved(side, adjustedPositionSize, side === 'buy' ? 'bestBid' : 'bestAsk');
 
         const res = await this.executor.placeOffer({
             side,
