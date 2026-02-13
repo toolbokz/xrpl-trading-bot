@@ -597,7 +597,7 @@ function DashboardPageContent() {
                         </section>
 
                         {/* Z3 DIAGNOSTIC SUMMARY ROW */}
-                        <section className="grid grid-cols-2 gap-4">
+                        <section className="grid grid-cols-1 gap-4">
                             <div className="card min-h-[220px] p-4">
                                 <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
                                 <div className="space-y-2">
@@ -613,10 +613,6 @@ function DashboardPageContent() {
                                         value={`${fmtNum(midPrice, 4)} / ${fmtNum(orderBookBids[0]?.price ?? null, 4)} / ${fmtNum(orderBookAsks[0]?.price ?? null, 4)}`}
                                     />
                                 </div>
-                            </div>
-
-                            <div className="min-h-[220px]">
-                                <ScannerPanel compact />
                             </div>
                         </section>
                     </div>
@@ -670,7 +666,7 @@ function DashboardPageContent() {
 
                     {/* Z3 DIAGNOSTIC SUMMARY ROW */}
                     {!isCompact && (
-                        <section className={clsx('grid gap-4', isNarrow ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-2')}>
+                        <section className="grid grid-cols-1 gap-4">
                             <div className="card min-h-[220px] p-4">
                                 <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
                                 <div className="space-y-2">
@@ -686,10 +682,6 @@ function DashboardPageContent() {
                                         value={`${fmtNum(midPrice, 4)} / ${fmtNum(orderBookBids[0]?.price ?? null, 4)} / ${fmtNum(orderBookAsks[0]?.price ?? null, 4)}`}
                                     />
                                 </div>
-                            </div>
-
-                            <div className="min-h-[220px]">
-                                <ScannerPanel compact />
                             </div>
                         </section>
                     )}
