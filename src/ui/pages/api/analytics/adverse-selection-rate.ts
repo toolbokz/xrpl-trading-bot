@@ -2,6 +2,8 @@ import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { computeAdverseSelectionRate } from '../../../../analytics/feedbackEngine';
 import { querySnapshots } from '../../../../analytics/feedbackDb';
+import { canonicalizePairKey } from '../../../../xrpl/currency';
+import { buildAnalyticsCacheKey, getAnalyticsCacheTtlMs, getCachedAnalytics, setCachedAnalytics } from './_cache';
 
 export const config = {
     api: { bodyParser: false },
@@ -49,6 +51,7 @@ function handler(
         if (typeof pairKey === 'string' && pairKey.trim()) {
             parsedPairKey = pairKey.trim();
         }
+        const canonicalPairKey = parsedPairKey ? canonicalizePairKey(parsedPairKey) : null;
 
         let parsedWindowMs = DEFAULT_WINDOW_MS;
         if (typeof windowMs === 'string') {
@@ -60,9 +63,23 @@ function handler(
 
         const sinceMs = Date.now() - parsedWindowMs;
 
+        const cacheKey = buildAnalyticsCacheKey('adverse-selection-rate', {
+            pairKey: canonicalPairKey,
+            sinceMs,
+            windowMs: parsedWindowMs,
+        });
+        const cached = getCachedAnalytics<Omit<AdverseSelectionRateResponse, 'requestId' | 'timestamp'>>(cacheKey);
+        if (cached) {
+            return res.status(200).json({
+                requestId: req.requestId,
+                timestamp: new Date().toISOString(),
+                ...cached,
+            });
+        }
+
         const filters: { pairKey?: string; sinceMs?: number } = { sinceMs };
-        if (parsedPairKey) {
-            filters.pairKey = parsedPairKey;
+        if (canonicalPairKey) {
+            filters.pairKey = canonicalPairKey;
         }
 
         const snapshots = querySnapshots(filters);
@@ -70,16 +87,22 @@ function handler(
         const { sampleCount, adverseCount, adverseRate } =
             computeAdverseSelectionRate(snapshots);
 
-        const response: AdverseSelectionRateResponse = {
-            requestId: req.requestId,
-            timestamp: new Date().toISOString(),
+        const payload: Omit<AdverseSelectionRateResponse, 'requestId' | 'timestamp'> = {
             filters: {
-                pairKey: parsedPairKey ?? null,
+                pairKey: canonicalPairKey,
                 windowMs: parsedWindowMs,
             },
             sampleCount,
             adverseCount,
             adverseRate,
+        };
+
+        setCachedAnalytics(cacheKey, payload, getAnalyticsCacheTtlMs());
+
+        const response: AdverseSelectionRateResponse = {
+            requestId: req.requestId,
+            timestamp: new Date().toISOString(),
+            ...payload,
         };
 
         return res.status(200).json(response);

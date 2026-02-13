@@ -106,6 +106,10 @@ const TRADES_FILE = 'trade_history.json';
  * The actual recording happens in the backend offerExecutor.
  */
 class WebTradeHistoryService {
+    private cachedFilePath: string | null = null;
+    private cachedMtimeMs: number | null = null;
+    private cachedTrades: Trade[] = [];
+
     private getFilePath(): string {
         // Try multiple locations
         const locations = [
@@ -126,13 +130,26 @@ class WebTradeHistoryService {
         try {
             const filePath = this.getFilePath();
             if (fs.existsSync(filePath)) {
+                const stat = fs.statSync(filePath);
+                if (
+                    this.cachedFilePath === filePath
+                    && this.cachedMtimeMs != null
+                    && stat.mtimeMs === this.cachedMtimeMs
+                ) {
+                    return this.cachedTrades;
+                }
+
                 const data = fs.readFileSync(filePath, 'utf8');
                 const parsed = JSON.parse(data);
                 if (Array.isArray(parsed)) {
-                    return parsed.map((raw) => ({
+                    const trades = parsed.map((raw) => ({
                         ...raw,
                         source: raw?.source === 'manual' ? 'manual' : 'bot',
                     }));
+                    this.cachedFilePath = filePath;
+                    this.cachedMtimeMs = stat.mtimeMs;
+                    this.cachedTrades = trades;
+                    return trades;
                 }
             }
         } catch (err) {
@@ -207,6 +224,9 @@ class WebTradeHistoryService {
         try {
             const filePath = this.getFilePath();
             fs.writeFileSync(filePath, '[]', 'utf8');
+            this.cachedFilePath = filePath;
+            this.cachedMtimeMs = null;
+            this.cachedTrades = [];
         } catch (err) {
             console.error('Failed to clear trade history:', err);
         }

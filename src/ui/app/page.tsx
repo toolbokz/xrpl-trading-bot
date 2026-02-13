@@ -2,7 +2,6 @@
 
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    AlertTriangle,
     ChevronLeft,
     ChevronRight,
     ListOrdered,
@@ -18,25 +17,24 @@ import { BotOrdersPanel } from '../components/BotOrdersPanel';
 import { LogsPanel } from '../components/LogsPanel';
 import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
 import { GovernancePanel } from '../components/GovernancePanel';
-import { SpreadDistributionPanel } from '../components/SpreadDistributionPanel';
 import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
-import { AdverseSelectionPanel } from '../components/AdverseSelectionPanel';
-import { DrawdownGaugePanel } from '../components/DrawdownGaugePanel';
 import { AdaptivePanel } from '../components/AdaptivePanel';
-import { BackgroundFairValuePanel } from '../components/BackgroundFairValuePanel';
-import { MarketRadarPanel } from '../components/MarketRadarPanel';
+import { ScannerPanel } from '../components/ScannerPanel';
+import { RiskStressPanel } from '../components/RiskStressPanel';
 import { ExecutionQualityPanel } from '../components/ExecutionQualityPanel';
 import { EdgeAttributionPanel } from '../components/EdgeAttributionPanel';
 import { useOrderBook } from '../lib/hooks/useOrderBook';
 import { RuntimeCacheProvider, useRuntimeCache } from '../lib/hooks/useRuntimeCache';
+import { RuntimeEventsProvider, useRuntimeEvents } from '../lib/hooks/useRuntimeEvents';
 import { useMarketHealth } from '../lib/hooks/useMarketHealth';
-import { useSpreadDistribution } from '../lib/hooks/useSpreadDistribution';
 import { toBackgroundView } from '../components/backgroundScannerViewModel';
 import { hasOrderFilledEvent } from '../lib/runtimeEvents';
+import { useRiskStress } from '../lib/hooks/useRiskStress';
+import { useSpreadModel } from '../lib/hooks/useSpreadModel';
 
 type BotStatus = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
 type ToolTab = 'orderbook' | 'tape' | 'radar' | 'diagnostics';
-type DrawerTab = 'orders' | 'logs' | 'alerts';
+type DrawerTab = 'orders' | 'logs';
 
 interface BotState {
     status: BotStatus;
@@ -62,16 +60,6 @@ interface BotState {
         killSwitch: boolean;
     };
     tradeCount: number;
-}
-
-interface AdverseSelectionResponse {
-    adverseRate: number;
-}
-
-interface AnalyticsSummaryResponse {
-    summary?: { maxDrawdown?: number };
-    drawdown?: Array<{ drawdown: number }>;
-    drawdownVelocity?: number;
 }
 
 const createInitialBotState = (): BotState => ({
@@ -100,7 +88,7 @@ const createInitialBotState = (): BotState => ({
     tradeCount: 0,
 });
 
-export default function Page() {
+function DashboardPageContent() {
     const tradeToastsEnabled = process.env.NEXT_PUBLIC_TRADE_TOASTS_ENABLED !== 'false';
     const [bot, setBot] = useState<BotState>(createInitialBotState);
     const [actionMessage, setActionMessage] = useState<string>('');
@@ -116,12 +104,10 @@ export default function Page() {
     const isNarrow = viewportWidth <= 1200;
     const isCompact = viewportWidth <= 800;
 
-    const [adverseRate, setAdverseRate] = useState<number | null>(null);
-    const [drawdownPct, setDrawdownPct] = useState<number | null>(null);
-    const [drawdownVelocity, setDrawdownVelocity] = useState<number | null>(null);
     const [activePairPriceTrend, setActivePairPriceTrend] = useState<'up' | 'down' | 'neutral'>('neutral');
 
     const currentPair = useMemo(() => findPair(selectedPairKey), [selectedPairKey]);
+    const diagnosticsVisible = activeToolTab === 'diagnostics';
 
     const {
         data: orderBookData,
@@ -133,10 +119,16 @@ export default function Page() {
         enabled: !!selectedPairKey,
     });
 
-    const runtimeCache = useRuntimeCache({ pollInterval: 4000, enabled: true });
+    const runtimeCache = useRuntimeCache();
+    const runtimeEvents = useRuntimeEvents({ enabled: true });
     const bgView = toBackgroundView(runtimeCache.data?.snapshot ?? null);
     const marketHealth = useMarketHealth(selectedPairKey || null, { pollInterval: 5000 });
-    const spreadDist = useSpreadDistribution({ pollInterval: 10000 });
+    const spreadModel = useSpreadModel();
+    const riskStress = useRiskStress({
+        pollInterval: 10_000,
+        enabled: diagnosticsVisible,
+        pairKey: selectedPairKey || null,
+    });
 
     const orderBookBids = orderBookData.bids;
     const orderBookAsks = orderBookData.asks;
@@ -148,7 +140,7 @@ export default function Page() {
             setActiveToolTab(savedToolTab);
         }
         const savedDrawerTab = window.localStorage.getItem('xrpl.drawerTab') as DrawerTab | null;
-        if (savedDrawerTab && ['orders', 'logs', 'alerts'].includes(savedDrawerTab)) {
+        if (savedDrawerTab && ['orders', 'logs'].includes(savedDrawerTab)) {
             setDrawerTab(savedDrawerTab);
         }
 
@@ -200,7 +192,6 @@ export default function Page() {
     }, [orderBookData.spreadBps, orderBookLoading, orderBookError, selectedPairKey]);
 
     const prevMidPriceRef = useRef<number | null>(null);
-    const lastRuntimeEventSeqRef = useRef<number | null>(null);
     useEffect(() => {
         const current = midPrice;
         const prev = prevMidPriceRef.current;
@@ -296,97 +287,34 @@ export default function Page() {
         }
     }, []);
 
-    const fetchRiskQuality = useCallback(async () => {
-        try {
-            const [adverseRes, analyticsRes] = await Promise.all([
-                fetch('/api/analytics/adverse-selection-rate'),
-                fetch('/api/analytics/summary'),
-            ]);
-
-            if (adverseRes.ok) {
-                const adverse = await adverseRes.json() as AdverseSelectionResponse;
-                setAdverseRate(Number.isFinite(adverse.adverseRate) ? adverse.adverseRate : null);
-            }
-
-            if (analyticsRes.ok) {
-                const analytics = await analyticsRes.json() as AnalyticsSummaryResponse;
-                const latestDrawdown = analytics.drawdown?.[analytics.drawdown.length - 1]?.drawdown;
-                setDrawdownPct(
-                    Number.isFinite(latestDrawdown)
-                        ? Math.abs(latestDrawdown ?? 0) * 100
-                        : (Number.isFinite(analytics.summary?.maxDrawdown) ? Math.abs(analytics.summary?.maxDrawdown ?? 0) * 100 : null),
-                );
-                setDrawdownVelocity(Number.isFinite(analytics.drawdownVelocity) ? analytics.drawdownVelocity ?? null : null);
-            }
-        } catch {
-            // ignore
+    useEffect(() => {
+        const events = runtimeEvents.data?.events ?? [];
+        if (events.length === 0) return;
+        if (hasOrderFilledEvent(events)) {
+            void fetchTrades();
         }
-    }, []);
+    }, [runtimeEvents.data?.seq, runtimeEvents.data?.events, fetchTrades]);
 
     useEffect(() => {
         fetchStatus();
         fetchRiskStatus();
         fetchTrades();
-        fetchRiskQuality();
         const deferred = setTimeout(() => {
             fetchWalletInfo(currentPair);
         }, 500);
         return () => clearTimeout(deferred);
-    }, [fetchStatus, fetchRiskStatus, fetchTrades, fetchWalletInfo, fetchRiskQuality, currentPair]);
+    }, [fetchStatus, fetchRiskStatus, fetchTrades, fetchWalletInfo, currentPair]);
 
     useEffect(() => {
         const riskIv = setInterval(fetchRiskStatus, 30_000);
         const walletIv = setInterval(() => fetchWalletInfo(currentPair), 60_000);
         const tradesIv = setInterval(fetchTrades, 30_000);
-        const qualityIv = setInterval(fetchRiskQuality, 10_000);
         return () => {
             clearInterval(riskIv);
             clearInterval(walletIv);
             clearInterval(tradesIv);
-            clearInterval(qualityIv);
         };
-    }, [fetchRiskStatus, fetchWalletInfo, fetchTrades, fetchRiskQuality, currentPair]);
-
-    useEffect(() => {
-        let cancelled = false;
-
-        const pollRuntimeEvents = async () => {
-            try {
-                const afterSeq = lastRuntimeEventSeqRef.current;
-                const query = afterSeq == null
-                    ? '/api/runtime/events?limit=1'
-                    : `/api/runtime/events?afterSeq=${afterSeq}&limit=100`;
-                const res = await fetch(query);
-                if (!res.ok) return;
-
-                const payload = await res.json() as { seq?: number; events?: unknown[] };
-                if (cancelled) return;
-
-                if (typeof payload.seq === 'number' && Number.isFinite(payload.seq)) {
-                    lastRuntimeEventSeqRef.current = payload.seq;
-                }
-
-                if (afterSeq == null) return;
-
-                const events = Array.isArray(payload.events) ? payload.events : [];
-                if (hasOrderFilledEvent(events)) {
-                    await fetchTrades();
-                }
-            } catch {
-                // best-effort only; keep UI polling healthy
-            }
-        };
-
-        void pollRuntimeEvents();
-        const interval = setInterval(() => {
-            void pollRuntimeEvents();
-        }, 1200);
-
-        return () => {
-            cancelled = true;
-            clearInterval(interval);
-        };
-    }, [fetchTrades]);
+    }, [fetchRiskStatus, fetchWalletInfo, fetchTrades, currentPair]);
 
     const callAction = async (action: 'run' | 'pause' | 'kill') => {
         if (action === 'run' && !currentPair) {
@@ -442,7 +370,10 @@ export default function Page() {
     }, [severity, bot.tradeCount, isCompact]);
 
     const statusChips = useMemo(() => {
-        const dd = drawdownPct ?? 0;
+        const dd = riskStress.data.drawdownPct ?? 0;
+        const exposurePct = bot.risk.maxExposure > 0
+            ? Math.min(999, (bot.risk.currentExposure / bot.risk.maxExposure) * 100)
+            : 0;
         const scannerState = !bgView ? 'OFF' : bgView.health.degraded ? 'ERR' : 'OK';
         const scannerTone = !bgView ? 'neutral' : bgView.health.degraded ? 'warn' : 'ok';
 
@@ -459,13 +390,13 @@ export default function Page() {
                 tone: 'neutral',
             },
             { key: 'venue', label: 'XRPL', value: connected ? 'UP' : 'DOWN', tone: connected ? 'ok' : 'warn' },
-            { key: 'risk', label: 'Risk', value: `DD ${dd.toFixed(1)}%`, tone: dd >= 8 ? 'warn' : 'neutral' },
+            { key: 'risk', label: 'Risk', value: `Exp ${exposurePct.toFixed(0)}%`, tone: dd >= 8 ? 'warn' : 'neutral' },
             { key: 'capital', label: 'Capital', value: bot.risk.killSwitch ? 'PROTECT' : 'NORMAL', tone: bot.risk.killSwitch ? 'warn' : 'ok' },
             { key: 'scanner', label: 'Scanner', value: scannerState, tone: scannerTone },
             { key: 'samples', label: 'Samples', value: String(bgView?.fairValue.sources.length ?? 0), tone: (bgView?.fairValue.sources.length ?? 0) < 1 ? 'warn' : 'neutral' },
             { key: 'book', label: 'Book', value: marketHealth.data?.orderBook.stale ? 'STALE' : 'FRESH', tone: marketHealth.data?.orderBook.stale ? 'warn' : 'ok' },
         ] as Array<{ key: string; label: string; value: string; tone: 'ok' | 'bad' | 'warn' | 'neutral' }>;
-    }, [bot.status, bot.pnlToday, bot.pnlTotal, bot.winRate, bot.openPosition, bot.baseBalance, bot.baseCurrency, bot.quoteBalance, bot.quoteCurrency, bot.risk.currentExposure, bot.risk.killSwitch, connected, drawdownPct, bgView, marketHealth.data?.orderBook.stale]);
+    }, [bot.status, bot.pnlToday, bot.pnlTotal, bot.winRate, bot.openPosition, bot.baseBalance, bot.baseCurrency, bot.quoteBalance, bot.quoteCurrency, bot.risk.currentExposure, bot.risk.maxExposure, bot.risk.killSwitch, connected, riskStress.data.drawdownPct, bgView, marketHealth.data?.orderBook.stale]);
 
     const activePairPriceDisplay = useMemo(() => {
         const pairLabel = selectedPairKey || `${bot.baseCurrency}/${bot.quoteCurrency || 'QUOTE'}`;
@@ -483,14 +414,13 @@ export default function Page() {
     const toolTabs: Array<{ id: ToolTab; label: string }> = [
         { id: 'orderbook', label: 'Order Book' },
         { id: 'tape', label: 'Tape' },
-        { id: 'radar', label: 'Radar' },
+        { id: 'radar', label: 'Scanner' },
         { id: 'diagnostics', label: 'Diagnostics' },
     ];
 
     const drawerTabs: Array<{ id: DrawerTab; label: string; icon: typeof ListOrdered }> = [
         { id: 'orders', label: 'Orders', icon: ListOrdered },
         { id: 'logs', label: 'Logs', icon: Logs },
-        { id: 'alerts', label: 'Alerts', icon: AlertTriangle },
     ];
 
     const onToolTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -531,41 +461,48 @@ export default function Page() {
 
     const diagnosticsPanel = (
         <div className="space-y-4">
-            <ExecutionQualityPanel
-                {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                strategy={bot.strategy}
-                pollInterval={15_000}
-            />
-            <EdgeAttributionPanel
-                {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                strategy={bot.strategy}
-                pollInterval={20_000}
-            />
-            <div className="grid gap-4 md:grid-cols-3 md:items-stretch">
-                <div className="space-y-4 min-w-0">
-                    <SpreadDistributionPanel />
-                    <div className="grid gap-4 sm:grid-cols-2">
-                        <AdverseSelectionPanel pollInterval={5000} />
-                        <DrawdownGaugePanel pollInterval={10000} />
-                    </div>
+            <section className="space-y-3">
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Execution</h3>
+                <ExecutionQualityPanel
+                    {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                    strategy={bot.strategy}
+                    pollInterval={15_000}
+                    enabled={diagnosticsVisible}
+                />
+                <EdgeAttributionPanel
+                    {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                    strategy={bot.strategy}
+                    pollInterval={20_000}
+                    enabled={diagnosticsVisible}
+                />
+            </section>
+
+            <section className="space-y-3">
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Risk</h3>
+                <div className="grid gap-4 lg:grid-cols-2">
+                    <RiskStressPanel
+                        data={riskStress.data}
+                        spread={spreadModel.data}
+                        loading={riskStress.loading}
+                        error={riskStress.error}
+                    />
+                    <GovernancePanel compact enabled={diagnosticsVisible} />
                 </div>
-                <div className="min-w-0 h-full grid gap-4 sm:grid-cols-2">
-                    <div className="min-w-0 h-full">
-                        <GovernancePanel compact />
-                    </div>
-                    <div className="min-w-0 h-full">
-                        <AdaptivePanel
-                            {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                            strategy={bot.strategy}
-                            regime="normal"
-                            pollInterval={10000}
-                        />
-                    </div>
+            </section>
+
+            <section className="space-y-3">
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Policy</h3>
+                <div className="grid gap-4 lg:grid-cols-2">
+                    <RegimeHeatmapPanel enabled={diagnosticsVisible} />
+                    <AdaptivePanel
+                        {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                        strategy={bot.strategy}
+                        regime="normal"
+                        pollInterval={15_000}
+                        enabled={diagnosticsVisible}
+                    />
                 </div>
-                <div className="min-w-0 h-full">
-                    <RegimeHeatmapPanel />
-                </div>
-            </div>
+            </section>
         </div>
     );
 
@@ -604,12 +541,7 @@ export default function Page() {
                         role="tabpanel"
                         className="h-full min-h-0 overflow-hidden"
                     >
-                        <LogsPanel maxRows={120} pollInterval={2000} />
-                    </div>
-                )}
-                {drawerTab === 'alerts' && (
-                    <div id="drawer-panel-alerts" role="tabpanel" className="card flex h-full items-center justify-center p-4 text-sm text-slate-400">
-                        {stripWarnings.length > 0 ? stripWarnings.join(', ') : 'No active alerts.'}
+                        <LogsPanel maxRows={120} pollInterval={2000} hiddenPollInterval={10000} active={drawerOpen && drawerTab === 'logs'} />
                     </div>
                 )}
             </div>
@@ -665,14 +597,14 @@ export default function Page() {
                         </section>
 
                         {/* Z3 DIAGNOSTIC SUMMARY ROW */}
-                        <section className="grid gap-4 grid-cols-3">
+                        <section className="grid grid-cols-2 gap-4">
                             <div className="card min-h-[220px] p-4">
                                 <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
                                 <div className="space-y-2">
                                     <MetricLine label="Spread now" value={`${fmtNum(orderBookData.spreadBps, 1)} bps`} />
                                     <MetricLine
                                         label="Spread percentile"
-                                        value={spreadDist.data?.lookback24h?.p75Bps != null ? `${spreadDist.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
+                                        value={spreadModel.data.lookback24h?.p75Bps != null ? `${spreadModel.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
                                     />
                                     <MetricLine label="Depth (top)" value={fmtNum(activePairMarket?.depthTopNotional ?? null, 0)} />
                                     <MetricLine label="Staleness" value={fmtMs(activePairMarket?.stalenessMs ?? null)} />
@@ -684,17 +616,7 @@ export default function Page() {
                             </div>
 
                             <div className="min-h-[220px]">
-                                <BackgroundFairValuePanel pollInterval={4000} compact />
-                            </div>
-
-                            <div className="card min-h-[220px] p-4">
-                                <h3 className="mb-3 text-base font-semibold text-slate-100">Risk Quality</h3>
-                                <div className="space-y-2">
-                                    <MetricLine label="Adverse 1H" value={adverseRate == null ? '—' : `${(adverseRate * 100).toFixed(1)}% (${riskBand(adverseRate)})`} />
-                                    <MetricLine label="Drawdown" value={drawdownPct == null ? '—' : `${drawdownPct.toFixed(2)}%`} />
-                                    <MetricLine label="DD Velocity" value={drawdownVelocity == null ? '—' : `${drawdownVelocity.toFixed(2)}/h`} />
-                                </div>
-                                <div className="mt-3 text-xs text-slate-400">Expanded adverse and drawdown charts are in Diagnostics.</div>
+                                <ScannerPanel compact />
                             </div>
                         </section>
                     </div>
@@ -716,9 +638,6 @@ export default function Page() {
                                 </button>
                                 <button onClick={() => { setDrawerOpen(true); setDrawerTab('logs'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open logs">
                                     <Logs size={14} />
-                                </button>
-                                <button onClick={() => { setDrawerOpen(true); setDrawerTab('alerts'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open alerts">
-                                    <AlertTriangle size={14} />
                                 </button>
                                 {severity > 0 && (
                                     <span className="mt-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-300">{severity}</span>
@@ -751,14 +670,14 @@ export default function Page() {
 
                     {/* Z3 DIAGNOSTIC SUMMARY ROW */}
                     {!isCompact && (
-                        <section className={clsx('grid gap-4', isNarrow ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-3')}>
+                        <section className={clsx('grid gap-4', isNarrow ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-2')}>
                             <div className="card min-h-[220px] p-4">
                                 <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
                                 <div className="space-y-2">
                                     <MetricLine label="Spread now" value={`${fmtNum(orderBookData.spreadBps, 1)} bps`} />
                                     <MetricLine
                                         label="Spread percentile"
-                                        value={spreadDist.data?.lookback24h?.p75Bps != null ? `${spreadDist.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
+                                        value={spreadModel.data.lookback24h?.p75Bps != null ? `${spreadModel.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
                                     />
                                     <MetricLine label="Depth (top)" value={fmtNum(activePairMarket?.depthTopNotional ?? null, 0)} />
                                     <MetricLine label="Staleness" value={fmtMs(activePairMarket?.stalenessMs ?? null)} />
@@ -770,17 +689,7 @@ export default function Page() {
                             </div>
 
                             <div className="min-h-[220px]">
-                                <BackgroundFairValuePanel pollInterval={4000} compact />
-                            </div>
-
-                            <div className="card min-h-[220px] p-4">
-                                <h3 className="mb-3 text-base font-semibold text-slate-100">Risk Quality</h3>
-                                <div className="space-y-2">
-                                    <MetricLine label="Adverse 1H" value={adverseRate == null ? '—' : `${(adverseRate * 100).toFixed(1)}% (${riskBand(adverseRate)})`} />
-                                    <MetricLine label="Drawdown" value={drawdownPct == null ? '—' : `${drawdownPct.toFixed(2)}%`} />
-                                    <MetricLine label="DD Velocity" value={drawdownVelocity == null ? '—' : `${drawdownVelocity.toFixed(2)}/h`} />
-                                </div>
-                                <div className="mt-3 text-xs text-slate-400">Expanded adverse and drawdown charts are in Diagnostics.</div>
+                                <ScannerPanel compact />
                             </div>
                         </section>
                     )}
@@ -833,7 +742,7 @@ export default function Page() {
 
                     {activeToolTab === 'radar' && (
                         <div id="tool-panel-radar" role="tabpanel">
-                            <MarketRadarPanel pollInterval={4000} />
+                            <ScannerPanel />
                         </div>
                     )}
 
@@ -848,33 +757,41 @@ export default function Page() {
     );
 
     return (
-        <RuntimeCacheProvider pollInterval={4000} enabled>
-            <AppShell header={headerComponent} tradeToastsEnabled={tradeToastsEnabled}>
-                {!isCompact && !isNarrow ? (
-                    <div>{mainContent}</div>
-                ) : isCompact ? (
-                    <div className="space-y-4">{mainContent}</div>
-                ) : (
-                    <div className="space-y-4">
-                        <div className="flex justify-end">
-                            <button
-                                onClick={() => setDrawerOpen(true)}
-                                className="inline-flex items-center gap-1 rounded border border-white/10 px-2 py-1 text-xs text-slate-300 hover:bg-white/10"
-                            >
-                                <ListOrdered size={12} /> Activity {severity > 0 ? `(${severity})` : ''}
-                            </button>
-                        </div>
-                        {mainContent}
-                        {drawerOpen && (
-                            <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setDrawerOpen(false)}>
-                                <div className="absolute bottom-0 right-0 h-[70vh] w-full max-w-[100vw] sm:top-0 sm:h-full sm:w-[360px] sm:max-w-[92vw]" onClick={(event) => event.stopPropagation()}>
-                                    {drawerPanel}
-                                </div>
-                            </div>
-                        )}
+        <AppShell header={headerComponent} tradeToastsEnabled={tradeToastsEnabled} runtimeEvents={runtimeEvents.data}>
+            {!isCompact && !isNarrow ? (
+                <div>{mainContent}</div>
+            ) : isCompact ? (
+                <div className="space-y-4">{mainContent}</div>
+            ) : (
+                <div className="space-y-4">
+                    <div className="flex justify-end">
+                        <button
+                            onClick={() => setDrawerOpen(true)}
+                            className="inline-flex items-center gap-1 rounded border border-white/10 px-2 py-1 text-xs text-slate-300 hover:bg-white/10"
+                        >
+                            <ListOrdered size={12} /> Activity {severity > 0 ? `(${severity})` : ''}
+                        </button>
                     </div>
-                )}
-            </AppShell>
+                    {mainContent}
+                    {drawerOpen && (
+                        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setDrawerOpen(false)}>
+                            <div className="absolute bottom-0 right-0 h-[70vh] w-full max-w-[100vw] sm:top-0 sm:h-full sm:w-[360px] sm:max-w-[92vw]" onClick={(event) => event.stopPropagation()}>
+                                {drawerPanel}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </AppShell>
+    );
+}
+
+export default function Page() {
+    return (
+        <RuntimeCacheProvider pollInterval={4000} enabled>
+            <RuntimeEventsProvider pollInterval={1200} enabled>
+                <DashboardPageContent />
+            </RuntimeEventsProvider>
         </RuntimeCacheProvider>
     );
 }
@@ -917,10 +834,4 @@ function fmtMs(value: number | null | undefined): string {
     if (value < 1000) return `${Math.round(value)}ms`;
     if (value < 60000) return `${Math.round(value / 1000)}s`;
     return `${Math.round(value / 60000)}m`;
-}
-
-function riskBand(adverseRate: number): 'LOW' | 'MED' | 'HIGH' {
-    if (adverseRate >= 0.30) return 'HIGH';
-    if (adverseRate >= 0.15) return 'MED';
-    return 'LOW';
 }

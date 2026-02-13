@@ -20,6 +20,22 @@ export interface RuntimeCacheLightSnapshot {
     background: unknown | null;
     orderbookMidPrice: number | null;
     orderbookSpreadBps: number | null;
+    spreadDistribution: {
+        updatedAtMs: number;
+        lookback24h: {
+            sampleCount: number;
+            medianBps: number | null;
+            p75Bps: number | null;
+            p90Bps: number | null;
+        };
+        baselineMultiDay: {
+            days: number;
+            sampleCount: number;
+            medianBps: number | null;
+            p75Bps: number | null;
+            p90Bps: number | null;
+        };
+    } | null;
 }
 
 export interface RuntimeCacheResponse {

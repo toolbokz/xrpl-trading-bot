@@ -431,6 +431,8 @@ function initSchema(db: DatabaseType): void {
         CREATE INDEX IF NOT EXISTS idx_trade_events_strategy_ts ON trade_events(strategy, ts);
         CREATE INDEX IF NOT EXISTS idx_trade_events_regime ON trade_events(ts);
         CREATE INDEX IF NOT EXISTS idx_trade_events_txhash ON trade_events(txHash);
+        CREATE INDEX IF NOT EXISTS idx_trade_events_pair_strategy_ts_desc ON trade_events(pairKey, strategy, ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_trade_events_pair_action_ts_desc ON trade_events(pairKey, action, ts DESC);
         CREATE INDEX IF NOT EXISTS idx_snapshots_pair_ts ON market_snapshots(pairKey, ts);
         CREATE INDEX IF NOT EXISTS idx_snapshots_regime_ts ON market_snapshots(flowRegime, ts);
         CREATE INDEX IF NOT EXISTS idx_eq_events_pair_ts ON execution_quality_events(pairKeyCanonical, ts);
@@ -439,12 +441,20 @@ function initSchema(db: DatabaseType): void {
         CREATE INDEX IF NOT EXISTS idx_eq_events_source_ts ON execution_quality_events(source, ts);
         CREATE INDEX IF NOT EXISTS idx_eq_events_regime_ts ON execution_quality_events(regime, ts);
         CREATE INDEX IF NOT EXISTS idx_eq_events_txhash ON execution_quality_events(txHash);
+        CREATE INDEX IF NOT EXISTS idx_eq_events_pair_strategy_side_source_ts_desc
+            ON execution_quality_events(pairKeyCanonical, strategy, side, source, ts DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_events_txhash_not_null_unique
+            ON execution_quality_events(txHash) WHERE txHash IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_edge_attr_pair_ts ON edge_attribution_events(pairKeyCanonical, ts);
         CREATE INDEX IF NOT EXISTS idx_edge_attr_strategy_ts ON edge_attribution_events(strategy, ts);
         CREATE INDEX IF NOT EXISTS idx_edge_attr_side_ts ON edge_attribution_events(side, ts);
         CREATE INDEX IF NOT EXISTS idx_edge_attr_regime_ts ON edge_attribution_events(regime, ts);
         CREATE INDEX IF NOT EXISTS idx_edge_attr_source_ts ON edge_attribution_events(source, ts);
         CREATE INDEX IF NOT EXISTS idx_edge_attr_txhash ON edge_attribution_events(txHash);
+        CREATE INDEX IF NOT EXISTS idx_edge_attr_pair_strategy_side_source_ts_desc
+            ON edge_attribution_events(pairKeyCanonical, strategy, side, source, ts DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_edge_attr_txhash_not_null_unique
+            ON edge_attribution_events(txHash) WHERE txHash IS NOT NULL;
     `);
 
     logger.debug('Feedback database schema initialized');
@@ -635,7 +645,7 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
             )
         `),
         insertExecutionQualityEvent: db.prepare(`
-            INSERT INTO execution_quality_events (
+            INSERT OR IGNORE INTO execution_quality_events (
                 id, ts, eventId, txHash, pairKeyCanonical, pairAliases,
                 side, strategy, regime, source,
                 intentPrice, expectedPrice, expectedPriceSource,
@@ -670,7 +680,7 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
             WHERE id = @id
         `),
         insertEdgeAttributionEvent: db.prepare(`
-            INSERT INTO edge_attribution_events (
+            INSERT OR IGNORE INTO edge_attribution_events (
                 id, ts, eventId, txHash, pairKeyCanonical, pairAliases,
                 side, strategy, regime, source,
                 midDecision, bidDecision, askDecision, fillPrice,
@@ -911,7 +921,7 @@ export function insertTradeEvent(event: TradeEventRecord): string | null {
 export function insertExecutionQualityEvent(event: ExecutionQualityEventRecord): string | null {
     try {
         const stmt = getStatements().insertExecutionQualityEvent;
-        stmt.run({
+        const result = stmt.run({
             id: event.id,
             ts: event.ts,
             eventId: event.eventId,
@@ -953,6 +963,9 @@ export function insertExecutionQualityEvent(event: ExecutionQualityEventRecord):
             submitToValidatedMs: event.submitToValidatedMs,
             decisionToValidatedMs: event.decisionToValidatedMs,
         });
+        if (result.changes === 0) {
+            return null;
+        }
         return event.id;
     } catch (err) {
         logger.warn({ err, eventId: event.id }, 'Failed to insert execution quality event');
@@ -986,7 +999,7 @@ export function updateExecutionQualityHorizons(input: {
 export function insertEdgeAttributionEvent(event: EdgeAttributionEventRecord): string | null {
     try {
         const stmt = getStatements().insertEdgeAttributionEvent;
-        stmt.run({
+        const result = stmt.run({
             id: event.id,
             ts: event.ts,
             eventId: event.eventId,
@@ -1022,6 +1035,9 @@ export function insertEdgeAttributionEvent(event: EdgeAttributionEventRecord): s
             hasHorizon1m: event.hasHorizon1m,
             hasHorizon5m: event.hasHorizon5m,
         });
+        if (result.changes === 0) {
+            return null;
+        }
         return event.id;
     } catch (err) {
         logger.warn({ err, eventId: event.id }, 'Failed to insert edge attribution event');
@@ -1498,12 +1514,27 @@ export function getSnapshotNear(pairKey: string, ts: number, toleranceMs: number
         const placeholders = aliases.map(() => '?').join(', ');
         const where = aliases.length > 0 ? `pairKey IN (${placeholders})` : 'pairKey = ?';
         const baseParams = aliases.length > 0 ? aliases : [pairKey];
-        return db.prepare(`
-            SELECT * FROM market_snapshots 
+
+        const before = db.prepare(`
+            SELECT * FROM market_snapshots
             WHERE ${where} AND ts BETWEEN ? AND ?
-            ORDER BY ABS(ts - ?) 
+            ORDER BY ts DESC
             LIMIT 1
-        `).get(...baseParams, ts - toleranceMs, ts + toleranceMs, ts) as MarketSnapshotRecord | null;
+        `).get(...baseParams, ts - toleranceMs, ts) as MarketSnapshotRecord | null;
+
+        const after = db.prepare(`
+            SELECT * FROM market_snapshots
+            WHERE ${where} AND ts BETWEEN ? AND ?
+            ORDER BY ts ASC
+            LIMIT 1
+        `).get(...baseParams, ts, ts + toleranceMs) as MarketSnapshotRecord | null;
+
+        if (!before) return after;
+        if (!after) return before;
+
+        const beforeDiff = Math.abs(before.ts - ts);
+        const afterDiff = Math.abs(after.ts - ts);
+        return beforeDiff <= afterDiff ? before : after;
     } catch (err) {
         logger.warn({ err, pairKey, ts }, 'Failed to get snapshot near timestamp');
         return null;

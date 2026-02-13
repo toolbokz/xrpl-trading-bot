@@ -104,6 +104,7 @@ export interface ExecutionQualityPanelProps {
     pairKey?: string;
     strategy?: string;
     pollInterval?: number;
+    enabled?: boolean;
 }
 
 const sinceOptions = [
@@ -215,6 +216,7 @@ export function ExecutionQualityPanel({
     pairKey,
     strategy,
     pollInterval = 15_000,
+    enabled = true,
 }: ExecutionQualityPanelProps) {
     const [data, setData] = useState<ExecutionQualityApiResponse | null>(null);
     const [loading, setLoading] = useState<boolean>(true);
@@ -255,10 +257,11 @@ export function ExecutionQualityPanel({
     }, [pairKey, sinceWindowMs, bucketMs, strategyFilter, side, source]);
 
     useEffect(() => {
+        if (!enabled) return () => undefined;
         fetchData();
         const interval = setInterval(fetchData, pollInterval);
         return () => clearInterval(interval);
-    }, [fetchData, pollInterval]);
+    }, [fetchData, pollInterval, enabled]);
 
     const series = useMemo(
         () =>

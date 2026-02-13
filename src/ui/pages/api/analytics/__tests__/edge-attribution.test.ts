@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { invalidateAnalyticsCache } from '../_cache';
 
 const { mockGetEdgeAttributionAnalytics } = vi.hoisted(() => ({
     mockGetEdgeAttributionAnalytics: vi.fn(),
@@ -77,6 +78,7 @@ const defaultAnalytics = {
 describe('GET /api/analytics/edge-attribution', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        invalidateAnalyticsCache('analytics:');
         mockGetEdgeAttributionAnalytics.mockReturnValue(defaultAnalytics);
     });
 
@@ -132,5 +134,27 @@ describe('GET /api/analytics/edge-attribution', () => {
             pairKey: 'XRP/RLUSD',
             side: 'buy',
         });
+    });
+
+    it('uses analytics cache for repeated identical filters', () => {
+        const req1 = createMockReq({
+            pairKey: 'XRP/RLUSD',
+            sinceMs: '1770000000000',
+            bucketMs: '60000',
+        });
+        const req2 = createMockReq({
+            pairKey: 'XRP/RLUSD',
+            sinceMs: '1770000000000',
+            bucketMs: '60000',
+        });
+        const res1 = createMockRes();
+        const res2 = createMockRes();
+
+        handler(req1, res1);
+        handler(req2, res2);
+
+        expect(res1.statusCode).toBe(200);
+        expect(res2.statusCode).toBe(200);
+        expect(mockGetEdgeAttributionAnalytics).toHaveBeenCalledTimes(1);
     });
 });

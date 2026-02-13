@@ -31,6 +31,7 @@ export interface TradeAggression {
 export interface TradeTapePanelProps {
     pairKey?: string | undefined;
     maxRows?: number | undefined;
+    reconcileIntervalMs?: number | undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47,7 +48,11 @@ const TIME_WINDOWS = [
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function TradeTapePanel({ pairKey, maxRows = 100 }: TradeTapePanelProps) {
+export function TradeTapePanel({
+    pairKey,
+    maxRows = 100,
+    reconcileIntervalMs = 60_000,
+}: TradeTapePanelProps) {
     const [trades, setTrades] = useState<TapeTrade[]>([]);
     const [stats, setStats] = useState<TradeAggression>({
         buyVolumeBase: 0,
@@ -160,13 +165,13 @@ export function TradeTapePanel({ pairKey, maxRows = 100 }: TradeTapePanelProps) 
         fetchInitialTrades();
         connectStream();
 
-        const interval = setInterval(fetchInitialTrades, 30_000);
+        const interval = setInterval(fetchInitialTrades, Math.max(30_000, reconcileIntervalMs));
 
         return () => {
             clearInterval(interval);
             eventSourceRef.current?.close();
         };
-    }, [fetchInitialTrades, connectStream]);
+    }, [fetchInitialTrades, connectStream, reconcileIntervalMs]);
 
     useEffect(() => {
         if (autoScroll && containerRef.current && trades.length > 0) {

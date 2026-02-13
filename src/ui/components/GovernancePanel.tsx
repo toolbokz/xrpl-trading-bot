@@ -118,7 +118,7 @@ function MetricBar({
     );
 }
 
-export function GovernancePanel({ compact = false }: { compact?: boolean }) {
+export function GovernancePanel({ compact = false, enabled = true }: { compact?: boolean; enabled?: boolean }) {
     const [state, setState] = useState<GovernanceState | null>(null);
     const [available, setAvailable] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -144,10 +144,11 @@ export function GovernancePanel({ compact = false }: { compact?: boolean }) {
     }, []);
 
     useEffect(() => {
+        if (!enabled) return () => undefined;
         fetchGovernanceState();
         const interval = setInterval(fetchGovernanceState, 5000); // Poll every 5s
         return () => clearInterval(interval);
-    }, [fetchGovernanceState]);
+    }, [fetchGovernanceState, enabled]);
 
     if (loading) {
         return (

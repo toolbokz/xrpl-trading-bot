@@ -69,4 +69,41 @@ describe('edge attribution persistence', () => {
         expect(human[0]?.id).toBe(hex[0]?.id);
         expect(human[0]?.txHash).toBe('EDGE_HASH_ALIAS');
     });
+
+    it('dedupes duplicate txHash rows via partial unique index', async () => {
+        const { feedbackEngine } = await import('../feedbackEngine');
+        const { queryEdgeAttributionEvents } = await import('../feedbackDb');
+
+        feedbackEngine.recordEdgeAttributionEvent({
+            txHash: 'EDGE_HASH_DEDUPE',
+            pairKey: 'XRP/RLUSD',
+            side: 'buy',
+            strategy: 'scalper',
+            source: 'bot',
+            midDecision: 1.35,
+            bidDecision: 1.3498,
+            askDecision: 1.3502,
+            fillPrice: 1.3501,
+            baseFilled: 0.1,
+            filledQuote: 0.13501,
+        });
+
+        feedbackEngine.recordEdgeAttributionEvent({
+            txHash: 'EDGE_HASH_DEDUPE',
+            pairKey: 'XRP/RLUSD',
+            side: 'buy',
+            strategy: 'scalper',
+            source: 'bot',
+            midDecision: 1.36,
+            bidDecision: 1.3598,
+            askDecision: 1.3602,
+            fillPrice: 1.3601,
+            baseFilled: 0.1,
+            filledQuote: 0.13601,
+        });
+
+        const rows = queryEdgeAttributionEvents({ pairKey: 'XRP/RLUSD' });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.txHash).toBe('EDGE_HASH_DEDUPE');
+    });
 });

@@ -215,7 +215,7 @@ function HeatmapCell({
 // Main Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function RegimeHeatmapPanel() {
+export function RegimeHeatmapPanel({ enabled = true }: { enabled?: boolean }) {
     const [heatmap, setHeatmap] = useState<RegimeHeatmapResponse | null>(null);
     const [policy, setPolicy] = useState<RegimePolicy | null>(null);
     const [loading, setLoading] = useState(true);
@@ -265,10 +265,11 @@ export function RegimeHeatmapPanel() {
     }, [fetchData]);
 
     useEffect(() => {
+        if (!enabled) return () => undefined;
         fetchData();
         const interval = setInterval(fetchData, 30000); // Poll every 30s
         return () => clearInterval(interval);
-    }, [fetchData]);
+    }, [fetchData, enabled]);
 
     // Get list of strategies from heatmap
     const strategies = heatmap ? Object.keys(heatmap.perStrategy) : [];

@@ -13,6 +13,22 @@ interface LightRuntimeCacheSnapshot {
     background: unknown | null;
     orderbookMidPrice: number | null;
     orderbookSpreadBps: number | null;
+    spreadDistribution: {
+        updatedAtMs: number;
+        lookback24h: {
+            sampleCount: number;
+            medianBps: number | null;
+            p75Bps: number | null;
+            p90Bps: number | null;
+        };
+        baselineMultiDay: {
+            days: number;
+            sampleCount: number;
+            medianBps: number | null;
+            p75Bps: number | null;
+            p90Bps: number | null;
+        };
+    } | null;
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -39,6 +55,7 @@ export async function GET(): Promise<NextResponse> {
         background: snapshot.background ?? null,
         orderbookMidPrice,
         orderbookSpreadBps: ob?.spreadBps ?? null,
+        spreadDistribution: snapshot.spreadDistribution ?? null,
     };
 
     return NextResponse.json({

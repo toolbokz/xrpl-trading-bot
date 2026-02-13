@@ -71,4 +71,39 @@ describe('execution quality persistence', () => {
         expect(human[0]?.id).toBe(hex[0]?.id);
         expect(human[0]?.txHash).toBe('EQ_HASH_ALIAS');
     });
+
+    it('dedupes duplicate txHash rows via partial unique index', async () => {
+        const { feedbackEngine } = await import('../feedbackEngine');
+        const { queryExecutionQualityEvents } = await import('../feedbackDb');
+
+        feedbackEngine.recordExecutionQualityEvent({
+            txHash: 'EQ_HASH_DEDUPE',
+            pairKey: 'XRP/RLUSD',
+            side: 'buy',
+            strategy: 'scalper',
+            source: 'bot',
+            fillPrice: 1.3,
+            amountBase: 0.2,
+            filledBase: 0.2,
+            filledQuote: 0.26,
+            status: 'FILLED',
+        });
+
+        feedbackEngine.recordExecutionQualityEvent({
+            txHash: 'EQ_HASH_DEDUPE',
+            pairKey: 'XRP/RLUSD',
+            side: 'buy',
+            strategy: 'scalper',
+            source: 'bot',
+            fillPrice: 1.31,
+            amountBase: 0.2,
+            filledBase: 0.2,
+            filledQuote: 0.262,
+            status: 'FILLED',
+        });
+
+        const rows = queryExecutionQualityEvents({ pairKey: 'XRP/RLUSD' });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.txHash).toBe('EQ_HASH_DEDUPE');
+    });
 });

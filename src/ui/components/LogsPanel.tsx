@@ -25,9 +25,16 @@ interface LogsResponse {
 interface LogsPanelProps {
     maxRows?: number;
     pollInterval?: number;
+    hiddenPollInterval?: number;
+    active?: boolean;
 }
 
-export function LogsPanel({ maxRows = 100, pollInterval = 2000 }: LogsPanelProps) {
+export function LogsPanel({
+    maxRows = 100,
+    pollInterval = 2000,
+    hiddenPollInterval = 10_000,
+    active = true,
+}: LogsPanelProps) {
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [counts, setCounts] = useState<Record<LogLevel, number>>({
         trace: 0, debug: 0, info: 0, warn: 0, error: 0, fatal: 0
@@ -84,14 +91,15 @@ export function LogsPanel({ maxRows = 100, pollInterval = 2000 }: LogsPanelProps
     // Polling for new logs
     useEffect(() => {
         if (!isPolling) return;
+        const intervalMs = active ? pollInterval : hiddenPollInterval;
 
         const interval = setInterval(() => {
             // Fetch logs newer than our last fetch timestamp
             fetchLogs(lastFetch || undefined);
-        }, pollInterval);
+        }, intervalMs);
 
         return () => clearInterval(interval);
-    }, [isPolling, pollInterval, lastFetch, fetchLogs]);
+    }, [isPolling, pollInterval, hiddenPollInterval, active, lastFetch, fetchLogs]);
 
     const clearLogs = useCallback(() => {
         setLogs([]);

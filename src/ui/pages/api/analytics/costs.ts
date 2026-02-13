@@ -7,6 +7,11 @@ export const config = {
 };
 
 /**
+ * Deprecated route: currently not mounted in the primary dashboard.
+ * Kept for telemetry and backward compatibility until explicit removal.
+ */
+
+/**
  * Cost realism API response shape
  */
 export interface CostRealismApiResponse {

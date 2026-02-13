@@ -2,6 +2,7 @@ import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
 import { triggerUpdate, isSchedulerRunning } from '../../../../../analytics/adaptiveScheduler';
 import { isAdaptiveEnabled } from '../../../../../analytics/adaptiveConfig';
+import { invalidateAnalyticsCache } from '../_cache';
 
 export const config = {
     api: { bodyParser: true },
@@ -28,6 +29,7 @@ function handler(req: LocalRequest, res: NextApiResponse<RecomputeApiResponse | 
     }
 
     try {
+        invalidateAnalyticsCache('analytics:');
         if (!isAdaptiveEnabled()) {
             return res.status(200).json({
                 requestId: req.requestId,

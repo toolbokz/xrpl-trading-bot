@@ -106,6 +106,7 @@ export interface EdgeAttributionPanelProps {
     pairKey?: string;
     strategy?: string;
     pollInterval?: number;
+    enabled?: boolean;
 }
 
 const sinceOptions = [
@@ -135,6 +136,7 @@ export function EdgeAttributionPanel({
     pairKey,
     strategy,
     pollInterval = 20_000,
+    enabled = true,
 }: EdgeAttributionPanelProps) {
     const [data, setData] = useState<EdgeAttributionApiResponse | null>(null);
     const [loading, setLoading] = useState<boolean>(true);
@@ -173,10 +175,11 @@ export function EdgeAttributionPanel({
     }, [pairKey, sinceWindowMs, bucketMs, strategyFilter, side, source]);
 
     useEffect(() => {
+        if (!enabled) return () => undefined;
         fetchData();
         const interval = setInterval(fetchData, pollInterval);
         return () => clearInterval(interval);
-    }, [fetchData, pollInterval]);
+    }, [fetchData, pollInterval, enabled]);
 
     const series = useMemo(
         () =>

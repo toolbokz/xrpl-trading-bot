@@ -2,6 +2,7 @@ import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
 import { getRuntime } from '../../../../lib/runtimeHooks';
 import { getRegimePolicyEngine, RegimePolicy } from '../../../../../analytics/regimePolicy';
+import { invalidateAnalyticsCache } from '../_cache';
 
 export const config = {
     api: { bodyParser: false },
@@ -56,6 +57,7 @@ function handler(
         }
 
         const success = policy !== null;
+        invalidateAnalyticsCache('analytics:');
 
         const response: RecomputeApiResponse = {
             requestId: req.requestId,

@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ObservabilityEvent } from '../../../observability/eventBus';
 import type { TradeToastEvent } from '../../../observability/tradeToastEvents';
 import { emitTradeToast, subscribeTradeToasts } from '../../services/tradeToastBus';
+import type { RuntimeEventsResponse } from '../../lib/hooks/useRuntimeEvents';
 import {
     dismissToast,
     enqueueToast,
@@ -17,13 +18,13 @@ import { Toast } from './Toast';
 
 interface ToastContainerProps {
     enabled?: boolean;
+    runtimeEvents?: RuntimeEventsResponse | null;
 }
 
 const EMPTY_STATE: TradeToastState = { visible: [], queued: [] };
 
-export function ToastContainer({ enabled = false }: ToastContainerProps) {
+export function ToastContainer({ enabled = false, runtimeEvents = null }: ToastContainerProps) {
     const [state, setState] = useState<TradeToastState>(EMPTY_STATE);
-    const lastSeqRef = useRef(0);
 
     useEffect(() => {
         if (!enabled) return;
@@ -43,35 +44,13 @@ export function ToastContainer({ enabled = false }: ToastContainerProps) {
 
     useEffect(() => {
         if (!enabled) return;
-        let cancelled = false;
-
-        const poll = async () => {
-            try {
-                const afterSeq = lastSeqRef.current;
-                const res = await fetch(`/api/runtime/events?afterSeq=${afterSeq}&limit=100`);
-                if (!res.ok) return;
-                const payload = await res.json();
-                if (cancelled) return;
-                const events = Array.isArray(payload?.events) ? payload.events as ObservabilityEvent[] : [];
-                for (const event of events) {
-                    const mapped = mapRuntimeEventToToast(event);
-                    if (mapped) emitTradeToast(mapped);
-                }
-                if (typeof payload?.seq === 'number' && Number.isFinite(payload.seq)) {
-                    lastSeqRef.current = payload.seq;
-                }
-            } catch {
-                // best-effort; never throw
-            }
-        };
-
-        void poll();
-        const interval = setInterval(() => { void poll(); }, 1200);
-        return () => {
-            cancelled = true;
-            clearInterval(interval);
-        };
-    }, [enabled]);
+        const events = runtimeEvents?.events;
+        if (!Array.isArray(events) || events.length === 0) return;
+        for (const event of events as ObservabilityEvent[]) {
+            const mapped = mapRuntimeEventToToast(event);
+            if (mapped) emitTradeToast(mapped);
+        }
+    }, [enabled, runtimeEvents?.seq, runtimeEvents?.events]);
 
     const visible = useMemo(() => state.visible, [state.visible]);
     if (!enabled || visible.length === 0) return null;
@@ -114,4 +93,3 @@ function mapRuntimeEventToToast(event: ObservabilityEvent): TradeToastEvent | nu
 }
 
 export default ToastContainer;
-

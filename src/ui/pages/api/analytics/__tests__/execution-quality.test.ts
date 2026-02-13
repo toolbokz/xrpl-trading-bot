@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { invalidateAnalyticsCache } from '../_cache';
 
 const { mockGetExecutionQualityAnalytics } = vi.hoisted(() => ({
     mockGetExecutionQualityAnalytics: vi.fn(),
@@ -83,6 +84,7 @@ const defaultAnalytics = {
 describe('GET /api/analytics/execution-quality', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        invalidateAnalyticsCache('analytics:');
         mockGetExecutionQualityAnalytics.mockReturnValue(defaultAnalytics);
     });
 
@@ -142,5 +144,27 @@ describe('GET /api/analytics/execution-quality', () => {
             sinceMs: expectedSinceMs,
         });
         vi.useRealTimers();
+    });
+
+    it('uses analytics cache for repeated identical filters', () => {
+        const req1 = createMockReq({
+            pairKey: 'XRP/RLUSD',
+            sinceMs: '1770000000000',
+            bucketMs: '60000',
+        });
+        const req2 = createMockReq({
+            pairKey: 'XRP/RLUSD',
+            sinceMs: '1770000000000',
+            bucketMs: '60000',
+        });
+        const res1 = createMockRes();
+        const res2 = createMockRes();
+
+        handler(req1, res1);
+        handler(req2, res2);
+
+        expect(res1.statusCode).toBe(200);
+        expect(res2.statusCode).toBe(200);
+        expect(mockGetExecutionQualityAnalytics).toHaveBeenCalledTimes(1);
     });
 });

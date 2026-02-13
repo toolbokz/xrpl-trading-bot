@@ -1,6 +1,8 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { feedbackEngine, AnalyticsResponse, AnalyticsSummary, RegimeStats, StrategyStats, DrawdownPoint, ProfitFactorPoint } from '../../../../analytics/feedbackEngine';
+import { canonicalizePairKey } from '../../../../xrpl/currency';
+import { buildAnalyticsCacheKey, getCachedAnalytics, setCachedAnalytics, getAnalyticsCacheTtlMs } from './_cache';
 
 export const config = {
     api: { bodyParser: false },
@@ -61,14 +63,27 @@ function handler(req: LocalRequest, res: NextApiResponse<AnalyticsApiResponse | 
             }
         }
 
+        const canonicalPair = filters.pairKey ? canonicalizePairKey(filters.pairKey) : null;
+        const cacheKey = buildAnalyticsCacheKey('summary', {
+            pairKey: canonicalPair,
+            sinceMs: filters.sinceMs ?? null,
+        });
+
+        const cached = getCachedAnalytics<Omit<AnalyticsApiResponse, 'requestId' | 'timestamp'>>(cacheKey);
+        if (cached) {
+            return res.status(200).json({
+                requestId: req.requestId,
+                timestamp: new Date().toISOString(),
+                ...cached,
+            });
+        }
+
         // Get analytics from feedback engine
         const analytics: AnalyticsResponse = feedbackEngine.getAnalytics(filters);
 
-        const response: AnalyticsApiResponse = {
-            requestId: req.requestId,
-            timestamp: new Date().toISOString(),
+        const payload: Omit<AnalyticsApiResponse, 'requestId' | 'timestamp'> = {
             filters: {
-                pairKey: filters.pairKey ?? null,
+                pairKey: canonicalPair,
                 sinceMs: filters.sinceMs ?? null,
             },
             summary: analytics.summary,
@@ -77,6 +92,14 @@ function handler(req: LocalRequest, res: NextApiResponse<AnalyticsApiResponse | 
             drawdown: analytics.drawdown,
             drawdownVelocity: analytics.drawdownVelocity,
             profitFactorSeries: analytics.profitFactorSeries,
+        };
+
+        setCachedAnalytics(cacheKey, payload, getAnalyticsCacheTtlMs());
+
+        const response: AnalyticsApiResponse = {
+            requestId: req.requestId,
+            timestamp: new Date().toISOString(),
+            ...payload,
         };
 
         return res.status(200).json(response);

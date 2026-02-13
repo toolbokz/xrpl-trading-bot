@@ -69,6 +69,8 @@ interface AdaptivePanelProps {
     regime?: FlowRegime | null;
     /** Polling interval in ms (default: 10000) */
     pollInterval?: number;
+    /** Toggle polling while panel is hidden */
+    enabled?: boolean;
 }
 
 export function AdaptivePanel({
@@ -76,6 +78,7 @@ export function AdaptivePanel({
     strategy,
     regime,
     pollInterval = 10000,
+    enabled: pollingEnabled = true,
 }: AdaptivePanelProps) {
     const [data, setData] = useState<AdaptiveStateResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -131,10 +134,11 @@ export function AdaptivePanel({
     };
 
     useEffect(() => {
+        if (!pollingEnabled) return () => undefined;
         fetchState();
         const interval = setInterval(fetchState, pollInterval);
         return () => clearInterval(interval);
-    }, [fetchState, pollInterval]);
+    }, [fetchState, pollInterval, pollingEnabled]);
 
     // Get current tuning if we have context
     const currentTuning: AdaptiveTuning | null = (() => {

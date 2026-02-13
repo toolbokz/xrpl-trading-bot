@@ -4,6 +4,7 @@
  * drawdownVelocity and profitFactorSeries fields.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { invalidateAnalyticsCache } from '../_cache';
 
 // Mock feedbackEngine before any import that pulls it in
 vi.mock('../../../../../analytics/feedbackEngine', () => {
@@ -98,6 +99,7 @@ function createMockRes() {
 describe('GET /api/analytics/summary', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        invalidateAnalyticsCache('analytics:');
     });
 
     it('should return 200 with all fields including drawdownVelocity and profitFactorSeries', () => {
@@ -161,5 +163,20 @@ describe('GET /api/analytics/summary', () => {
         const regime = res.body.byRegime[0];
         expect(regime).toHaveProperty('totalPnl');
         expect(regime).toHaveProperty('pnlPerTrade');
+    });
+
+    it('caches repeated responses for identical filters', async () => {
+        const mod = await import('../../../../../analytics/feedbackEngine');
+        const req1 = createMockReq({ pair: 'XRP/RLUSD', sinceMs: '1000' });
+        const req2 = createMockReq({ pair: 'XRP/RLUSD', sinceMs: '1000' });
+        const res1 = createMockRes();
+        const res2 = createMockRes();
+
+        handler(req1, res1);
+        handler(req2, res2);
+
+        expect(res1.statusCode).toBe(200);
+        expect(res2.statusCode).toBe(200);
+        expect(mod.feedbackEngine.getAnalytics).toHaveBeenCalledTimes(1);
     });
 });

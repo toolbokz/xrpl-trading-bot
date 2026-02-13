@@ -4,6 +4,7 @@ import { ReactNode } from 'react';
 import clsx from 'clsx';
 import { MockDataBanner } from '../MockDataBanner';
 import { ToastContainer } from '../TradeToasts/ToastContainer';
+import type { RuntimeEventsResponse } from '../../lib/hooks/useRuntimeEvents';
 
 interface AppShellProps {
     /** Header content (typically TerminalHeader) */
@@ -14,6 +15,8 @@ interface AppShellProps {
     className?: string;
     /** Feature flag for trade toast notifications */
     tradeToastsEnabled?: boolean;
+    /** Shared runtime events snapshot (single poller source) */
+    runtimeEvents?: RuntimeEventsResponse | null;
 }
 
 /**
@@ -21,7 +24,13 @@ interface AppShellProps {
  *
  * Tight 40px header, minimal chrome, maximum data density.
  */
-export function AppShell({ header, children, className, tradeToastsEnabled = false }: AppShellProps) {
+export function AppShell({
+    header,
+    children,
+    className,
+    tradeToastsEnabled = false,
+    runtimeEvents = null,
+}: AppShellProps) {
     return (
         <div
             className={clsx(
@@ -43,7 +52,7 @@ export function AppShell({ header, children, className, tradeToastsEnabled = fal
                 {children}
             </main>
 
-            {tradeToastsEnabled && <ToastContainer enabled={tradeToastsEnabled} />}
+            {tradeToastsEnabled && <ToastContainer enabled={tradeToastsEnabled} runtimeEvents={runtimeEvents} />}
         </div>
     );
 }

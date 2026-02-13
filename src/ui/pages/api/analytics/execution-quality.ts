@@ -10,6 +10,8 @@ import {
     ExecutionQualityBreakdownRow,
     ExecutionQualityAnomalies,
 } from '../../../../analytics/feedbackEngine';
+import { canonicalizePairKey } from '../../../../xrpl/currency';
+import { buildAnalyticsCacheKey, getAnalyticsCacheTtlMs, getCachedAnalytics, setCachedAnalytics } from './_cache';
 
 export const config = {
     api: { bodyParser: false },
@@ -111,13 +113,28 @@ function handler(req: LocalRequest, res: NextApiResponse<ExecutionQualityApiResp
             filters.bucketMs = parsedBucketMs;
         }
 
+        const cacheKey = buildAnalyticsCacheKey('execution-quality', {
+            pairKey: filters.pairKey ? canonicalizePairKey(filters.pairKey) : null,
+            sinceMs: filters.sinceMs ?? null,
+            strategy: filters.strategy ?? null,
+            side: filters.side ?? null,
+            source: filters.source ?? null,
+            bucketMs: filters.bucketMs ?? 60_000,
+        });
+        const cached = getCachedAnalytics<Omit<ExecutionQualityApiResponse, 'requestId' | 'timestamp'>>(cacheKey);
+        if (cached) {
+            return res.status(200).json({
+                requestId: req.requestId,
+                timestamp: new Date().toISOString(),
+                ...cached,
+            });
+        }
+
         const analytics: ExecutionQualityAnalytics = feedbackEngine.getExecutionQualityAnalytics(filters);
 
-        const response: ExecutionQualityApiResponse = {
-            requestId: req.requestId,
-            timestamp: new Date().toISOString(),
+        const payload: Omit<ExecutionQualityApiResponse, 'requestId' | 'timestamp'> = {
             filters: {
-                pairKey: filters.pairKey ?? null,
+                pairKey: filters.pairKey ? canonicalizePairKey(filters.pairKey) : null,
                 sinceMs: filters.sinceMs ?? null,
                 strategy: filters.strategy ?? null,
                 side: filters.side ?? null,
@@ -129,6 +146,14 @@ function handler(req: LocalRequest, res: NextApiResponse<ExecutionQualityApiResp
             histograms: analytics.histograms,
             breakdowns: analytics.breakdowns,
             anomalies: analytics.anomalies,
+        };
+
+        setCachedAnalytics(cacheKey, payload, getAnalyticsCacheTtlMs());
+
+        const response: ExecutionQualityApiResponse = {
+            requestId: req.requestId,
+            timestamp: new Date().toISOString(),
+            ...payload,
         };
 
         return res.status(200).json(response);

@@ -1,6 +1,7 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
 import { feedbackEngine, RegimeHeatmapResponse } from '../../../../../analytics/feedbackEngine';
+import { buildAnalyticsCacheKey, getAnalyticsCacheTtlMs, getCachedAnalytics, setCachedAnalytics } from '../_cache';
 
 export const config = {
     api: { bodyParser: false },
@@ -41,18 +42,40 @@ function handler(
         const lookbackHours = typeof hours === 'string' ? parseInt(hours, 10) : 24;
         const minTradesNum = typeof minTrades === 'string' ? parseInt(minTrades, 10) : 5;
         const includeStrategy = byStrategy !== 'false';
+        const normalizedLookbackHours = isNaN(lookbackHours) ? 24 : lookbackHours;
+        const normalizedMinTrades = isNaN(minTradesNum) ? 5 : minTradesNum;
+
+        const cacheKey = buildAnalyticsCacheKey('regimes-heatmap', {
+            lookbackHours: normalizedLookbackHours,
+            minTrades: normalizedMinTrades,
+            byStrategy: includeStrategy,
+        });
+        const cached = getCachedAnalytics<Omit<RegimeHeatmapApiResponse, 'requestId' | 'timestamp'>>(cacheKey);
+        if (cached) {
+            return res.status(200).json({
+                requestId: req.requestId,
+                timestamp: new Date().toISOString(),
+                ...cached,
+            });
+        }
 
         // Get heatmap from feedback engine
         const heatmap = feedbackEngine.getRegimeHeatmap({
-            lookbackHours: isNaN(lookbackHours) ? 24 : lookbackHours,
-            minTrades: isNaN(minTradesNum) ? 5 : minTradesNum,
+            lookbackHours: normalizedLookbackHours,
+            minTrades: normalizedMinTrades,
             byStrategy: includeStrategy,
         });
+
+        const payload: Omit<RegimeHeatmapApiResponse, 'requestId' | 'timestamp'> = {
+            heatmap,
+        };
+
+        setCachedAnalytics(cacheKey, payload, getAnalyticsCacheTtlMs());
 
         const response: RegimeHeatmapApiResponse = {
             requestId: req.requestId,
             timestamp: new Date().toISOString(),
-            heatmap,
+            ...payload,
         };
 
         return res.status(200).json(response);
