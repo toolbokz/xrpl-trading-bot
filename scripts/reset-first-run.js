@@ -180,7 +180,7 @@ async function flushRedisBreaker() {
     try {
         const redis = require('redis');
         const client = redis.createClient({ url: redisUrl });
-        client.on('error', () => {}); // suppress during reset
+        client.on('error', () => { }); // suppress during reset
         await client.connect();
 
         // Scan and delete all breaker keys
