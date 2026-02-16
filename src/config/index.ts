@@ -145,6 +145,13 @@ export interface AppConfig {
         xrplDiscoveryEnabled?: boolean | undefined;
         tradeToastsEnabled?: boolean | undefined;
     } | undefined;
+    /**
+     * Controls how the bot treats historical data on startup.
+     * - 'none' (default): start clean, only use data accumulated since boot.
+     *   Strategies must warm up from live data before trading.
+     * - 'backfill': attempt to backfill historical ledger data on startup.
+     */
+    historyMode: 'none' | 'backfill';
 }
 
 const toBool = (val: EnvBool, fallback: boolean): boolean => {
@@ -291,5 +298,6 @@ export const loadConfig = (): AppConfig => {
             xrplDiscoveryEnabled: toBool(process.env.FEATURE_XRPL_DISCOVERY_ENABLED as EnvBool, false),
             tradeToastsEnabled: toBool(process.env.FEATURE_TRADE_TOASTS_ENABLED as EnvBool, false),
         },
+        historyMode: (process.env.HISTORY_MODE === 'backfill' ? 'backfill' : 'none') as 'none' | 'backfill',
     };
 };

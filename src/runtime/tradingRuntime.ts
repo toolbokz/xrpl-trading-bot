@@ -126,6 +126,7 @@ import { BackgroundMarketScanner } from '../market/backgroundScanner/backgroundM
 import type { BackgroundScannerSnapshot } from '../market/backgroundScanner/types';
 import { AccountTradeIngestionService } from '../analytics/accountTradeIngestion';
 import { VolatilityEstimator, resolveAdaptiveStopLossBps } from '../market/volatilityEstimator';
+import { initFirstRun } from './firstRunInit';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -144,6 +145,7 @@ const cloneConfig = (cfg: AppConfig): AppConfig => ({
     backgroundScanner: { ...cfg.backgroundScanner },
     analytics: { ...cfg.analytics },
     features: cfg.features ? { ...cfg.features } : undefined,
+    historyMode: cfg.historyMode,
 });
 
 export const validateTradingPair = (pair: TradingPair): void => {
@@ -437,6 +439,9 @@ export class TradingRuntime {
     }
 
     async start(): Promise<void> {
+        // First-run initialization: ensure data dir, detect clean state, set boot timestamp
+        initFirstRun();
+
         // Security gate: re-check on start
         enforceLocalOnly('TradingRuntime.start');
 
