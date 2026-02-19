@@ -249,13 +249,13 @@ export function AdaptivePanel({
                         <div className="flex items-center justify-between text-[11px]">
                             <span className="text-slate-500">Max Slip</span>
                             <span className="font-mono text-slate-300">
-                                {currentTuning.maxSlippageBps} bps
+                                {Number(currentTuning.maxSlippageBps).toFixed(1)} bps
                             </span>
                         </div>
                         <div className="flex items-center justify-between text-[11px]">
                             <span className="text-slate-500">Min Edge</span>
                             <span className="font-mono text-slate-300">
-                                {currentTuning.minEdgeBpsToTrade} bps
+                                {Number(currentTuning.minEdgeBpsToTrade).toFixed(1)} bps
                             </span>
                         </div>
                         {currentTuning.coolDownMs > 0 && (

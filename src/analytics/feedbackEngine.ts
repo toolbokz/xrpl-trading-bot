@@ -2286,13 +2286,16 @@ class FeedbackEngine {
 
     /**
      * Resolve regime for an event with robust fallbacks.
-     * Snapshot is preferred when available; event-captured fields are used
-     * when pair-key or timing mismatches prevent snapshot correlation.
+     * The entry regime (captured at decision time) is preferred because it
+     * reflects the exact market state the strategy acted on.  Nearby
+     * snapshots are periodic and may be seconds away, often landing in a
+     * different micro-regime — which fragments the learner's buckets and
+     * prevents it from ever reaching the sample threshold.
      */
     private resolveEventRegime(event: TradeEventRecord, snapshotRegime: FlowRegime | null): FlowRegime | null {
         return (
-            snapshotRegime
-            ?? event.entryFlowRegime
+            event.entryFlowRegime
+            ?? snapshotRegime
             ?? event.postFlowRegime1s
             ?? event.postFlowRegime3s
             ?? null

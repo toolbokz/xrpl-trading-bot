@@ -109,6 +109,28 @@ function DashboardPageContent() {
     const currentPair = useMemo(() => findPair(selectedPairKey), [selectedPairKey]);
     const diagnosticsVisible = activeToolTab === 'diagnostics';
 
+    // Live flow regime — polled from /api/bot/flow so AdaptivePanel shows the
+    // tuning bucket that actually matches current market conditions.
+    type FlowRegime = 'quiet' | 'normal' | 'trendingUp' | 'trendingDown' | 'chaotic' | 'illiquid';
+    const [liveRegime, setLiveRegime] = useState<FlowRegime | null>(null);
+    useEffect(() => {
+        if (!diagnosticsVisible) return;
+        let cancelled = false;
+        const poll = async () => {
+            try {
+                const res = await fetch('/api/bot/flow');
+                if (!res.ok) return;
+                const json = await res.json();
+                if (!cancelled && json?.regime?.current) {
+                    setLiveRegime(json.regime.current as FlowRegime);
+                }
+            } catch { /* swallow */ }
+        };
+        poll();
+        const id = setInterval(poll, 5_000);
+        return () => { cancelled = true; clearInterval(id); };
+    }, [diagnosticsVisible]);
+
     const {
         data: orderBookData,
         loading: orderBookLoading,
@@ -517,7 +539,7 @@ function DashboardPageContent() {
                     <AdaptivePanel
                         {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
                         strategy={bot.strategy}
-                        regime="normal"
+                        regime={liveRegime ?? 'normal'}
                         pollInterval={15_000}
                         enabled={diagnosticsVisible}
                     />
