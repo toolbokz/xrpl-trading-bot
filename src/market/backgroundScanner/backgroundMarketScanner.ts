@@ -138,8 +138,16 @@ export class BackgroundMarketScanner {
                 const instrument = this.universe.pairByKey.get(pairKey);
                 if (!instrument) return;
                 const verdict = this.getVerdict(pairKey);
-                const snapshot = await this.fetchPairSnapshot(instrument, verdict, nowMs);
-                this.markets.set(pairKey, snapshot);
+                try {
+                    const snapshot = await this.fetchPairSnapshot(instrument, verdict, nowMs);
+                    this.markets.set(pairKey, snapshot);
+                } catch (err) {
+                    // Keep the market visible in UI even if first probe fails.
+                    if (!this.markets.has(pairKey)) {
+                        this.markets.set(pairKey, this.emptyMarketSnapshot(verdict, nowMs));
+                    }
+                    throw err;
+                }
             }));
 
             const failures = scanResults.filter((result) => result.status === 'rejected') as PromiseRejectedResult[];
@@ -182,7 +190,13 @@ export class BackgroundMarketScanner {
             : [];
 
         const merged = this.unionPairs(existingPairs, discoveredPairs);
-        const allXrpPairs = merged.filter((instrument) => this.isTradeableByAvailability(instrument.key, verdictByPair));
+        const xrpUniverse = merged.filter((instrument) => instrument.base.currency.toUpperCase() === 'XRP');
+        const tradeableXrpPairs = xrpUniverse.filter((instrument) => this.isTradeableByAvailability(instrument.key, verdictByPair));
+        const activePairKey = this.deps.getCurrentPairKey();
+        const activePair = xrpUniverse.find((instrument) => instrument.key === activePairKey);
+        const allXrpPairs = activePair && !tradeableXrpPairs.some((instrument) => instrument.key === activePair.key)
+            ? [...tradeableXrpPairs, activePair]
+            : tradeableXrpPairs;
 
         const pairByKey = new Map(allXrpPairs.map((instrument) => [instrument.key, instrument]));
 
@@ -194,7 +208,7 @@ export class BackgroundMarketScanner {
         }
 
         if (tier1.length < 3) {
-            const fallbackAnchors = allXrpPairs
+            const fallbackAnchors = tradeableXrpPairs
                 .filter((instrument) => STABLE_QUOTES.has(instrument.quote.currency.toUpperCase()))
                 .map((instrument) => instrument.key)
                 .filter((key) => !tier1.includes(key));
@@ -209,9 +223,27 @@ export class BackgroundMarketScanner {
             .map((instrument) => instrument.key)
             .filter((key) => !tier1.includes(key));
 
+        if (activePair && pairByKey.has(activePair.key) && !tier1.includes(activePair.key)) {
+            const activeIdx = byLiquidity.indexOf(activePair.key);
+            if (activeIdx > 0) {
+                byLiquidity.splice(activeIdx, 1);
+                byLiquidity.unshift(activePair.key);
+            }
+        }
+
         const maxMarkets = Math.max(1, this.config.maxMarkets);
         const remainingSlots = Math.max(0, maxMarkets - tier1.length);
         const tier2 = byLiquidity.slice(0, remainingSlots);
+
+        if (activePair && pairByKey.has(activePair.key) && !tier1.includes(activePair.key) && !tier2.includes(activePair.key)) {
+            if (tier2.length > 0) {
+                tier2[tier2.length - 1] = activePair.key;
+            } else if (tier1.length > 0) {
+                tier1[tier1.length - 1] = activePair.key;
+            } else {
+                tier1.push(activePair.key);
+            }
+        }
 
         this.universe = { pairByKey, tier1, tier2 };
         this.scheduler.setUniverse(tier1, tier2, nowMs);
@@ -328,6 +360,22 @@ export class BackgroundMarketScanner {
             mid,
             spreadBps,
             depthTopNotional,
+            updatedAtMs: nowMs,
+            stalenessMs: 0,
+            verdict,
+        };
+    }
+
+    private emptyMarketSnapshot(
+        verdict: AvailabilityVerdict | 'UNKNOWN',
+        nowMs: number,
+    ): BackgroundScannerMarketSnapshot {
+        return {
+            bid: 0,
+            ask: 0,
+            mid: 0,
+            spreadBps: 0,
+            depthTopNotional: 0,
             updatedAtMs: nowMs,
             stalenessMs: 0,
             verdict,
