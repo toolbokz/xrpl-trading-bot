@@ -19,6 +19,7 @@ import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
 import { GovernancePanel } from '../components/GovernancePanel';
 import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
 import { AdaptivePanel } from '../components/AdaptivePanel';
+import { VolatilityStopPanel } from '../components/VolatilityStopPanel';
 import { ScannerPanel } from '../components/ScannerPanel';
 import { RiskStressPanel } from '../components/RiskStressPanel';
 import { ExecutionQualityPanel } from '../components/ExecutionQualityPanel';
@@ -521,28 +522,39 @@ function DashboardPageContent() {
 
             <section className="space-y-3">
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Risk</h3>
-                <div className="grid gap-4 lg:grid-cols-2">
-                    <RiskStressPanel
-                        data={riskStress.data}
-                        spread={spreadModel.data}
-                        loading={riskStress.loading}
-                        error={riskStress.error}
-                    />
-                    <GovernancePanel compact enabled={diagnosticsVisible} />
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,0.75fr)_minmax(0,0.75fr)]">
+                    <div className="min-h-[260px]">
+                        <RiskStressPanel
+                            data={riskStress.data}
+                            spread={spreadModel.data}
+                            loading={riskStress.loading}
+                            error={riskStress.error}
+                        />
+                    </div>
+                    <div className="h-[260px] min-h-[260px]">
+                        <AdaptivePanel
+                            {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                            strategy={bot.strategy}
+                            regime={liveRegime ?? 'normal'}
+                            pollInterval={15_000}
+                            enabled={diagnosticsVisible}
+                        />
+                    </div>
+                    <div className="h-[260px] min-h-[260px]">
+                        <GovernancePanel compact enabled={diagnosticsVisible} />
+                    </div>
                 </div>
             </section>
 
             <section className="space-y-3">
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Policy</h3>
-                <div className="grid gap-4 lg:grid-cols-2">
-                    <RegimeHeatmapPanel enabled={diagnosticsVisible} />
-                    <AdaptivePanel
-                        {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                        strategy={bot.strategy}
-                        regime={liveRegime ?? 'normal'}
-                        pollInterval={15_000}
-                        enabled={diagnosticsVisible}
-                    />
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+                    <div className="min-h-[360px]">
+                        <RegimeHeatmapPanel enabled={diagnosticsVisible} />
+                    </div>
+                    <div className="min-h-[360px]">
+                        <VolatilityStopPanel pollInterval={10_000} enabled={diagnosticsVisible} />
+                    </div>
                 </div>
             </section>
         </div>
