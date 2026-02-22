@@ -71,25 +71,47 @@ export interface FlowConfig {
 }
 
 export interface StrategyConfig {
+    /**
+     * Legacy: minimum spread in bps (kept for backward compatibility).
+     * NOTE: IOC taker scalper should prefer maxSpreadBps gating instead.
+     */
     minSpreadBps: number;
+
+    /**
+     * IOC taker scalper gate:
+     * - Enter only when spread is <= maxSpreadBps (cheap enough to cross).
+     */
+    maxSpreadBps: number;
+
+    /**
+     * IOC taker scalper exit gate:
+     * - Allow profit-taking exits only when spread is <= maxExitSpreadBps.
+     * - Stop-loss exits can still proceed in strategy logic.
+     */
+    maxExitSpreadBps: number;
+
     positionSize: number;
     stopLossBps: number;
     cooldownMs: number;
     ammArbMinProfitBps: number;
     pathArbMinProfitBps: number;
     maxSlippageBps: number;
+
     /** Order book staleness threshold in milliseconds (default: 5000) */
     orderBookStaleMs: number;
+
     /**
      * Additional entry aggressiveness in bps (0 = passive reference price).
      * Higher value crosses more toward the opposite side for better fill odds.
      */
     entryCrossBps: number;
+
     /**
      * Additional exit aggressiveness in bps (0 = passive reference price).
      * Higher value crosses more toward the opposite side for better fill odds.
      */
     exitCrossBps: number;
+
     /**
      * Optional volatility-adaptive stop-loss configuration for scalper exits.
      * Defaults preserve legacy fixed-stop behavior (`enabled=false`).
@@ -223,16 +245,26 @@ export const loadConfig = (): AppConfig => {
     };
 
     const strategy: StrategyConfig = {
+        // Legacy (kept so other components/tests don’t break immediately)
         minSpreadBps: toNumber(process.env.MIN_SPREAD_BPS, 10),
+
+        // New: IOC taker scalper prefers max-spread gating
+        maxSpreadBps: toNumber(process.env.SCALPER_MAX_SPREAD_BPS, 12),
+        maxExitSpreadBps: toNumber(process.env.SCALPER_MAX_EXIT_SPREAD_BPS, 15),
+
         positionSize: toNumber(process.env.POSITION_SIZE_XRP, 5),
         stopLossBps: toNumber(process.env.STOP_LOSS_BPS, 50),
         cooldownMs: toNumber(process.env.COOLDOWN_MS, 60_000),
         ammArbMinProfitBps: toNumber(process.env.AMM_ARB_MIN_PROFIT_BPS, 15),
         pathArbMinProfitBps: toNumber(process.env.PATH_ARB_MIN_PROFIT_BPS, 20),
         maxSlippageBps: toNumber(process.env.MAX_SLIPPAGE_BPS, 50),
+
         orderBookStaleMs: toNumber(process.env.ORDERBOOK_STALE_MS, 5_000), // Default 5 seconds
-        entryCrossBps: Math.max(0, toNumber(process.env.SCALPER_ENTRY_CROSS_BPS, 2)),
-        exitCrossBps: Math.max(0, toNumber(process.env.SCALPER_EXIT_CROSS_BPS, 2)),
+
+        // Instant-fill defaults (override via .env)
+        entryCrossBps: Math.max(0, toNumber(process.env.SCALPER_ENTRY_CROSS_BPS, 12)),
+        exitCrossBps: Math.max(0, toNumber(process.env.SCALPER_EXIT_CROSS_BPS, 12)),
+
         volatilityStop: {
             enabled: toBool(process.env.VOL_STOP_ENABLED as EnvBool, false),
             warmupMs: Math.max(0, toNumber(process.env.VOL_STOP_WARMUP_MS, 60_000)),

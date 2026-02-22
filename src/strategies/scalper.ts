@@ -198,9 +198,13 @@ export class ScalperStrategy implements Strategy {
         const bestAsk = state.asks[0]?.price ?? 0;
         const spreadBps = state.spread;
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Entry Gate (updated to support max-spread gating for IOC taker scalper)
+        // ─────────────────────────────────────────────────────────────────────
         if (ctx.entryGate) {
             const decision = ctx.entryGate.shouldEnter({
-                minSpreadBps: this.config.minSpreadBps,
+                maxSpreadBps: this.config.maxSpreadBps,
+                // Legacy options left out intentionally; max-spread gate is preferred for IOC instant fills.
             });
             if (!decision.allowed) {
                 ctx.entryGate.logDecision(this.name, decision);
@@ -227,7 +231,7 @@ export class ScalperStrategy implements Strategy {
             bestBid: bestBid.toFixed(6),
             bestAsk: bestAsk.toFixed(6),
             spreadBps: spreadBps.toFixed(2),
-            minSpreadBps: this.config.minSpreadBps,
+            maxSpreadBps: this.config.maxSpreadBps,
             position: this.position.side,
             positionSize: adjustedPositionSize.toFixed(4),
             sizeMultiplier: sizeMultiplier.toFixed(2),
@@ -236,26 +240,41 @@ export class ScalperStrategy implements Strategy {
             imbalance: flow?.imbalance?.toFixed(3) ?? 'N/A',
         }, 'Scalper: 📊 Market conditions');
 
-        if (spreadBps < this.config.minSpreadBps) {
-            logger.info({
-                spreadBps: spreadBps.toFixed(2),
-                minSpreadBps: this.config.minSpreadBps
-            }, 'Scalper: ❌ Spread too narrow (need higher spread to profit)');
-            reject('minEdge', {
-                spreadBps,
-                minSpreadBps: this.config.minSpreadBps,
-            });
-            return;
+        // ─────────────────────────────────────────────────────────────────────
+        // IOC taker scalper spread gate:
+        // Enter only when spread is tight enough to cross cheaply.
+        // ─────────────────────────────────────────────────────────────────────
+        if (Number.isFinite(this.config.maxSpreadBps) && this.config.maxSpreadBps > 0) {
+            if (spreadBps > this.config.maxSpreadBps) {
+                logger.info({
+                    spreadBps: spreadBps.toFixed(2),
+                    maxSpreadBps: this.config.maxSpreadBps,
+                }, 'Scalper: ❌ Spread too wide (too expensive to cross for IOC scalper)');
+                reject('spreadTooWide', { spreadBps, maxSpreadBps: this.config.maxSpreadBps });
+                return;
+            }
+        } else {
+            // Fallback legacy behavior if maxSpreadBps is not configured
+            if (spreadBps < this.config.minSpreadBps) {
+                logger.info({
+                    spreadBps: spreadBps.toFixed(2),
+                    minSpreadBps: this.config.minSpreadBps
+                }, 'Scalper: ❌ Spread too narrow (legacy min-spread gate)');
+                reject('minEdge', { spreadBps, minSpreadBps: this.config.minSpreadBps });
+                return;
+            }
         }
 
         if (bestBid <= 0 || bestAsk <= 0 || bestBid >= bestAsk) {
             logger.info({ bestBid, bestAsk }, 'Scalper: ❌ Invalid prices (bid >= ask or zero prices)');
-            reject('spreadTooWide', { bestBid, bestAsk });
+            reject('invalidPrices', { bestBid, bestAsk });
             return;
         }
 
-        logger.info({ spreadBps: spreadBps.toFixed(2), minSpreadBps: this.config.minSpreadBps },
-            'Scalper: ✅ Spread profitable, evaluating trade');
+        logger.info({
+            spreadBps: spreadBps.toFixed(2),
+            maxSpreadBps: this.config.maxSpreadBps,
+        }, 'Scalper: ✅ Spread acceptable, evaluating trade');
 
         if (this.position.side === 'flat') {
             // Apply skew to entry price: positive imbalance → bid less aggressively
@@ -331,6 +350,20 @@ export class ScalperStrategy implements Strategy {
             }, 'Scalper: 📈 Evaluating exit for LONG position');
 
             if (takeProfit || isStopLoss || enhancedStopLoss) {
+                // Optional: prevent profit-taking exits when spread is too wide (stop-loss still allowed)
+                if (takeProfit && !isStopLoss && !enhancedStopLoss) {
+                    if (Number.isFinite(this.config.maxExitSpreadBps) && this.config.maxExitSpreadBps > 0) {
+                        if (spreadBps > this.config.maxExitSpreadBps) {
+                            logger.info({
+                                spreadBps: spreadBps.toFixed(2),
+                                maxExitSpreadBps: this.config.maxExitSpreadBps,
+                            }, 'Scalper: ❌ Exit spread too wide for take-profit IOC exit (skipping)');
+                            reject('spreadTooWideExit', { spreadBps, maxExitSpreadBps: this.config.maxExitSpreadBps });
+                            return;
+                        }
+                    }
+                }
+
                 const exitReason = enhancedStopLoss
                     ? 'ENHANCED STOP (trending down)'
                     : (isStopLoss ? 'STOP LOSS' : 'TAKE PROFIT');
