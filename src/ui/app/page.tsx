@@ -24,6 +24,9 @@ import { ScannerPanel } from '../components/ScannerPanel';
 import { RiskStressPanel } from '../components/RiskStressPanel';
 import { ExecutionQualityPanel } from '../components/ExecutionQualityPanel';
 import { EdgeAttributionPanel } from '../components/EdgeAttributionPanel';
+import { LatencyImpactPanel } from '../components/LatencyImpactPanel';
+import { SlippageRealismPanel } from '../components/SlippageRealismPanel';
+import { AttributionCompletenessPanel } from '../components/AttributionCompletenessPanel';
 import { useOrderBook } from '../lib/hooks/useOrderBook';
 import { RuntimeCacheProvider, useRuntimeCache } from '../lib/hooks/useRuntimeCache';
 import { RuntimeEventsProvider, useRuntimeEvents } from '../lib/hooks/useRuntimeEvents';
@@ -36,6 +39,7 @@ import { useSpreadModel } from '../lib/hooks/useSpreadModel';
 type BotStatus = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
 type ToolTab = 'orderbook' | 'tape' | 'radar' | 'diagnostics';
 type DrawerTab = 'orders' | 'logs';
+type DiagnosticsTab = 'execution' | 'risk' | 'policy' | 'latency';
 
 interface BotState {
     status: BotStatus;
@@ -99,6 +103,7 @@ function DashboardPageContent() {
 
     const [activeToolTab, setActiveToolTab] = useState<ToolTab>('orderbook');
     const [drawerTab, setDrawerTab] = useState<DrawerTab>('orders');
+    const [activeDiagnosticsTab, setActiveDiagnosticsTab] = useState<DiagnosticsTab>('execution');
     const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
 
     const [viewportWidth, setViewportWidth] = useState<number>(1600);
@@ -166,6 +171,10 @@ function DashboardPageContent() {
         if (savedDrawerTab && ['orders', 'logs'].includes(savedDrawerTab)) {
             setDrawerTab(savedDrawerTab);
         }
+        const savedDiagnosticsTab = window.localStorage.getItem('xrpl.diagnosticsTab') as DiagnosticsTab | null;
+        if (savedDiagnosticsTab && ['execution', 'risk', 'policy', 'latency'].includes(savedDiagnosticsTab)) {
+            setActiveDiagnosticsTab(savedDiagnosticsTab);
+        }
 
         const onResize = () => setViewportWidth(window.innerWidth);
         onResize();
@@ -180,6 +189,10 @@ function DashboardPageContent() {
     useEffect(() => {
         window.localStorage.setItem('xrpl.drawerTab', drawerTab);
     }, [drawerTab]);
+
+    useEffect(() => {
+        window.localStorage.setItem('xrpl.diagnosticsTab', activeDiagnosticsTab);
+    }, [activeDiagnosticsTab]);
 
     useEffect(() => {
         if (!selectedPairKey) {
@@ -465,6 +478,12 @@ function DashboardPageContent() {
         { id: 'orders', label: 'Orders', icon: ListOrdered },
         { id: 'logs', label: 'Logs', icon: Logs },
     ];
+    const diagnosticsTabs: Array<{ id: DiagnosticsTab; label: string }> = [
+        { id: 'execution', label: 'Execution' },
+        { id: 'risk', label: 'Risk Stress' },
+        { id: 'policy', label: 'Policy' },
+        { id: 'latency', label: 'Latency' },
+    ];
 
     const onToolTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
         if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
@@ -502,61 +521,144 @@ function DashboardPageContent() {
         />
     );
 
+    const marketQualityCard = (
+        <div className="card min-h-[260px] p-4">
+            <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
+            <div className="space-y-2">
+                <MetricLine label="Spread now" value={`${fmtNum(orderBookData.spreadBps, 1)} bps`} />
+                <MetricLine
+                    label="Spread percentile"
+                    value={spreadModel.data.lookback24h?.p75Bps != null ? `${spreadModel.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
+                />
+                <MetricLine label="Depth (top)" value={fmtNum(activePairMarket?.depthTopNotional ?? null, 0)} />
+                <MetricLine label="Staleness" value={fmtMs(activePairMarket?.stalenessMs ?? null)} />
+                <MetricLine
+                    label="Mid / Bid / Ask"
+                    value={`${fmtNum(midPrice, 4)} / ${fmtNum(orderBookBids[0]?.price ?? null, 4)} / ${fmtNum(orderBookAsks[0]?.price ?? null, 4)}`}
+                />
+            </div>
+        </div>
+    );
+
     const diagnosticsPanel = (
         <div className="space-y-4">
             <section className="space-y-3">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Execution</h3>
-                <ExecutionQualityPanel
-                    {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                    strategy={bot.strategy}
-                    pollInterval={15_000}
-                    enabled={diagnosticsVisible}
-                />
-                <EdgeAttributionPanel
-                    {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                    strategy={bot.strategy}
-                    pollInterval={20_000}
-                    enabled={diagnosticsVisible}
-                />
+                <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-2" role="tablist" aria-label="Diagnostics tabs">
+                    {diagnosticsTabs.map((tab) => (
+                        <button
+                            key={tab.id}
+                            role="tab"
+                            aria-selected={activeDiagnosticsTab === tab.id}
+                            onClick={() => setActiveDiagnosticsTab(tab.id)}
+                            className={clsx(
+                                'rounded-md border px-3 py-1.5 text-sm',
+                                activeDiagnosticsTab === tab.id
+                                    ? 'border-sky-500/30 bg-sky-500/20 text-sky-300'
+                                    : 'border-white/10 text-slate-400 hover:text-slate-200',
+                            )}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
             </section>
 
-            <section className="space-y-3">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Risk</h3>
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,0.75fr)_minmax(0,0.75fr)]">
-                    <div className="min-h-[260px]">
-                        <RiskStressPanel
-                            data={riskStress.data}
-                            spread={spreadModel.data}
-                            loading={riskStress.loading}
-                            error={riskStress.error}
-                        />
-                    </div>
-                    <div className="h-[260px] min-h-[260px]">
-                        <AdaptivePanel
+            {activeDiagnosticsTab === 'execution' && (
+                <>
+                    <section className="space-y-3">
+                        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Execution Quality</h3>
+                        <div className="grid gap-4 lg:grid-cols-2">
+                            <div className="min-h-[260px]">
+                                <SlippageRealismPanel
+                                    {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                                    pollInterval={20_000}
+                                    enabled={diagnosticsVisible}
+                                />
+                            </div>
+                            <div className="min-h-[260px]">
+                                <AttributionCompletenessPanel
+                                    {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                                    pollInterval={30_000}
+                                    enabled={diagnosticsVisible}
+                                />
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="space-y-3">
+                        <ExecutionQualityPanel
                             {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
                             strategy={bot.strategy}
-                            regime={liveRegime ?? 'normal'}
                             pollInterval={15_000}
                             enabled={diagnosticsVisible}
                         />
-                    </div>
-                    <div className="h-[260px] min-h-[260px]">
-                        <GovernancePanel compact enabled={diagnosticsVisible} />
-                    </div>
-                </div>
-            </section>
+                        <EdgeAttributionPanel
+                            {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                            strategy={bot.strategy}
+                            pollInterval={20_000}
+                            enabled={diagnosticsVisible}
+                        />
+                    </section>
+                </>
+            )}
 
-            <section className="space-y-3">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Policy</h3>
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-                    <div className="min-h-[360px]">
-                        <RegimeHeatmapPanel enabled={diagnosticsVisible} />
+            {activeDiagnosticsTab === 'risk' && (
+                <section className="space-y-3">
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]">
+                        <div className="min-h-[260px]">
+                            <RiskStressPanel
+                                data={riskStress.data}
+                                spread={spreadModel.data}
+                                loading={riskStress.loading}
+                                error={riskStress.error}
+                            />
+                        </div>
+                        <div className="h-[260px] min-h-[260px] overflow-hidden">
+                            {marketQualityCard}
+                        </div>
+                        <div className="h-[260px] min-h-[260px]">
+                            <VolatilityStopPanel pollInterval={10_000} enabled={diagnosticsVisible} />
+                        </div>
                     </div>
-                    <div className="min-h-[360px]">
-                        <VolatilityStopPanel pollInterval={10_000} enabled={diagnosticsVisible} />
+                </section>
+            )}
+
+            {activeDiagnosticsTab === 'policy' && (
+                <section className="space-y-3">
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.75fr)_minmax(0,0.75fr)]">
+                        <div className="min-h-[360px]">
+                            <RegimeHeatmapPanel enabled={diagnosticsVisible} />
+                        </div>
+                        <div className="h-[360px] min-h-[360px]">
+                            <AdaptivePanel
+                                {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                                strategy={bot.strategy}
+                                regime={liveRegime ?? 'normal'}
+                                pollInterval={15_000}
+                                enabled={diagnosticsVisible}
+                            />
+                        </div>
+                        <div className="h-[360px] min-h-[360px]">
+                            <GovernancePanel compact enabled={diagnosticsVisible} />
+                        </div>
                     </div>
-                </div>
-            </section>
+                </section>
+            )}
+
+            {activeDiagnosticsTab === 'latency' && (
+                <section className="space-y-3">
+                    <div className="card min-h-[320px] overflow-hidden p-4">
+                        <h3 className="mb-3 text-base font-semibold text-slate-100">Latency Impact</h3>
+                        <div className="h-[calc(100%-2rem)] min-h-0 overflow-y-auto pr-1">
+                            <LatencyImpactPanel
+                                {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                                pollInterval={15_000}
+                                enabled={diagnosticsVisible}
+                            />
+                        </div>
+                    </div>
+                </section>
+            )}
         </div>
     );
 
@@ -640,7 +742,7 @@ function DashboardPageContent() {
                 >
                     <div className="space-y-4 min-w-0">
                         {/* Z2 PRIMARY DECISION PANEL */}
-                        <section className="card p-4 min-h-[420px]">
+                        <section className="card h-[420px] p-4">
                             <div className="mb-3 flex items-center justify-between">
                                 <h2 className="text-lg font-semibold text-slate-100">Flow Sentiment</h2>
                                 <span className="text-xs text-slate-400">Primary Decision Panel</span>
@@ -652,26 +754,20 @@ function DashboardPageContent() {
 
                         {/* Z3 DIAGNOSTIC SUMMARY ROW */}
                         <section className="grid grid-cols-1 gap-4">
-                            <div className="card min-h-[220px] p-4">
-                                <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
-                                <div className="space-y-2">
-                                    <MetricLine label="Spread now" value={`${fmtNum(orderBookData.spreadBps, 1)} bps`} />
-                                    <MetricLine
-                                        label="Spread percentile"
-                                        value={spreadModel.data.lookback24h?.p75Bps != null ? `${spreadModel.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
-                                    />
-                                    <MetricLine label="Depth (top)" value={fmtNum(activePairMarket?.depthTopNotional ?? null, 0)} />
-                                    <MetricLine label="Staleness" value={fmtMs(activePairMarket?.stalenessMs ?? null)} />
-                                    <MetricLine
-                                        label="Mid / Bid / Ask"
-                                        value={`${fmtNum(midPrice, 4)} / ${fmtNum(orderBookBids[0]?.price ?? null, 4)} / ${fmtNum(orderBookAsks[0]?.price ?? null, 4)}`}
+                            <div className="card h-[280px] overflow-hidden p-4">
+                                <h3 className="mb-3 text-base font-semibold text-slate-100">Latency Impact</h3>
+                                <div className="h-[calc(100%-2rem)] min-h-0 overflow-y-auto pr-1">
+                                    <LatencyImpactPanel
+                                        {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                                        pollInterval={15_000}
+                                        enabled={!isCompact}
                                     />
                                 </div>
                             </div>
                         </section>
                     </div>
 
-                    <div className="relative h-[656px] min-h-[656px] max-h-[656px] min-w-0 overflow-hidden">
+                    <div className="relative h-[716px] min-h-[716px] max-h-[716px] min-w-0 overflow-hidden">
                         {drawerOpen ? (
                             <div className="h-full min-h-0 overflow-hidden">{drawerPanel}</div>
                         ) : (
@@ -721,19 +817,13 @@ function DashboardPageContent() {
                     {/* Z3 DIAGNOSTIC SUMMARY ROW */}
                     {!isCompact && (
                         <section className="grid grid-cols-1 gap-4">
-                            <div className="card min-h-[220px] p-4">
-                                <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
-                                <div className="space-y-2">
-                                    <MetricLine label="Spread now" value={`${fmtNum(orderBookData.spreadBps, 1)} bps`} />
-                                    <MetricLine
-                                        label="Spread percentile"
-                                        value={spreadModel.data.lookback24h?.p75Bps != null ? `${spreadModel.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
-                                    />
-                                    <MetricLine label="Depth (top)" value={fmtNum(activePairMarket?.depthTopNotional ?? null, 0)} />
-                                    <MetricLine label="Staleness" value={fmtMs(activePairMarket?.stalenessMs ?? null)} />
-                                    <MetricLine
-                                        label="Mid / Bid / Ask"
-                                        value={`${fmtNum(midPrice, 4)} / ${fmtNum(orderBookBids[0]?.price ?? null, 4)} / ${fmtNum(orderBookAsks[0]?.price ?? null, 4)}`}
+                            <div className="card min-h-[280px] overflow-hidden p-4">
+                                <h3 className="mb-3 text-base font-semibold text-slate-100">Latency Impact</h3>
+                                <div className="h-[calc(100%-2rem)] min-h-0 overflow-y-auto pr-1">
+                                    <LatencyImpactPanel
+                                        {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                                        pollInterval={15_000}
+                                        enabled={!isCompact}
                                     />
                                 </div>
                             </div>

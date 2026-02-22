@@ -200,6 +200,17 @@ export interface ExecutionQualitySummary {
     avgDecisionToSubmitMs: number | null;
     avgSubmitToValidatedMs: number | null;
     avgDecisionToValidatedMs: number | null;
+    missingFillSnapshotRate: number;
+    missingAckRate: number;
+    missingMarkoutRate: number;
+    tsMonotonicityViolationRate: number;
+    negRateAgeDelta: number;
+    weeklyP50DriftBps: number | null;
+    weeklyP90DriftBps: number | null;
+    staleFillSnapshotRate: number;
+    negSlippageRate: number;
+    tooGoodRate: number;
+    tooBadRate: number;
 }
 
 export interface ExecutionQualityBucket {
@@ -287,6 +298,11 @@ export interface EdgeAttributionSummary {
     coverageDecision: number;
     coverage1m: number;
     coverage5m: number;
+    unknownRate: number;
+    unknownCount: number;
+    collisionCount: number;
+    collisionsPer10k: number;
+    orphanFillsPer10k: number;
     avgSignalEdgeBpsExAnte: number | null;
     avgSignalEdgeBpsExPost1m: number | null;
     avgSignalEdgeBpsExPost5m: number | null;
@@ -1619,6 +1635,42 @@ class FeedbackEngine {
                 avgDecisionToSubmitMs: this.avg(events.map((e) => e.decisionToSubmitMs)),
                 avgSubmitToValidatedMs: this.avg(events.map((e) => e.submitToValidatedMs)),
                 avgDecisionToValidatedMs: this.avg(events.map((e) => e.decisionToValidatedMs)),
+                missingFillSnapshotRate: fills.length > 0
+                    ? fills.filter((e) => e.decisionTs == null || e.submitTs == null || e.validatedTs == null).length / fills.length
+                    : 0,
+                missingAckRate: fills.length > 0
+                    ? fills.filter((e) => e.validatedTs == null).length / fills.length
+                    : 0,
+                missingMarkoutRate: fills.length > 0
+                    ? fills.filter((e) => e.realizedSpreadBps1m == null && e.realizedSpreadBps5m == null).length / fills.length
+                    : 0,
+                tsMonotonicityViolationRate: fills.length > 0
+                    ? fills.filter((e) => {
+                        if (e.decisionTs == null || e.submitTs == null || e.validatedTs == null) return false;
+                        return !(e.decisionTs <= e.submitTs && e.submitTs <= e.validatedTs);
+                    }).length / fills.length
+                    : 0,
+                negRateAgeDelta: this.computeNegRateAgeDelta(fills),
+                weeklyP50DriftBps: this.percentile(
+                    fills
+                        .map((e) => e.impactBps1m ?? e.impactBps5m)
+                        .filter((v): v is number => v != null && Number.isFinite(v))
+                        .map((v) => Math.max(0, v)),
+                    0.5,
+                ),
+                weeklyP90DriftBps: this.percentile(
+                    fills
+                        .map((e) => e.impactBps1m ?? e.impactBps5m)
+                        .filter((v): v is number => v != null && Number.isFinite(v))
+                        .map((v) => Math.max(0, v)),
+                    0.9,
+                ),
+                staleFillSnapshotRate: this.computeStaleFillSnapshotRate(fills),
+                negSlippageRate: fills.length > 0
+                    ? fills.filter((e) => (e.slippageBpsVsIntent ?? 0) < 0).length / fills.length
+                    : 0,
+                tooGoodRate: this.computeTooGoodRate(fills),
+                tooBadRate: this.computeTooBadRate(fills),
             };
 
             const series = this.buildExecutionQualitySeries(events, bucketMs);
@@ -1687,12 +1739,29 @@ class FeedbackEngine {
             if (filters.source) queryFilters.source = filters.source;
 
             const events = queryEdgeAttributionEvents(queryFilters);
+            const unknownCount = events.filter((e) => e.hasDecisionSnapshot !== 1).length;
+            const txHashCounts = new Map<string, number>();
+            for (const event of events) {
+                const txHash = event.txHash?.trim();
+                if (!txHash) continue;
+                txHashCounts.set(txHash, (txHashCounts.get(txHash) ?? 0) + 1);
+            }
+            let collisionCount = 0;
+            for (const count of txHashCounts.values()) {
+                if (count > 1) collisionCount += count - 1;
+            }
+            const denom = events.length > 0 ? events.length : 1;
 
             const summary: EdgeAttributionSummary = {
                 events: events.length,
                 coverageDecision: events.length > 0 ? events.filter((e) => e.hasDecisionSnapshot === 1).length / events.length : 0,
                 coverage1m: events.length > 0 ? events.filter((e) => e.hasHorizon1m === 1).length / events.length : 0,
                 coverage5m: events.length > 0 ? events.filter((e) => e.hasHorizon5m === 1).length / events.length : 0,
+                unknownRate: events.length > 0 ? unknownCount / events.length : 0,
+                unknownCount,
+                collisionCount,
+                collisionsPer10k: (collisionCount / denom) * 10_000,
+                orphanFillsPer10k: (unknownCount / denom) * 10_000,
                 avgSignalEdgeBpsExAnte: this.avg(events.map((e) => e.signalEdgeBpsExAnte)),
                 avgSignalEdgeBpsExPost1m: this.avg(events.map((e) => e.signalEdgeBpsExPost1m)),
                 avgSignalEdgeBpsExPost5m: this.avg(events.map((e) => e.signalEdgeBpsExPost5m)),
@@ -1765,6 +1834,17 @@ class FeedbackEngine {
                 avgDecisionToSubmitMs: null,
                 avgSubmitToValidatedMs: null,
                 avgDecisionToValidatedMs: null,
+                missingFillSnapshotRate: 0,
+                missingAckRate: 0,
+                missingMarkoutRate: 0,
+                tsMonotonicityViolationRate: 0,
+                negRateAgeDelta: 0,
+                weeklyP50DriftBps: null,
+                weeklyP90DriftBps: null,
+                staleFillSnapshotRate: 0,
+                negSlippageRate: 0,
+                tooGoodRate: 0,
+                tooBadRate: 0,
             },
             series: this.buildExecutionQualitySeries([], bucketMs),
             histograms: {
@@ -1793,6 +1873,11 @@ class FeedbackEngine {
                 coverageDecision: 0,
                 coverage1m: 0,
                 coverage5m: 0,
+                unknownRate: 0,
+                unknownCount: 0,
+                collisionCount: 0,
+                collisionsPer10k: 0,
+                orphanFillsPer10k: 0,
                 avgSignalEdgeBpsExAnte: null,
                 avgSignalEdgeBpsExPost1m: null,
                 avgSignalEdgeBpsExPost5m: null,
@@ -1832,6 +1917,59 @@ class FeedbackEngine {
             }
         }
         return count > 0 ? sum / count : null;
+    }
+
+    private percentile(values: number[], p: number): number | null {
+        if (values.length === 0) return null;
+        const sorted = [...values].sort((a, b) => a - b);
+        const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))));
+        return sorted[idx] ?? null;
+    }
+
+    private computeNegRateAgeDelta(fills: ExecutionQualityEventRecord[]): number {
+        const freshnessMs = Number.parseFloat(process.env.LATENCY_IMPACT_DECISION_FRESHNESS_MS ?? '');
+        const slippageImprovementBps = Number.parseFloat(process.env.LATENCY_IMPACT_SLIPPAGE_IMPROVEMENT_BPS ?? '');
+        const latencyCap = Number.isFinite(freshnessMs) ? Math.max(1, freshnessMs) : 1000;
+        const improvement = Number.isFinite(slippageImprovementBps) ? Math.max(0, slippageImprovementBps) : 5;
+
+        const aged = fills.filter((e) => (e.decisionToValidatedMs ?? 0) > latencyCap);
+        if (aged.length === 0) return 0;
+
+        const flagged = aged.filter((e) => {
+            const slippage = e.slippageBpsVsIntent;
+            return slippage != null && Number.isFinite(slippage) && slippage <= -improvement;
+        });
+        return flagged.length / aged.length;
+    }
+
+    private computeStaleFillSnapshotRate(fills: ExecutionQualityEventRecord[]): number {
+        const freshnessMsRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_FILL_FRESHNESS_MS ?? '');
+        const freshnessMs = Number.isFinite(freshnessMsRaw) ? Math.max(1, freshnessMsRaw) : 500;
+        if (fills.length === 0) return 0;
+        const stale = fills.filter((e) => (e.decisionToValidatedMs ?? 0) > freshnessMs).length;
+        return stale / fills.length;
+    }
+
+    private computeTooGoodRate(fills: ExecutionQualityEventRecord[]): number {
+        const tooGoodRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_TOO_GOOD_BPS_BUFFER ?? '');
+        const tooGood = Number.isFinite(tooGoodRaw) ? Math.max(0, tooGoodRaw) : 2;
+        if (fills.length === 0) return 0;
+        const count = fills.filter((e) => {
+            const slippage = e.slippageBpsVsIntent;
+            return slippage != null && Number.isFinite(slippage) && slippage <= -tooGood;
+        }).length;
+        return count / fills.length;
+    }
+
+    private computeTooBadRate(fills: ExecutionQualityEventRecord[]): number {
+        const tooBadRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_TOO_BAD_BPS_BUFFER ?? '');
+        const tooBad = Number.isFinite(tooBadRaw) ? Math.max(0, tooBadRaw) : 5;
+        if (fills.length === 0) return 0;
+        const count = fills.filter((e) => {
+            const slippage = e.slippageBpsVsIntent;
+            return slippage != null && Number.isFinite(slippage) && slippage >= tooBad;
+        }).length;
+        return count / fills.length;
     }
 
     private buildExecutionQualitySeries(events: ExecutionQualityEventRecord[], bucketMs: number): ExecutionQualityBucket[] {

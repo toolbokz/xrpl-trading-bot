@@ -3,6 +3,18 @@ import { logger } from './logger';
 export type SlippageSide = 'buy' | 'sell';
 export type ExpectedPriceSource = 'intent' | 'mid' | 'bbo' | 'fallback_intent';
 
+const INVALID_SLIPPAGE_WARN_COOLDOWN_MS = Math.max(
+    1000,
+    parseInt(process.env.SLIPPAGE_INVALID_WARN_COOLDOWN_MS ?? '30000', 10) || 30000
+);
+
+interface InvalidSlippageWarnState {
+    lastLoggedAt: number;
+    suppressed: number;
+}
+
+const invalidSlippageWarnStates = new Map<string, InvalidSlippageWarnState>();
+
 export interface ReciprocalCheckResult {
     reciprocalLike: boolean;
     reason?: string;
@@ -59,6 +71,26 @@ export function warnInvalidSlippageInputs(context: {
     pairKey?: string | null;
     txHash?: string | null;
 }): void {
+    const key = [
+        context.source,
+        context.pairKey ?? 'all-pairs',
+        context.side ?? 'unknown-side',
+        context.baseline ?? 'unknown-baseline',
+    ].join('|');
+
+    const now = Date.now();
+    const state = invalidSlippageWarnStates.get(key);
+    if (state && (now - state.lastLoggedAt) < INVALID_SLIPPAGE_WARN_COOLDOWN_MS) {
+        state.suppressed += 1;
+        return;
+    }
+
+    const suppressedSinceLast = state?.suppressed ?? 0;
+    invalidSlippageWarnStates.set(key, {
+        lastLoggedAt: now,
+        suppressed: 0,
+    });
+
     logger.warn({
         source: context.source,
         side: context.side,
@@ -67,5 +99,10 @@ export function warnInvalidSlippageInputs(context: {
         baseline: context.baseline ?? 'unknown',
         pairKey: context.pairKey ?? null,
         txHash: context.txHash ?? null,
+        ...(suppressedSinceLast > 0 ? { suppressedSinceLast } : {}),
     }, 'Invalid slippage inputs (non-positive or missing baseline/fill)');
+}
+
+export function __resetInvalidSlippageWarningThrottleForTests(): void {
+    invalidSlippageWarnStates.clear();
 }
