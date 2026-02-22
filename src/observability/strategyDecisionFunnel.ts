@@ -37,6 +37,22 @@ export interface StrategySubmitTelemetryEvent {
     strategy: string;
     pairKey: string;
     stage: 'attempt' | 'success' | 'fail';
+    tradeId?: string | null;
+    side?: 'buy' | 'sell';
+    amountBase?: number;
+    intentPrice?: number;
+    submitTsMs?: number;
+    ackTsMs?: number;
+    validatedTsMs?: number;
+    nodeEndpoint?: string | null;
+    feeDrops?: string | null;
+    sequence?: number | null;
+    submitResult?: {
+        engine_result?: string | null;
+        engine_result_code?: number | null;
+        engine_result_message?: string | null;
+    } | null;
+    ackStatus?: 'accepted' | 'queued' | 'rejected' | 'unknown';
     txHash?: string | null;
     errorCode?: string | null;
 }

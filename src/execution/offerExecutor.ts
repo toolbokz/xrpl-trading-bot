@@ -5,6 +5,7 @@ import { StrategyConfig, TradingPair } from '../config';
 import { executionLog as logger } from '../analytics/logger';
 import { tradeHistory } from '../analytics/tradeHistory';
 import { feedbackEngine } from '../analytics/feedbackEngine';
+import { tradeMarkoutScheduler } from '../analytics/tradeMarkoutScheduler';
 import { computeCostRealism } from '../analytics/costRealism';
 import { isAdaptiveEnabled } from '../analytics/adaptiveConfig';
 import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './offerBuilder';
@@ -1219,6 +1220,8 @@ export class OfferExecutor {
 
     // Timeout for submitAndWait (12 seconds - ~3 ledger closes)
     private static readonly SUBMIT_TIMEOUT_MS = 12_000;
+    private static readonly VALIDATION_LOOKUP_DEADLINE_MS = 10_000;
+    private static readonly VALIDATION_POLL_INTERVAL_MS = 1_000;
 
     /**
      * Detect whether a fill was executed against an AMM pool or the DEX order book.
@@ -1254,6 +1257,131 @@ export class OfferExecutor {
         return 'unknown';
     }
 
+    private deriveAckStatus(engineResult: string | null | undefined): 'accepted' | 'queued' | 'rejected' | 'unknown' {
+        if (!engineResult || typeof engineResult !== 'string') return 'unknown';
+        const normalized = engineResult.toLowerCase();
+        if (normalized.startsWith('tes')) return 'accepted';
+        if (normalized.startsWith('ter')) return 'queued';
+        if (normalized.startsWith('tec') || normalized.startsWith('tef') || normalized.startsWith('tel') || normalized.startsWith('tem')) {
+            return 'rejected';
+        }
+        return 'unknown';
+    }
+
+    private inferNodeEndpoint(): string | null {
+        const dynamicClient = this.client as unknown as {
+            connection?: { _url?: string };
+            url?: string;
+        };
+        const fromConnection = dynamicClient.connection?._url;
+        if (typeof fromConnection === 'string' && fromConnection.length > 0) {
+            return fromConnection;
+        }
+        if (typeof dynamicClient.url === 'string' && dynamicClient.url.length > 0) {
+            return dynamicClient.url;
+        }
+        return process.env.XRPL_WS_URL ?? null;
+    }
+
+    private toUnixMsFromRippleEpochSeconds(value: number | null | undefined): number | null {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+        // XRPL "date" fields are seconds since 2000-01-01T00:00:00Z.
+        return Math.floor((value + 946_684_800) * 1000);
+    }
+
+    private async waitMs(ms: number): Promise<void> {
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, ms);
+        });
+    }
+
+    private async lookupValidationByHash(params: {
+        txHash: string;
+        fallbackResult?: Record<string, unknown> | null;
+    }): Promise<{
+        validated: boolean;
+        validatedTsMs: number | null;
+        validatedLedgerIndex: number | null;
+        validatedLedgerTime: number | null;
+        transactionResult: string | null;
+        meta: TransactionMetadata | undefined;
+        tx: Record<string, unknown> | null;
+        timeoutReason: string | null;
+    }> {
+        const fallbackResult = params.fallbackResult ?? null;
+        const fallbackMeta = fallbackResult?.meta as TransactionMetadata | undefined;
+        const fallbackTxResult = this.extractTxResult(fallbackMeta);
+        const fallbackLedgerIndex = typeof fallbackResult?.ledger_index === 'number'
+            ? fallbackResult.ledger_index
+            : null;
+        const fallbackValidated = fallbackMeta != null && fallbackTxResult != null;
+        const fallbackLedgerTime = this.toUnixMsFromRippleEpochSeconds(
+            typeof fallbackResult?.close_time === 'number'
+                ? fallbackResult.close_time
+                : (typeof fallbackResult?.date === 'number' ? fallbackResult.date : null),
+        );
+
+        if (fallbackValidated) {
+            return {
+                validated: true,
+                validatedTsMs: Date.now(),
+                validatedLedgerIndex: fallbackLedgerIndex,
+                validatedLedgerTime: fallbackLedgerTime,
+                transactionResult: fallbackTxResult,
+                meta: fallbackMeta,
+                tx: (fallbackResult?.tx_json as Record<string, unknown> | undefined) ?? null,
+                timeoutReason: null,
+            };
+        }
+
+        const deadlineMs = Date.now() + OfferExecutor.VALIDATION_LOOKUP_DEADLINE_MS;
+        let lastError: string | null = null;
+
+        while (Date.now() <= deadlineMs) {
+            try {
+                const response = await this.withTimeout(
+                    this.client.request({
+                        command: 'tx',
+                        transaction: params.txHash,
+                        binary: false,
+                    } as any),
+                    3_000,
+                    `tx lookup ${params.txHash}`,
+                );
+                const txResult = response?.result as Record<string, unknown> | undefined;
+                if (txResult?.validated === true) {
+                    const meta = txResult.meta as TransactionMetadata | undefined;
+                    return {
+                        validated: true,
+                        validatedTsMs: Date.now(),
+                        validatedLedgerIndex: typeof txResult.ledger_index === 'number' ? txResult.ledger_index : null,
+                        validatedLedgerTime: this.toUnixMsFromRippleEpochSeconds(
+                            typeof txResult.date === 'number' ? txResult.date : null,
+                        ),
+                        transactionResult: this.extractTxResult(meta) ?? null,
+                        meta,
+                        tx: (txResult.tx_json as Record<string, unknown> | undefined) ?? null,
+                        timeoutReason: null,
+                    };
+                }
+            } catch (err) {
+                lastError = err instanceof Error ? err.message : 'tx-lookup-failed';
+            }
+            await this.waitMs(OfferExecutor.VALIDATION_POLL_INTERVAL_MS);
+        }
+
+        return {
+            validated: false,
+            validatedTsMs: null,
+            validatedLedgerIndex: null,
+            validatedLedgerTime: null,
+            transactionResult: fallbackTxResult ?? null,
+            meta: fallbackMeta,
+            tx: (fallbackResult?.tx_json as Record<string, unknown> | undefined) ?? null,
+            timeoutReason: lastError ?? 'validation-timeout',
+        };
+    }
+
     // Unified submit path with logging, validation, and error handling to avoid rippled parameter errors.
     private async submitWithGuards(tx: any, pairSymbol?: string, intent?: TradeIntent, flags?: { passive?: boolean }): Promise<ExecutionResult> {
         const canonicalPair = canonicalizePairKey(
@@ -1287,6 +1415,11 @@ export class OfferExecutor {
         }
         const decisionTs = inflightTrace?.trace.decisionTimeMs ?? null;
         let eqSubmitTimeMs: number | null = null;
+        let tradeId: string | null = null;
+        let txHash: string | null = null;
+        let nodeEndpoint: string | null = this.inferNodeEndpoint();
+        let feeDrops: string | null = null;
+        let sequence: number | null = null;
 
         try {
             if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
@@ -1311,16 +1444,77 @@ export class OfferExecutor {
             };
             logger.info({ tx: safePrepared, pair: pairSymbol }, 'Autofilled XRPL transaction');
             const signed = this.wallet.sign(prepared);
+            txHash = signed.hash;
+            feeDrops = typeof prepared.Fee === 'string' ? prepared.Fee : null;
+            sequence = typeof prepared.Sequence === 'number' && Number.isFinite(prepared.Sequence)
+                ? prepared.Sequence
+                : null;
             this.botTxHashSink?.(signed.hash);
+
+            if (intent) {
+                const pendingTrade = tradeHistory.recordTrade({
+                    pair: canonicalPair,
+                    side: intent.side as 'BUY' | 'SELL',
+                    price: intentBaselinePrice ?? intent.price,
+                    priceQuotePerBase: intentBaselinePrice ?? intent.price,
+                    amount: intent.amount,
+                    amountBase: intent.amount,
+                    filled: 0,
+                    filledBase: 0,
+                    filledQuote: 0,
+                    fee: 0,
+                    pnl: 0,
+                    hash: signed.hash,
+                    paper: false,
+                    status: 'PENDING',
+                    source: 'bot',
+                });
+                tradeId = pendingTrade.id;
+                tradeHistory.upsertTradeTrace({
+                    hash: signed.hash,
+                    tradeId,
+                    patch: {
+                        decision_ts_ms: decisionTs ?? pendingTrade.timestamp,
+                        tx_hash: signed.hash,
+                        node_endpoint: nodeEndpoint,
+                        fee_drops: feeDrops,
+                        sequence,
+                        ack_status: 'unknown',
+                        outcome: 'abandoned',
+                        outcome_reason: null,
+                    },
+                });
+            }
+
+            // ── Execution quality trace: mark submit ────────────────────────
+            eqSubmitTimeMs = Date.now();
+            if (intent && signed.hash) {
+                tradeHistory.upsertTradeTrace({
+                    hash: signed.hash,
+                    tradeId,
+                    patch: {
+                        submit_ts_ms: eqSubmitTimeMs,
+                    },
+                });
+            }
+
             this.emitSubmitTelemetry({
                 strategy: this.currentStrategy,
                 pairKey: canonicalPair,
                 stage: 'attempt',
+                tradeId,
+                submitTsMs: eqSubmitTimeMs,
+                nodeEndpoint,
+                feeDrops,
+                sequence,
                 txHash: signed.hash,
+                ...(executionSide ? { side: executionSide } : {}),
+                ...(typeof intent?.amount === 'number' ? { amountBase: intent.amount } : {}),
+                ...(() => {
+                    const intentPrice = intentBaselinePrice ?? intent?.price;
+                    return typeof intentPrice === 'number' ? { intentPrice } : {};
+                })(),
             });
-
-            // ── Execution quality trace: mark submit ────────────────────────
-            eqSubmitTimeMs = Date.now();
 
             // Wrap submitAndWait with timeout to prevent blocking indefinitely
             let res;
@@ -1375,12 +1569,70 @@ export class OfferExecutor {
                     });
                 }
 
+                const timeoutAckTsMs = Date.now();
+                if (intent) {
+                    tradeHistory.recordTrade({
+                        pair: canonicalPair,
+                        side: intent.side as 'BUY' | 'SELL',
+                        price: intentBaselinePrice ?? intent.price,
+                        priceQuotePerBase: intentBaselinePrice ?? intent.price,
+                        amount: intent.amount,
+                        amountBase: intent.amount,
+                        filled: 0,
+                        filledBase: 0,
+                        filledQuote: 0,
+                        fee: 0,
+                        pnl: 0,
+                        hash: signed.hash,
+                        paper: false,
+                        status: 'REJECTED',
+                        source: 'bot',
+                    });
+                    tradeHistory.upsertTradeTrace({
+                        hash: signed.hash,
+                        tradeId,
+                        patch: {
+                            submit_ts_ms: eqSubmitTimeMs,
+                            ack_ts_ms: timeoutAckTsMs,
+                            validated_ts_ms: null,
+                            validated_ledger_index: null,
+                            validated_ledger_time: null,
+                            submit_result: {
+                                engine_result: null,
+                                engine_result_code: null,
+                                engine_result_message: 'timeout-unknown-finality',
+                            },
+                            ack_status: 'unknown',
+                            outcome: 'timeout',
+                            outcome_reason: 'timeout-unknown-finality',
+                        },
+                    });
+                }
+
                 this.emitSubmitTelemetry({
                     strategy: this.currentStrategy,
                     pairKey: canonicalPair,
                     stage: 'fail',
+                    tradeId,
+                    submitTsMs: eqSubmitTimeMs,
+                    ackTsMs: timeoutAckTsMs,
+                    nodeEndpoint,
+                    feeDrops,
+                    sequence,
+                    submitResult: {
+                        engine_result: null,
+                        engine_result_code: null,
+                        engine_result_message: 'timeout-unknown-finality',
+                    },
+                    ackStatus: 'unknown',
                     txHash: signed.hash,
                     errorCode: 'timeout-unknown-finality',
+                    ...(executionSide ? { side: executionSide } : {}),
+                    ...(typeof intent?.amount === 'number' ? { amountBase: intent.amount } : {}),
+                    ...(() => {
+                        const intentPrice = intentBaselinePrice ?? intent?.price;
+                        return typeof intentPrice === 'number' ? { intentPrice } : {};
+                    })(),
                 });
 
                 return {
@@ -1392,16 +1644,112 @@ export class OfferExecutor {
 
             logger.info({ result: res.result, pair: pairSymbol }, 'XRPL submitAndWait result');
 
-            const txResult = this.extractTxResult(res.result.meta);
-            const success = txResult === 'tesSUCCESS';
-            if (!success) {
-                this.emitSubmitTelemetry({
-                    strategy: this.currentStrategy,
-                    pairKey: canonicalPair,
-                    stage: 'fail',
-                    txHash: res.result.hash ?? signed.hash,
-                    errorCode: txResult ?? 'unknown-error',
+            const submitResultRaw = res.result as unknown as Record<string, unknown>;
+            const responseTxHash = typeof submitResultRaw.hash === 'string' && submitResultRaw.hash.length > 0
+                ? submitResultRaw.hash
+                : signed.hash;
+            txHash = responseTxHash;
+            const submitResult = {
+                engine_result: typeof submitResultRaw.engine_result === 'string'
+                    ? submitResultRaw.engine_result
+                    : (this.extractTxResult(submitResultRaw.meta as TransactionMetadata | undefined) ?? null),
+                engine_result_code: typeof submitResultRaw.engine_result_code === 'number'
+                    ? submitResultRaw.engine_result_code
+                    : null,
+                engine_result_message: typeof submitResultRaw.engine_result_message === 'string'
+                    ? submitResultRaw.engine_result_message
+                    : null,
+            };
+            const ackStatus = this.deriveAckStatus(submitResult.engine_result);
+            const ackTsMs = Date.now();
+
+            if (intent) {
+                tradeHistory.upsertTradeTrace({
+                    hash: responseTxHash,
+                    tradeId,
+                    patch: {
+                        tx_hash: responseTxHash,
+                        submit_ts_ms: eqSubmitTimeMs,
+                        ack_ts_ms: ackTsMs,
+                        submit_result: submitResult,
+                        ack_status: ackStatus,
+                    },
                 });
+            }
+
+            this.emitSubmitTelemetry({
+                strategy: this.currentStrategy,
+                pairKey: canonicalPair,
+                stage: (ackStatus === 'accepted' || ackStatus === 'queued') ? 'success' : 'fail',
+                tradeId,
+                submitTsMs: eqSubmitTimeMs,
+                ackTsMs,
+                nodeEndpoint,
+                feeDrops,
+                sequence,
+                submitResult,
+                ackStatus,
+                txHash: responseTxHash,
+                ...(executionSide ? { side: executionSide } : {}),
+                ...(typeof intent?.amount === 'number' ? { amountBase: intent.amount } : {}),
+                ...(() => {
+                    const intentPrice = intentBaselinePrice ?? intent?.price;
+                    return typeof intentPrice === 'number' ? { intentPrice } : {};
+                })(),
+                ...(ackStatus === 'rejected'
+                    ? { errorCode: submitResult.engine_result ?? 'submit-rejected' }
+                    : {}),
+            });
+
+            if (intent && (ackStatus === 'accepted' || ackStatus === 'queued')) {
+                this.emitTradeToastSafe({
+                    type: 'ORDER_PLACED',
+                    correlationId: tradeId ?? undefined,
+                    side: intent.side as 'BUY' | 'SELL',
+                    pair: canonicalPair,
+                    baseCurrency: this.pair.baseCurrency,
+                    quoteCurrency: this.pair.quoteCurrency,
+                    baseAmount: intent.amount,
+                    quoteAmount: intent.amount * intent.price,
+                    price: intent.price,
+                    timestamp: new Date().toISOString(),
+                });
+            }
+
+            const validation = await this.lookupValidationByHash({
+                txHash: responseTxHash,
+                fallbackResult: submitResultRaw,
+            });
+            const txResult = validation.transactionResult ?? this.extractTxResult(validation.meta);
+            const success = txResult === 'tesSUCCESS';
+            const validatedTs = validation.validatedTsMs;
+            const validatedLedgerIndex = validation.validatedLedgerIndex;
+            const validatedLedgerTime = validation.validatedLedgerTime;
+            const traceOutcome = success
+                ? null
+                : ((!validation.validated && !txResult)
+                    ? ('timeout' as const)
+                    : ('rejected' as const));
+            const traceReason = success
+                ? null
+                : (txResult ?? validation.timeoutReason ?? 'unknown-error');
+
+            if (intent) {
+                tradeHistory.upsertTradeTrace({
+                    hash: responseTxHash,
+                    tradeId,
+                    patch: {
+                        tx_hash: responseTxHash,
+                        validated_ts_ms: validatedTs,
+                        validated_ledger_index: validatedLedgerIndex,
+                        validated_ledger_time: validatedLedgerTime,
+                        ...(traceOutcome ? { outcome: traceOutcome } : {}),
+                        ...(traceReason ? { outcome_reason: traceReason } : {}),
+                    },
+                });
+            }
+
+            if (!success) {
                 this.risk.registerFailure();
 
                 // Record failed trade
@@ -1418,7 +1766,7 @@ export class OfferExecutor {
                         filledQuote: 0,
                         fee: 0,
                         pnl: 0,
-                        hash: res.result.hash,
+                        hash: responseTxHash,
                         paper: false,
                         status: 'REJECTED',
                     });
@@ -1432,7 +1780,7 @@ export class OfferExecutor {
                             side: intent.side.toLowerCase() as 'buy' | 'sell',
                             intentPrice: intentBaselinePrice ?? intent.price,
                             intentSizeBase: intent.amount,
-                            txHash: res.result.hash,
+                            txHash: responseTxHash,
                             resultCode: txResult ?? undefined,
                             error: txResult ?? 'unknown-error',
                             isBotTrade: true,
@@ -1441,14 +1789,13 @@ export class OfferExecutor {
                     } catch { /* feedback should never crash trading */ }
 
                     if (executionSide) {
-                        const validatedTs = Date.now();
                         const latency = computeLatencyMetrics({
                             decisionTs,
                             submitTs: eqSubmitTimeMs,
                             validatedTs,
                         });
                         feedbackEngine.recordExecutionQualityEvent({
-                            txHash: res.result.hash ?? null,
+                            txHash: responseTxHash ?? null,
                             pairKey: canonicalPair,
                             side: executionSide,
                             strategy: this.currentStrategy,
@@ -1477,18 +1824,12 @@ export class OfferExecutor {
                     }
                 }
 
-                return { accepted: false, reason: txResult };
+                return { accepted: false, reason: txResult ?? validation.timeoutReason ?? 'validation-timeout', hash: responseTxHash };
             }
-            this.emitSubmitTelemetry({
-                strategy: this.currentStrategy,
-                pairKey: canonicalPair,
-                stage: 'success',
-                txHash: res.result.hash ?? signed.hash,
-            });
             this.risk.resetFailures();
 
             // Parse actual fill amounts from transaction metadata (P2-8: Partial fill handling)
-            const meta = res.result.meta as TransactionMetadata | undefined;
+            const meta = validation.meta;
             const fillResult = this.parsePartialFill(
                 meta,
                 prepared.TakerGets as Amount,
@@ -1534,7 +1875,7 @@ export class OfferExecutor {
                     filledBase,
                     filledQuote,
                     priceQuotePerBase: actualFillPrice,
-                    txHash: res.result.hash,
+                    txHash: responseTxHash,
                     source: 'bot',
                 } as const;
                 const integrity = validateTradeIntegrity(
@@ -1545,7 +1886,7 @@ export class OfferExecutor {
 
                 if (!integrity.ok) {
                     logger.error({
-                        txHash: res.result.hash,
+                        txHash: responseTxHash,
                         pair: canonicalPair,
                         side: intent.side,
                         status,
@@ -1558,7 +1899,7 @@ export class OfferExecutor {
                     }, 'Blocked corrupted fill persistence');
                     quarantineTradeRecord({
                         type: 'executor-fill-persistence-blocked',
-                        txHash: res.result.hash,
+                        txHash: responseTxHash,
                         pair: canonicalPair,
                         side: intent.side,
                         status,
@@ -1582,10 +1923,63 @@ export class OfferExecutor {
                         filledQuote,
                         fee: 0.000012, // Typical XRPL transaction fee
                         pnl: 0, // P&L calculated separately by strategy
-                        hash: res.result.hash,
+                        hash: responseTxHash,
                         paper: false,
                         status,
                         slippageBps: fillResult.slippageBps,
+                    });
+                }
+
+                const fillTsMs = validatedTs ?? Date.now();
+                if (integrity.ok) {
+                    tradeHistory.upsertTradeTrace({
+                        hash: responseTxHash,
+                        tradeId,
+                        patch: {
+                            tx_hash: responseTxHash,
+                            validated_ts_ms: fillTsMs,
+                            validated_ledger_index: validatedLedgerIndex,
+                            validated_ledger_time: validatedLedgerTime,
+                            outcome: status === 'FILLED' ? 'filled' : 'partial',
+                            outcome_reason: null,
+                            fill_snapshot: {
+                                fill_ts_ms: fillTsMs,
+                                filled_base: filledBase,
+                                filled_quote: filledQuote,
+                                avg_price: actualFillPrice,
+                                fee: 0.000012,
+                                partial: status === 'PARTIAL',
+                                transaction_result: txResult ?? null,
+                            },
+                        },
+                    });
+                    if (tradeId && responseTxHash) {
+                        tradeMarkoutScheduler.schedule({
+                            trade_id: tradeId,
+                            tx_hash: responseTxHash,
+                            pair_key: canonicalPair,
+                            side,
+                            fill_price: actualFillPrice,
+                            fill_ts_ms: fillTsMs,
+                        });
+                    }
+                } else {
+                    tradeHistory.upsertTradeTrace({
+                        hash: responseTxHash,
+                        tradeId,
+                        patch: {
+                            outcome: 'abandoned',
+                            outcome_reason: 'integrity-quarantine',
+                            fill_snapshot: {
+                                fill_ts_ms: fillTsMs,
+                                filled_base: filledBase,
+                                filled_quote: filledQuote,
+                                avg_price: actualFillPrice,
+                                fee: 0.000012,
+                                partial: status === 'PARTIAL',
+                                transaction_result: txResult ?? null,
+                            },
+                        },
                     });
                 }
 
@@ -1616,7 +2010,7 @@ export class OfferExecutor {
                     baseline: 'intent',
                     pair: canonicalPair,
                     side: intent.side,
-                    txHash: res.result.hash,
+                    txHash: responseTxHash,
                     expectedPrice: intentBaselinePrice ?? intent.price,
                     fillPrice: actualFillPrice,
                     bestBid: this.currentBestBid,
@@ -1627,7 +2021,7 @@ export class OfferExecutor {
                     baseline: 'mid',
                     pair: canonicalPair,
                     side: intent.side,
-                    txHash: res.result.hash,
+                    txHash: responseTxHash,
                     expectedPrice: this.currentMidPrice,
                     fillPrice: actualFillPrice,
                     bestBid: this.currentBestBid,
@@ -1638,7 +2032,7 @@ export class OfferExecutor {
                     baseline: 'bbo',
                     pair: canonicalPair,
                     side: intent.side,
-                    txHash: res.result.hash,
+                    txHash: responseTxHash,
                     expectedPrice: bboBaseline,
                     fillPrice: actualFillPrice,
                     bestBid: this.currentBestBid,
@@ -1650,11 +2044,11 @@ export class OfferExecutor {
 
                 // Standard XRPL transaction fee in XRP
                 const txFeeXrp = 0.000012;
-                const validatedTs = Date.now();
+                const validatedTsForMetrics = validatedTs ?? Date.now();
                 const latency = computeLatencyMetrics({
                     decisionTs,
                     submitTs: eqSubmitTimeMs,
-                    validatedTs,
+                    validatedTs: validatedTsForMetrics,
                 });
                 const executionFlags = [
                     ...this.buildExecutionFlags(flags),
@@ -1674,7 +2068,7 @@ export class OfferExecutor {
                 });
 
                 const executionQualityEventId = feedbackEngine.recordExecutionQualityEvent({
-                    txHash: res.result.hash ?? null,
+                    txHash: responseTxHash ?? null,
                     pairKey: canonicalPair,
                     side,
                     strategy: this.currentStrategy,
@@ -1702,13 +2096,13 @@ export class OfferExecutor {
                     guardQuarantined: !integrity.ok,
                     decisionTs,
                     submitTs: eqSubmitTimeMs,
-                    validatedTs,
+                    validatedTs: validatedTsForMetrics,
                     decisionToSubmitMs: latency.decisionToSubmitMs,
                     submitToValidatedMs: latency.submitToValidatedMs,
                     decisionToValidatedMs: latency.decisionToValidatedMs,
                 });
                 const edgeAttributionEventId = feedbackEngine.recordEdgeAttributionEvent({
-                    txHash: res.result.hash ?? null,
+                    txHash: responseTxHash ?? null,
                     pairKey: canonicalPair,
                     side,
                     strategy: this.currentStrategy,
@@ -1723,7 +2117,7 @@ export class OfferExecutor {
                     filledQuote,
                     strategyFair: intent.expectedPrice ?? null,
                     decisionTs,
-                    fillTs: validatedTs,
+                    fillTs: validatedTsForMetrics,
                 });
 
                 if (
@@ -1766,8 +2160,8 @@ export class OfferExecutor {
                     && Number.isFinite(filledBase)
                     && filledBase > 0
                 ) {
-                    const fillTs = validatedTs;
-                    const decisionTsForHorizon = decisionTs ?? validatedTs;
+                    const fillTs = validatedTsForMetrics;
+                    const decisionTsForHorizon = decisionTs ?? validatedTsForMetrics;
                     const decisionMidForHorizon = this.currentMidPrice as number;
                     const fillPriceForHorizon = actualFillPrice;
                     const baseFilledForHorizon = filledBase;
@@ -1813,8 +2207,8 @@ export class OfferExecutor {
                         fillPrice: actualFillPrice,
                         fillSizeBase: fillResult.baseFilled || intent.amount,
                         fillSizeQuote: fillResult.quoteFilled || ((fillResult.baseFilled || intent.amount) * actualFillPrice),
-                        txHash: res.result.hash,
-                        ledgerIndex: (res.result as any).ledger_index,
+                        txHash: responseTxHash,
+                        ledgerIndex: validatedLedgerIndex ?? ((res.result as any).ledger_index ?? null),
                         resultCode: txResult ?? 'tesSUCCESS',
                         isBotTrade: true,
                         midPriceAtDecision: this.currentMidPrice ?? undefined,
@@ -1887,13 +2281,13 @@ export class OfferExecutor {
                     const actualFillPriceEq = fillResult.effectivePrice || intent.price;
                     const executionSource = this.detectExecutionSource(meta);
                     this.executionQualityCollector.recordFill(inflightTrace, {
-                        submitTimeMs: eqSubmitTimeMs,
+                        submitTimeMs: eqSubmitTimeMs ?? Date.now(),
                         ledgerAcceptedTimeMs: Date.now(),
                         fillPrice: actualFillPriceEq,
                         postFillMid: this.currentMidPrice ?? actualFillPriceEq,
                         fillRatio: fillResult.fillRatio,
-                        txHash: res.result.hash ?? null,
-                        ledgerIndex: (res.result as any).ledger_index ?? 0,
+                        txHash: responseTxHash ?? null,
+                        ledgerIndex: validatedLedgerIndex ?? ((res.result as any).ledger_index ?? 0),
                         executionSource,
                     });
                 } catch { /* analytics should never crash trading */ }
@@ -1911,18 +2305,8 @@ export class OfferExecutor {
                 const baseAmount = fillResult.baseFilled || intent.amount;
                 const quoteAmount = fillResult.quoteFilled || (baseAmount * (fillResult.effectivePrice || intent.price));
                 this.emitTradeToastSafe({
-                    type: 'ORDER_PLACED',
-                    side: intent.side as 'BUY' | 'SELL',
-                    pair: canonicalPair,
-                    baseCurrency: this.pair.baseCurrency,
-                    quoteCurrency: this.pair.quoteCurrency,
-                    baseAmount: intent.amount,
-                    quoteAmount: intent.amount * intent.price,
-                    price: intent.price,
-                    timestamp: eventTimestamp,
-                });
-                this.emitTradeToastSafe({
                     type: 'ORDER_FILLED',
+                    correlationId: tradeId ?? undefined,
                     side: intent.side as 'BUY' | 'SELL',
                     pair: canonicalPair,
                     baseCurrency: this.pair.baseCurrency,
@@ -1936,17 +2320,56 @@ export class OfferExecutor {
 
             return {
                 accepted: true,
-                hash: res.result.hash,
-                txJSON: (res.result as any).tx_json,
+                hash: responseTxHash,
+                txJSON: (validation.tx ?? (res.result as any).tx_json ?? undefined),
                 fillResult, // Include fill details in result
             };
         } catch (err: any) {
             logger.error({ err, txType: tx?.TransactionType, tx, pair: pairSymbol }, 'XRPL submission failed');
+            const failureAckTsMs = Date.now();
+            const failureMessage = err?.message || 'submit-failed';
+            if (txHash && intent) {
+                tradeHistory.upsertTradeTrace({
+                    hash: txHash,
+                    tradeId,
+                    patch: {
+                        submit_ts_ms: eqSubmitTimeMs,
+                        ack_ts_ms: failureAckTsMs,
+                        submit_result: {
+                            engine_result: null,
+                            engine_result_code: null,
+                            engine_result_message: failureMessage,
+                        },
+                        ack_status: 'unknown',
+                        outcome: 'rejected',
+                        outcome_reason: failureMessage,
+                    },
+                });
+            }
             this.emitSubmitTelemetry({
                 strategy: this.currentStrategy,
                 pairKey: canonicalPair,
                 stage: 'fail',
-                errorCode: err?.message || 'submit-failed',
+                tradeId,
+                ackTsMs: failureAckTsMs,
+                nodeEndpoint,
+                feeDrops,
+                sequence,
+                submitResult: {
+                    engine_result: null,
+                    engine_result_code: null,
+                    engine_result_message: failureMessage,
+                },
+                ackStatus: 'unknown',
+                txHash,
+                errorCode: failureMessage,
+                ...(executionSide ? { side: executionSide } : {}),
+                ...(typeof intent?.amount === 'number' ? { amountBase: intent.amount } : {}),
+                ...(() => {
+                    const intentPrice = intentBaselinePrice ?? intent?.price;
+                    return typeof intentPrice === 'number' ? { intentPrice } : {};
+                })(),
+                ...(typeof eqSubmitTimeMs === 'number' ? { submitTsMs: eqSubmitTimeMs } : {}),
             });
             this.risk.registerFailure();
 
@@ -1964,6 +2387,7 @@ export class OfferExecutor {
                     filledQuote: 0,
                     fee: 0,
                     pnl: 0,
+                    ...(txHash ? { hash: txHash } : {}),
                     paper: false,
                     status: 'REJECTED',
                 });
@@ -1977,7 +2401,8 @@ export class OfferExecutor {
                         side: intent.side.toLowerCase() as 'buy' | 'sell',
                         intentPrice: intentBaselinePrice ?? intent.price,
                         intentSizeBase: intent.amount,
-                        error: err?.message || 'submit-failed',
+                        ...(txHash ? { txHash } : {}),
+                        error: failureMessage,
                         isBotTrade: true,
                         midPriceAtDecision: this.currentMidPrice ?? undefined,
                     });
@@ -1991,7 +2416,7 @@ export class OfferExecutor {
                         validatedTs: failedAt,
                     });
                     feedbackEngine.recordExecutionQualityEvent({
-                        txHash: null,
+                        txHash: txHash ?? null,
                         pairKey: canonicalPair,
                         side: executionSide,
                         strategy: this.currentStrategy,
@@ -2008,7 +2433,7 @@ export class OfferExecutor {
                         filledBase: 0,
                         filledQuote: 0,
                         status: 'REJECTED',
-                        rejectReason: err?.message || 'submit-failed',
+                        rejectReason: failureMessage,
                         flags: this.buildExecutionFlags(flags),
                         decisionTs: inflightTrace?.trace.decisionTimeMs ?? null,
                         submitTs: eqSubmitTimeMs,
@@ -2020,7 +2445,7 @@ export class OfferExecutor {
                 }
             }
 
-            return { accepted: false, reason: err?.message || 'submit-failed' };
+            return { accepted: false, reason: failureMessage, ...(txHash ? { hash: txHash } : {}) };
         }
     }
 

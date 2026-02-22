@@ -31,6 +31,10 @@ import {
 } from '../market/models';
 import { feedbackEngine } from '../analytics/feedbackEngine';
 import {
+    tradeMarkoutScheduler,
+    type MarkoutLifecycleEvent,
+} from '../analytics/tradeMarkoutScheduler';
+import {
     isAdaptiveEnabled,
     getAdaptiveTuning,
     isRegimeDisabled,
@@ -592,66 +596,44 @@ export class TradingRuntime {
             executor.setBotTxHashSink((hash) => this.accountTradeIngestion?.registerBotTxHash(hash));
             executor.setSubmitTelemetrySink((event) => this.recordSubmitTelemetry(event));
             executor.setTradeToastEmitter((event) => {
-                if (event.type === 'ORDER_PLACED') {
-                    const detail: {
-                        pairKey: string;
-                        runtimeState: RuntimeState;
-                        side: 'BUY' | 'SELL';
-                        baseCurrency: string;
-                        quoteCurrency: string;
-                        timestamp: string;
-                        baseAmount?: number;
-                        quoteAmount?: number;
-                        price?: number;
-                        feeQuote?: number;
-                    } = {
-                        pairKey: event.pair,
-                        runtimeState: this.fsm.getState(),
-                        side: event.side ?? 'BUY',
+                const eventTsMs = Date.parse(event.timestamp);
+                this.observabilityBus.emit({
+                    eventType: event.type,
+                    pairKey: event.pair,
+                    runtimeState: this.fsm.getState(),
+                    correlationId: event.correlationId ?? null,
+                    detail: {
+                        type: event.type,
+                        side: event.side ?? null,
+                        pair: event.pair,
                         baseCurrency: event.baseCurrency,
                         quoteCurrency: event.quoteCurrency,
+                        baseAmount: event.baseAmount,
+                        quoteAmount: event.quoteAmount,
+                        price: event.price,
+                        feeQuote: event.feeQuote,
+                        pnlQuote: event.pnlQuote,
                         timestamp: event.timestamp,
-                    };
-                    if (event.baseAmount !== undefined) detail.baseAmount = event.baseAmount;
-                    if (event.quoteAmount !== undefined) detail.quoteAmount = event.quoteAmount;
-                    if (event.price !== undefined) detail.price = event.price;
-                    if (event.feeQuote !== undefined) detail.feeQuote = event.feeQuote;
-
-                    this.observabilityBus.emitOrderPlaced({
-                        ...detail,
-                    });
-                } else {
-                    const detail: {
-                        pairKey: string;
-                        runtimeState: RuntimeState;
-                        baseCurrency: string;
-                        quoteCurrency: string;
-                        timestamp: string;
-                        side?: 'BUY' | 'SELL';
-                        baseAmount?: number;
-                        quoteAmount?: number;
-                        price?: number;
-                        feeQuote?: number;
-                        pnlQuote?: number;
-                    } = {
-                        pairKey: event.pair,
-                        runtimeState: this.fsm.getState(),
-                        baseCurrency: event.baseCurrency,
-                        quoteCurrency: event.quoteCurrency,
-                        timestamp: event.timestamp,
-                    };
-                    if (event.side !== undefined) detail.side = event.side;
-                    if (event.baseAmount !== undefined) detail.baseAmount = event.baseAmount;
-                    if (event.quoteAmount !== undefined) detail.quoteAmount = event.quoteAmount;
-                    if (event.price !== undefined) detail.price = event.price;
-                    if (event.feeQuote !== undefined) detail.feeQuote = event.feeQuote;
-                    if (event.pnlQuote !== undefined) detail.pnlQuote = event.pnlQuote;
-
-                    this.observabilityBus.emitOrderFilled({
-                        ...detail,
-                    });
-                }
+                        timestamp_ms: Number.isFinite(eventTsMs) ? eventTsMs : Date.now(),
+                        filled_base: event.baseAmount ?? null,
+                        filled_quote: event.quoteAmount ?? null,
+                        avg_price: event.price ?? null,
+                        fill_ts_ms: Number.isFinite(eventTsMs) ? eventTsMs : null,
+                        correlation_id: event.correlationId ?? null,
+                        pair_key: event.pair,
+                        base_currency: event.baseCurrency,
+                        quote_currency: event.quoteCurrency,
+                        base_amount: event.baseAmount ?? null,
+                        quote_amount: event.quoteAmount ?? null,
+                        fee_quote: event.feeQuote ?? null,
+                        pnl_quote: event.pnlQuote ?? null,
+                    },
+                });
             });
+            tradeMarkoutScheduler.setHooks({
+                emit_event: (event) => this.emitMarkoutLifecycleEvent(event),
+            });
+            tradeMarkoutScheduler.start();
             // Wire exposure tracker into risk engine so risk checks can
             // account for current notional exposure.
             try {
@@ -1694,29 +1676,52 @@ export class TradingRuntime {
     private recordSubmitTelemetry(event: StrategySubmitTelemetryEvent): void {
         const funnel = this.ensureStrategyFunnel(event.strategy);
         applySubmitTelemetryToFunnel(funnel, event);
-        if (event.stage === 'attempt') {
-            this.observabilityBus.emitSubmitAttempt({
-                pairKey: event.pairKey,
-                runtimeState: this.fsm.getState(),
+        const eventType = event.stage === 'attempt'
+            ? 'SUBMIT_ATTEMPT'
+            : (event.stage === 'success' ? 'SUBMIT_SUCCESS' : 'SUBMIT_FAIL');
+        this.observabilityBus.emit({
+            eventType,
+            pairKey: event.pairKey,
+            runtimeState: this.fsm.getState(),
+            correlationId: event.tradeId ?? null,
+            detail: {
                 strategy: event.strategy,
-            });
-        } else if (event.stage === 'success') {
-            this.observabilityBus.emitSubmitSuccess({
-                pairKey: event.pairKey,
-                runtimeState: this.fsm.getState(),
-                strategy: event.strategy,
-                txHash: event.txHash ?? null,
-            });
-        } else {
-            this.observabilityBus.emitSubmitFail({
-                pairKey: event.pairKey,
-                runtimeState: this.fsm.getState(),
-                strategy: event.strategy,
-                txHash: event.txHash ?? null,
-                errorCode: event.errorCode ?? 'submit-failed',
-            });
-        }
+                trade_id: event.tradeId ?? null,
+                side: event.side ?? null,
+                amount_base: event.amountBase ?? null,
+                intent_price: event.intentPrice ?? null,
+                submit_ts_ms: event.submitTsMs ?? null,
+                ack_ts_ms: event.ackTsMs ?? null,
+                validated_ts_ms: event.validatedTsMs ?? null,
+                node_endpoint: event.nodeEndpoint ?? null,
+                fee_drops: event.feeDrops ?? null,
+                sequence: event.sequence ?? null,
+                submit_result: event.submitResult ?? null,
+                ack_status: event.ackStatus ?? null,
+                tx_hash: event.txHash ?? null,
+                error_code: event.errorCode ?? null,
+            },
+        });
         this.syncStrategyFunnelToCache(event.pairKey);
+    }
+
+    private emitMarkoutLifecycleEvent(event: MarkoutLifecycleEvent): void {
+        const payload = {
+            pairKey: event.pair_key,
+            runtimeState: this.fsm.getState(),
+            correlationId: event.correlation_id,
+            detail: event.detail,
+            ...(typeof event.timestamp_ms === 'number' ? { nowMs: event.timestamp_ms } : {}),
+        };
+        if (event.event_type === 'MARKOUT_SCHEDULED') {
+            this.observabilityBus.emitMarkoutScheduled(payload);
+            return;
+        }
+        if (event.event_type === 'MARKOUT_RECORDED') {
+            this.observabilityBus.emitMarkoutRecorded(payload);
+            return;
+        }
+        this.observabilityBus.emitMarkoutMissing(payload);
     }
 
     private buildVolatilityStopSnapshot(nowMs: number): VolatilityStopCacheSnapshot {
@@ -2056,6 +2061,12 @@ export class TradingRuntime {
             stopAdaptiveScheduler();
         } catch (err) {
             logger.warn({ err }, 'Failed to stop adaptive scheduler');
+        }
+
+        try {
+            tradeMarkoutScheduler.stop();
+        } catch (err) {
+            logger.warn({ err }, 'Failed to stop trade markout scheduler');
         }
 
         // Step 5: Stop background scanner before XRPL disconnect
@@ -2536,6 +2547,9 @@ export class TradingRuntime {
         // ── Detach all runtime-owned event listeners first ────────────
         // Must happen BEFORE this.xrpl = null so we still have the reference.
         this.detachRuntimeListeners();
+
+        // Stop persisted markout jobs timer loop for this runtime lifecycle.
+        tradeMarkoutScheduler.stop();
 
         // Stop CPU watchdog
         if (this.cpuWatchdog) {

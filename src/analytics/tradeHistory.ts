@@ -33,7 +33,70 @@ export interface Trade {
     slippageBps?: number;
     /** Origin of fill ingestion path. */
     source?: 'bot' | 'manual';
+    /** Execution lifecycle trace (submit → validate → fill → markouts). */
+    trace?: TradeTrace;
 }
+
+export type TradeAckStatus = 'accepted' | 'queued' | 'rejected' | 'unknown';
+export type TradeOutcome = 'filled' | 'partial' | 'rejected' | 'abandoned' | 'timeout';
+export type TradeMarkoutMissingReason =
+    | 'price_source_down'
+    | 'timeout'
+    | 'no_liquidity'
+    | 'trade_not_filled'
+    | 'tx_unvalidated'
+    | 'unknown';
+
+export interface TradeSubmitResult {
+    engine_result: string | null;
+    engine_result_code: number | null;
+    engine_result_message: string | null;
+}
+
+export interface TradeFillSnapshot {
+    fill_ts_ms: number | null;
+    filled_base: number | null;
+    filled_quote: number | null;
+    avg_price: number | null;
+    fee: number | null;
+    partial: boolean;
+    transaction_result: string | null;
+}
+
+export interface TradeMarkoutRecord {
+    horizon_s: number;
+    due_ts_ms: number;
+    mark_ts_ms: number | null;
+    mark_price: number | null;
+    markout_bps: number | null;
+    source: string | null;
+    status: 'recorded' | 'missing';
+    missing_reason: TradeMarkoutMissingReason | null;
+    attempts: number;
+    last_error: string | null;
+}
+
+export interface TradeTrace {
+    trade_id: string;
+    decision_ts_ms: number | null;
+    submit_ts_ms: number | null;
+    ack_ts_ms: number | null;
+    validated_ts_ms: number | null;
+    validated_ledger_index: number | null;
+    validated_ledger_time: number | null;
+    tx_hash: string | null;
+    node_endpoint: string | null;
+    fee_drops: string | null;
+    sequence: number | null;
+    submit_result: TradeSubmitResult | null;
+    ack_status: TradeAckStatus;
+    outcome: TradeOutcome;
+    outcome_reason: string | null;
+    fill_snapshot: TradeFillSnapshot | null;
+    markouts: TradeMarkoutRecord[];
+}
+
+export type TradeTracePatch = Partial<Omit<TradeTrace, 'trade_id'>>;
 
 export interface TradeStats {
     totalTrades: number;
@@ -127,6 +190,195 @@ function statusPriority(status: Trade['status']): number {
         case 'REJECTED': return 2;
         default: return 1;
     }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function toFiniteNumberOrNull(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    return value;
+}
+
+function parseSubmitResult(raw: unknown): TradeSubmitResult | null {
+    if (!isObject(raw)) return null;
+    return {
+        engine_result: typeof raw.engine_result === 'string' ? raw.engine_result : null,
+        engine_result_code: typeof raw.engine_result_code === 'number' && Number.isFinite(raw.engine_result_code)
+            ? raw.engine_result_code
+            : null,
+        engine_result_message: typeof raw.engine_result_message === 'string' ? raw.engine_result_message : null,
+    };
+}
+
+function parseFillSnapshot(raw: unknown): TradeFillSnapshot | null {
+    if (!isObject(raw)) return null;
+    return {
+        fill_ts_ms: toFiniteNumberOrNull(raw.fill_ts_ms),
+        filled_base: toFiniteNumberOrNull(raw.filled_base),
+        filled_quote: toFiniteNumberOrNull(raw.filled_quote),
+        avg_price: toFiniteNumberOrNull(raw.avg_price),
+        fee: toFiniteNumberOrNull(raw.fee),
+        partial: raw.partial === true,
+        transaction_result: typeof raw.transaction_result === 'string' ? raw.transaction_result : null,
+    };
+}
+
+function parseMarkouts(raw: unknown): TradeMarkoutRecord[] {
+    if (!Array.isArray(raw)) return [];
+    const parsed: TradeMarkoutRecord[] = [];
+    for (const entry of raw) {
+        if (!isObject(entry)) continue;
+        const horizonS = toFiniteNumberOrNull(entry.horizon_s);
+        const dueTsMs = toFiniteNumberOrNull(entry.due_ts_ms);
+        if (horizonS == null || dueTsMs == null) continue;
+        parsed.push({
+            horizon_s: horizonS,
+            due_ts_ms: dueTsMs,
+            mark_ts_ms: toFiniteNumberOrNull(entry.mark_ts_ms),
+            mark_price: toFiniteNumberOrNull(entry.mark_price),
+            markout_bps: toFiniteNumberOrNull(entry.markout_bps),
+            source: typeof entry.source === 'string' ? entry.source : null,
+            status: entry.status === 'recorded' ? 'recorded' : 'missing',
+            missing_reason: entry.missing_reason === 'price_source_down'
+                || entry.missing_reason === 'timeout'
+                || entry.missing_reason === 'no_liquidity'
+                || entry.missing_reason === 'trade_not_filled'
+                || entry.missing_reason === 'tx_unvalidated'
+                || entry.missing_reason === 'unknown'
+                ? entry.missing_reason
+                : null,
+            attempts: typeof entry.attempts === 'number' && Number.isFinite(entry.attempts)
+                ? Math.max(0, Math.floor(entry.attempts))
+                : 0,
+            last_error: typeof entry.last_error === 'string' ? entry.last_error : null,
+        });
+    }
+    return parsed;
+}
+
+function outcomeFromStatus(status: Trade['status']): TradeOutcome {
+    if (status === 'FILLED') return 'filled';
+    if (status === 'PARTIAL') return 'partial';
+    if (status === 'REJECTED') return 'rejected';
+    return 'abandoned';
+}
+
+interface TraceFallback {
+    id: string;
+    timestamp: number;
+    status: Trade['status'];
+    hash: string | undefined;
+}
+
+function defaultTrace(trade: TraceFallback): TradeTrace {
+    return {
+        trade_id: trade.id,
+        decision_ts_ms: trade.timestamp,
+        submit_ts_ms: null,
+        ack_ts_ms: null,
+        validated_ts_ms: null,
+        validated_ledger_index: null,
+        validated_ledger_time: null,
+        tx_hash: trade.hash ?? null,
+        node_endpoint: null,
+        fee_drops: null,
+        sequence: null,
+        submit_result: null,
+        ack_status: 'unknown',
+        outcome: outcomeFromStatus(trade.status),
+        outcome_reason: null,
+        fill_snapshot: null,
+        markouts: [],
+    };
+}
+
+function parseTrace(raw: unknown, fallback: TraceFallback): TradeTrace | undefined {
+    if (!isObject(raw)) return undefined;
+    const parsed: TradeTrace = {
+        ...defaultTrace(fallback),
+        trade_id: typeof raw.trade_id === 'string' && raw.trade_id.length > 0 ? raw.trade_id : fallback.id,
+        decision_ts_ms: toFiniteNumberOrNull(raw.decision_ts_ms) ?? fallback.timestamp,
+        submit_ts_ms: toFiniteNumberOrNull(raw.submit_ts_ms),
+        ack_ts_ms: toFiniteNumberOrNull(raw.ack_ts_ms),
+        validated_ts_ms: toFiniteNumberOrNull(raw.validated_ts_ms),
+        validated_ledger_index: toFiniteNumberOrNull(raw.validated_ledger_index),
+        validated_ledger_time: toFiniteNumberOrNull(raw.validated_ledger_time),
+        tx_hash: typeof raw.tx_hash === 'string' ? raw.tx_hash : (fallback.hash ?? null),
+        node_endpoint: typeof raw.node_endpoint === 'string' ? raw.node_endpoint : null,
+        fee_drops: typeof raw.fee_drops === 'string' ? raw.fee_drops : null,
+        sequence: toFiniteNumberOrNull(raw.sequence),
+        submit_result: parseSubmitResult(raw.submit_result),
+        ack_status: raw.ack_status === 'accepted'
+            || raw.ack_status === 'queued'
+            || raw.ack_status === 'rejected'
+            || raw.ack_status === 'unknown'
+            ? raw.ack_status
+            : 'unknown',
+        outcome: raw.outcome === 'filled'
+            || raw.outcome === 'partial'
+            || raw.outcome === 'rejected'
+            || raw.outcome === 'abandoned'
+            || raw.outcome === 'timeout'
+            ? raw.outcome
+            : outcomeFromStatus(fallback.status),
+        outcome_reason: typeof raw.outcome_reason === 'string' ? raw.outcome_reason : null,
+        fill_snapshot: parseFillSnapshot(raw.fill_snapshot),
+        markouts: parseMarkouts(raw.markouts),
+    };
+    return parsed;
+}
+
+function mergeTrace(
+    existing: TradeTrace | undefined,
+    patch: TradeTracePatch,
+    fallback: TraceFallback,
+): TradeTrace {
+    const base = existing ?? defaultTrace(fallback);
+    const merged: TradeTrace = {
+        ...base,
+        ...patch,
+        trade_id: base.trade_id || fallback.id,
+        tx_hash: patch.tx_hash !== undefined
+            ? patch.tx_hash
+            : (base.tx_hash ?? fallback.hash ?? null),
+        decision_ts_ms: patch.decision_ts_ms !== undefined ? patch.decision_ts_ms : base.decision_ts_ms,
+        markouts: patch.markouts !== undefined ? [...patch.markouts] : base.markouts,
+    };
+
+    if (patch.submit_result !== undefined) {
+        merged.submit_result = patch.submit_result
+            ? {
+                ...(base.submit_result ?? {
+                    engine_result: null,
+                    engine_result_code: null,
+                    engine_result_message: null,
+                }),
+                ...patch.submit_result,
+            }
+            : null;
+    }
+    if (patch.fill_snapshot !== undefined) {
+        merged.fill_snapshot = patch.fill_snapshot
+            ? {
+                ...(base.fill_snapshot ?? {
+                    fill_ts_ms: null,
+                    filled_base: null,
+                    filled_quote: null,
+                    avg_price: null,
+                    fee: null,
+                    partial: false,
+                    transaction_result: null,
+                }),
+                ...patch.fill_snapshot,
+            }
+            : null;
+    }
+    if (!Array.isArray(merged.markouts)) {
+        merged.markouts = [];
+    }
+    return merged;
 }
 
 export function shouldReplaceByHash(existing: Trade, incoming: TradeInput): boolean {
@@ -233,8 +485,14 @@ class TradeHistoryService {
                 if (Array.isArray(parsed)) {
                     const normalized = parsed
                         .slice(-MAX_TRADES_IN_MEMORY)
-                        .map((raw) => ({
-                            ...normalizeTradeUnits({
+                        .map((raw) => {
+                            const id = typeof raw?.id === 'string' ? raw.id : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+                            const timestamp = typeof raw?.timestamp === 'number' ? raw.timestamp : Date.now();
+                            const status = raw?.status === 'FILLED' || raw?.status === 'PARTIAL' || raw?.status === 'REJECTED'
+                                ? raw.status
+                                : 'PENDING';
+                            const hash = typeof raw?.hash === 'string' ? raw.hash : undefined;
+                            const tradeCore = normalizeTradeUnits({
                                 ...raw,
                                 pair: typeof raw?.pair === 'string' ? raw.pair : '',
                                 side: raw?.side === 'SELL' ? 'SELL' : 'BUY',
@@ -244,10 +502,8 @@ class TradeHistoryService {
                                 fee: typeof raw?.fee === 'number' ? raw.fee : 0,
                                 pnl: typeof raw?.pnl === 'number' ? raw.pnl : 0,
                                 paper: !!raw?.paper,
-                                status: raw?.status === 'FILLED' || raw?.status === 'PARTIAL' || raw?.status === 'REJECTED'
-                                    ? raw.status
-                                    : 'PENDING',
-                                hash: typeof raw?.hash === 'string' ? raw.hash : undefined,
+                                status,
+                                hash,
                                 source: raw?.source === 'manual' ? 'manual' : 'bot',
                                 entryPrice: typeof raw?.entryPrice === 'number' ? raw.entryPrice : undefined,
                                 exitPrice: typeof raw?.exitPrice === 'number' ? raw.exitPrice : undefined,
@@ -256,11 +512,23 @@ class TradeHistoryService {
                                 filledBase: typeof raw?.filledBase === 'number' ? raw.filledBase : undefined,
                                 filledQuote: typeof raw?.filledQuote === 'number' ? raw.filledQuote : undefined,
                                 priceQuotePerBase: typeof raw?.priceQuotePerBase === 'number' ? raw.priceQuotePerBase : undefined,
-                            }),
-                            id: typeof raw?.id === 'string' ? raw.id : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-                            timestamp: typeof raw?.timestamp === 'number' ? raw.timestamp : Date.now(),
-                            source: raw?.source === 'manual' ? 'manual' : 'bot',
-                        })) as Trade[];
+                            });
+
+                            const parsedTrace = parseTrace(raw?.trace, {
+                                id,
+                                timestamp,
+                                status,
+                                hash,
+                            });
+
+                            return {
+                                ...tradeCore,
+                                id,
+                                timestamp,
+                                source: raw?.source === 'manual' ? 'manual' : 'bot',
+                                ...(parsedTrace ? { trace: parsedTrace } : {}),
+                            };
+                        }) as Trade[];
                     this.trades = dedupeTradesByHash(normalized);
                     logger.info({ count: this.trades.length }, 'Loaded trade history from disk');
                 }
@@ -331,6 +599,103 @@ class TradeHistoryService {
         }, 'Trade recorded');
 
         return fullTrade;
+    }
+
+    private findTradeIndexByHash(hash: string): number {
+        if (!hash) return -1;
+        return this.trades.findIndex((t) => t.hash === hash);
+    }
+
+    private findTradeIndexById(tradeId: string): number {
+        if (!tradeId) return -1;
+        return this.trades.findIndex((t) => t.id === tradeId);
+    }
+
+    upsertTradeTrace(input: {
+        hash?: string | null;
+        tradeId?: string | null;
+        patch: TradeTracePatch;
+    }): Trade | null {
+        this.init();
+        const hash = typeof input.hash === 'string' ? input.hash : '';
+        const tradeId = typeof input.tradeId === 'string' ? input.tradeId : '';
+        let index = hash ? this.findTradeIndexByHash(hash) : -1;
+        if (index === -1 && tradeId) {
+            index = this.findTradeIndexById(tradeId);
+        }
+        if (index === -1) return null;
+
+        const current = this.trades[index]!;
+        const mergedTrace = mergeTrace(current.trace, input.patch, {
+            id: current.id,
+            timestamp: current.timestamp,
+            status: current.status,
+            hash: current.hash,
+        });
+        const updated: Trade = {
+            ...current,
+            ...(current.hash ? {} : (mergedTrace.tx_hash ? { hash: mergedTrace.tx_hash } : {})),
+            trace: mergedTrace,
+        };
+        this.trades[index] = updated;
+        this.saveToDisk();
+        return updated;
+    }
+
+    appendTradeMarkout(input: {
+        hash?: string | null;
+        tradeId?: string | null;
+        markout: TradeMarkoutRecord;
+    }): Trade | null {
+        this.init();
+        const hash = typeof input.hash === 'string' ? input.hash : '';
+        const tradeId = typeof input.tradeId === 'string' ? input.tradeId : '';
+        let index = hash ? this.findTradeIndexByHash(hash) : -1;
+        if (index === -1 && tradeId) {
+            index = this.findTradeIndexById(tradeId);
+        }
+        if (index === -1) return null;
+
+        const current = this.trades[index]!;
+        const trace = mergeTrace(current.trace, {}, {
+            id: current.id,
+            timestamp: current.timestamp,
+            status: current.status,
+            hash: current.hash,
+        });
+
+        const markouts = [...trace.markouts];
+        const existingIdx = markouts.findIndex((m) => m.horizon_s === input.markout.horizon_s);
+        if (existingIdx >= 0) {
+            markouts[existingIdx] = input.markout;
+        } else {
+            markouts.push(input.markout);
+        }
+        markouts.sort((a, b) => a.horizon_s - b.horizon_s);
+
+        const updatedTrace: TradeTrace = {
+            ...trace,
+            markouts,
+        };
+        const updated: Trade = {
+            ...current,
+            trace: updatedTrace,
+        };
+        this.trades[index] = updated;
+        this.saveToDisk();
+        return updated;
+    }
+
+    getTradeByHash(hash: string): Trade | null {
+        this.init();
+        const index = this.findTradeIndexByHash(hash);
+        return index >= 0 ? this.trades[index]! : null;
+    }
+
+    getTradeById(tradeId: string): Trade | null {
+        this.init();
+        const index = this.findTradeIndexById(tradeId);
+        return index >= 0 ? this.trades[index]! : null;
     }
 
     getRecentTrades(limit = 50): Trade[] {

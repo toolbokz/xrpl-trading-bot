@@ -742,27 +742,13 @@ function DashboardPageContent() {
                 >
                     <div className="space-y-4 min-w-0">
                         {/* Z2 PRIMARY DECISION PANEL */}
-                        <section className="card h-[420px] p-4">
+                        <section className="card h-[716px] min-h-[716px] p-4">
                             <div className="mb-3 flex items-center justify-between">
                                 <h2 className="text-lg font-semibold text-slate-100">Flow Sentiment</h2>
                                 <span className="text-xs text-slate-400">Primary Decision Panel</span>
                             </div>
                             <div className="h-[calc(100%-2rem)] min-h-0">
                                 <FlowMetricsPanel pollInterval={2000} />
-                            </div>
-                        </section>
-
-                        {/* Z3 DIAGNOSTIC SUMMARY ROW */}
-                        <section className="grid grid-cols-1 gap-4">
-                            <div className="card h-[280px] overflow-hidden p-4">
-                                <h3 className="mb-3 text-base font-semibold text-slate-100">Latency Impact</h3>
-                                <div className="h-[calc(100%-2rem)] min-h-0 overflow-y-auto pr-1">
-                                    <LatencyImpactPanel
-                                        {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                                        pollInterval={15_000}
-                                        enabled={!isCompact}
-                                    />
-                                </div>
                             </div>
                         </section>
                     </div>
@@ -814,21 +800,6 @@ function DashboardPageContent() {
                         </div>
                     </section>
 
-                    {/* Z3 DIAGNOSTIC SUMMARY ROW */}
-                    {!isCompact && (
-                        <section className="grid grid-cols-1 gap-4">
-                            <div className="card min-h-[280px] overflow-hidden p-4">
-                                <h3 className="mb-3 text-base font-semibold text-slate-100">Latency Impact</h3>
-                                <div className="h-[calc(100%-2rem)] min-h-0 overflow-y-auto pr-1">
-                                    <LatencyImpactPanel
-                                        {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                                        pollInterval={15_000}
-                                        enabled={!isCompact}
-                                    />
-                                </div>
-                            </div>
-                        </section>
-                    )}
                 </>
             )}
 

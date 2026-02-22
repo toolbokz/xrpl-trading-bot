@@ -59,6 +59,9 @@ export const OBSERVABILITY_EVENT_TYPES = [
     'SUBMIT_FAIL',
     'ORDER_PLACED',
     'ORDER_FILLED',
+    'MARKOUT_SCHEDULED',
+    'MARKOUT_RECORDED',
+    'MARKOUT_MISSING',
     'VOL_STOP_READY',
 ] as const;
 
@@ -762,6 +765,66 @@ export class ObservabilityBus {
                 pnlQuote: params.pnlQuote,
                 timestamp: params.timestamp ?? new Date(params.nowMs ?? Date.now()).toISOString(),
             },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit MARKOUT_SCHEDULED when a post-fill markout horizon is queued.
+     */
+    emitMarkoutScheduled(params: {
+        pairKey: string;
+        runtimeState: string;
+        correlationId?: string | null;
+        detail: Record<string, unknown>;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'MARKOUT_SCHEDULED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            correlationId: params.correlationId,
+            detail: params.detail,
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit MARKOUT_RECORDED when a markout is computed successfully.
+     */
+    emitMarkoutRecorded(params: {
+        pairKey: string;
+        runtimeState: string;
+        correlationId?: string | null;
+        detail: Record<string, unknown>;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'MARKOUT_RECORDED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            correlationId: params.correlationId,
+            detail: params.detail,
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit MARKOUT_MISSING when a markout cannot be computed before deadline.
+     */
+    emitMarkoutMissing(params: {
+        pairKey: string;
+        runtimeState: string;
+        correlationId?: string | null;
+        detail: Record<string, unknown>;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'MARKOUT_MISSING',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            correlationId: params.correlationId,
+            detail: params.detail,
             nowMs: params.nowMs,
         });
     }

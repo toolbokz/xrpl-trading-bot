@@ -1,6 +1,65 @@
 import fs from 'fs';
 import path from 'path';
 
+export type TradeAckStatus = 'accepted' | 'queued' | 'rejected' | 'unknown';
+export type TradeOutcome = 'filled' | 'partial' | 'rejected' | 'abandoned' | 'timeout';
+export type TradeMarkoutMissingReason =
+    | 'price_source_down'
+    | 'timeout'
+    | 'no_liquidity'
+    | 'trade_not_filled'
+    | 'tx_unvalidated'
+    | 'unknown';
+
+export interface TradeSubmitResult {
+    engine_result: string | null;
+    engine_result_code: number | null;
+    engine_result_message: string | null;
+}
+
+export interface TradeFillSnapshot {
+    fill_ts_ms: number | null;
+    filled_base: number | null;
+    filled_quote: number | null;
+    avg_price: number | null;
+    fee: number | null;
+    partial: boolean;
+    transaction_result: string | null;
+}
+
+export interface TradeMarkoutRecord {
+    horizon_s: number;
+    due_ts_ms: number;
+    mark_ts_ms: number | null;
+    mark_price: number | null;
+    markout_bps: number | null;
+    source: string | null;
+    status: 'recorded' | 'missing';
+    missing_reason: TradeMarkoutMissingReason | null;
+    attempts: number;
+    last_error: string | null;
+}
+
+export interface TradeTrace {
+    trade_id: string;
+    decision_ts_ms: number | null;
+    submit_ts_ms: number | null;
+    ack_ts_ms: number | null;
+    validated_ts_ms: number | null;
+    validated_ledger_index: number | null;
+    validated_ledger_time: number | null;
+    tx_hash: string | null;
+    node_endpoint: string | null;
+    fee_drops: string | null;
+    sequence: number | null;
+    submit_result: TradeSubmitResult | null;
+    ack_status: TradeAckStatus;
+    outcome: TradeOutcome;
+    outcome_reason: string | null;
+    fill_snapshot: TradeFillSnapshot | null;
+    markouts: TradeMarkoutRecord[];
+}
+
 export interface Trade {
     id: string;
     timestamp: number;
@@ -17,6 +76,7 @@ export interface Trade {
     paper: boolean;
     status: 'FILLED' | 'PARTIAL' | 'REJECTED' | 'PENDING';
     source?: 'bot' | 'manual';
+    trace?: TradeTrace;
 }
 
 export interface TradeStats {
