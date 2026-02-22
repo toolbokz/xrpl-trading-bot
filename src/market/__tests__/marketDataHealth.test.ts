@@ -14,6 +14,7 @@ import {
     buildBookSignalFromState,
 } from '../marketDataHealth';
 import { OrderBookState } from '../../utils/types';
+import { BOOK_CROSS_EPS_ABS } from '../bookValidationEpsilon';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test helpers
@@ -117,6 +118,15 @@ describe('scoreBookSignal', () => {
         const result = scoreBookSignal(input, NOW, cfg);
         expect(result.score).toBe(0);
         expect(result.reasons).toContain('bid-not-less-than-ask');
+    });
+
+    it('does not hard-fail on epsilon touching/crossing noise', () => {
+        const input = freshBook();
+        input.bestBid = 1;
+        input.bestAsk = 1 - (BOOK_CROSS_EPS_ABS / 2);
+        const result = scoreBookSignal(input, NOW, cfg);
+        expect(result.score).toBeGreaterThan(0);
+        expect(result.reasons).not.toContain('bid-not-less-than-ask');
     });
 
     it('penalizes insufficient depth', () => {

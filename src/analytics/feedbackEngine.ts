@@ -56,6 +56,7 @@ import {
     buildEdgeAttributionMetrics,
     validatePnlIdentity,
 } from './edgeAttributionMetrics';
+import { tradeHistory, TradeTrace } from './tradeHistory';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -2558,13 +2559,23 @@ class FeedbackEngine {
      * Get learning dataset for adaptive learning.
      * Returns fill events with their corresponding regime context.
      */
-    getLearningDataset(filters: QueryFilters = {}): Array<{ event: TradeEventRecord; regime: FlowRegime | null }> {
+    getLearningDataset(filters: QueryFilters = {}): Array<{
+        event: TradeEventRecord;
+        regime: FlowRegime | null;
+        trace: TradeTrace | null;
+    }> {
         if (!this.ensureInitialized()) {
             return [];
         }
 
         try {
             const events = queryTradeEvents(filters);
+            const traceByHash = new Map<string, TradeTrace>();
+            for (const trade of tradeHistory.getAllTrades()) {
+                if (typeof trade.hash === 'string' && trade.hash.length > 0 && trade.trace) {
+                    traceByHash.set(trade.hash, trade.trace);
+                }
+            }
 
             // Filter to bot fills only
             const fills = events.filter(e =>
@@ -2579,6 +2590,7 @@ class FeedbackEngine {
                 return {
                     event,
                     regime: this.resolveEventRegime(event, snapshot?.flowRegime ?? null),
+                    trace: event.txHash ? (traceByHash.get(event.txHash) ?? null) : null,
                 };
             });
         } catch (err) {

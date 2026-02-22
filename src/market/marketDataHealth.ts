@@ -14,6 +14,7 @@
  */
 
 import { OrderBookState } from '../utils/types';
+import { BOOK_CROSS_EPS_ABS } from './bookValidationEpsilon';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration (all times in ms unless noted)
@@ -207,8 +208,9 @@ export function scoreBookSignal(
     const reasons: string[] = [];
     let score = 100;
 
-    // Structural: bid < ask
-    if (input.bestBid > 0 && input.bestAsk > 0 && input.bestBid >= input.bestAsk) {
+    // Structural: bid < ask (allow epsilon-level touching/crossing noise)
+    const cross = input.bestBid - input.bestAsk;
+    if (input.bestBid > 0 && input.bestAsk > 0 && cross > BOOK_CROSS_EPS_ABS) {
         score = 0;
         reasons.push('bid-not-less-than-ask');
         return { name: 'book', score, reasons };

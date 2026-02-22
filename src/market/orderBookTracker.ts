@@ -3,6 +3,7 @@ import { TradingPair } from '../config';
 import { marketLog as logger } from '../analytics/logger';
 import { XRPLWebSocket } from '../xrpl/client';
 import { OrderBookState, BookOffer as NormalizedOffer } from '../utils/types';
+import { BOOK_CROSS_EPS_ABS } from './bookValidationEpsilon';
 
 export type OrderBookEvents = {
     update: (state: OrderBookState) => void;
@@ -65,7 +66,13 @@ export class OrderBookTracker extends EventEmitter {
 
             const bestBid = bids[0]?.price ?? 0;
             const bestAsk = asks[0]?.price ?? 0;
-            const spread = bestAsk > 0 ? ((bestAsk - bestBid) / bestAsk) * 10_000 : 0;
+            const rawDiff = bestAsk - bestBid;
+            const diff = rawDiff < 0 && Math.abs(rawDiff) <= BOOK_CROSS_EPS_ABS ? 0 : rawDiff;
+            const spread = bestAsk > 0 ? (diff / bestAsk) * 10_000 : 0;
+
+            if (rawDiff < 0 && diff === 0) {
+                logger.debug({ bestBid, bestAsk, diff: rawDiff }, 'Order book epsilon cross clamped to zero spread');
+            }
 
             this.state = {
                 bids,
