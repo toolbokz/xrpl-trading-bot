@@ -61,7 +61,7 @@ class SimulatedXrplNode {
         };
     }
 
-    async submitAndWait(_txBlob: string): Promise<{ result: Record<string, unknown> }> {
+    async submit(_txBlob: string): Promise<{ result: Record<string, unknown> }> {
         return {
             result: {
                 hash: this.txHash,
@@ -71,6 +71,10 @@ class SimulatedXrplNode {
                 tx_json: { hash: this.txHash },
             },
         };
+    }
+
+    async submitAndWait(txBlob: string): Promise<{ result: Record<string, unknown> }> {
+        return this.submit(txBlob);
     }
 
     async request(req: Record<string, unknown>): Promise<{ result: Record<string, unknown> }> {
@@ -198,6 +202,10 @@ describe.sequential('Execution lifecycle API integration', () => {
                     strategy: event.strategy,
                     trade_id: event.tradeId ?? null,
                     tx_hash: event.txHash ?? null,
+                    submit_ts_ms: event.submitTsMs ?? null,
+                    submit_response_ts_ms: event.submitResponseTsMs ?? event.ackTsMs ?? null,
+                    ack_ts_ms: event.ackTsMs ?? event.submitResponseTsMs ?? null,
+                    engine_result: event.submitResult?.engine_result ?? null,
                     submit_result: event.submitResult ?? null,
                     ack_status: event.ackStatus ?? null,
                 },
@@ -254,6 +262,17 @@ describe.sequential('Execution lifecycle API integration', () => {
         expect(res.body.summary.SUBMIT_SUCCESS + res.body.summary.SUBMIT_FAIL).toBeGreaterThan(0);
         expect(res.body.summary.ORDER_PLACED).toBeGreaterThan(0);
         expect(res.body.summary.ORDER_FILLED).toBeGreaterThan(0);
+
+        const submitEvent = res.body.events.find((event: any) => event.eventType === 'SUBMIT_SUCCESS' || event.eventType === 'SUBMIT_FAIL');
+        expect(submitEvent).toBeTruthy();
+        expect(submitEvent.detail).toEqual(expect.objectContaining({
+            submit_ts_ms: expect.any(Number),
+            submit_response_ts_ms: expect.any(Number),
+            ack_ts_ms: expect.any(Number),
+            engine_result: expect.anything(),
+            ack_status: expect.anything(),
+        }));
+        expect(submitEvent.detail.ack_ts_ms).toBe(submitEvent.detail.submit_response_ts_ms);
     });
 
     it('returns trade trace fields from /api/bot/trades with submit result and validated ledger index', async () => {
@@ -318,8 +337,14 @@ describe.sequential('Execution lifecycle API integration', () => {
         expect(trade.trace).toBeTruthy();
         expect(trade.trace.submit_result.engine_result).toBe('terQUEUED');
         expect(trade.trace.ack_status).toBe('queued');
+        expect(typeof trade.trace.submit_ts_ms).toBe('number');
+        expect(typeof trade.trace.submit_response_ts_ms).toBe('number');
+        expect(trade.trace.submit_response_ts_ms).toBe(trade.trace.ack_ts_ms);
+        expect((trade.trace.submit_response_ts_ms as number) - (trade.trace.submit_ts_ms as number)).toBeLessThan(250);
+        expect(trade.trace.validated_ts_ms).toBeGreaterThanOrEqual(trade.trace.submit_response_ts_ms);
         expect(trade.trace.validated_ledger_index).toBe(900001);
         expect(trade.trace.fill_snapshot).toEqual(expect.objectContaining({
+            fill_ts_ms: expect.any(Number),
             filled_base: expect.any(Number),
             filled_quote: expect.any(Number),
             avg_price: expect.any(Number),

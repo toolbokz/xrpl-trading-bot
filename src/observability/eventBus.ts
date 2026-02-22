@@ -638,13 +638,17 @@ export class ObservabilityBus {
         pairKey: string;
         runtimeState: string;
         strategy: string;
+        submitTsMs?: number | null;
         nowMs?: number;
     }): ObservabilityEvent | null {
         return this.emit({
             eventType: 'SUBMIT_ATTEMPT',
             pairKey: params.pairKey,
             runtimeState: params.runtimeState,
-            detail: { strategy: params.strategy },
+            detail: {
+                strategy: params.strategy,
+                submit_ts_ms: params.submitTsMs ?? null,
+            },
             nowMs: params.nowMs,
         });
     }
@@ -657,8 +661,14 @@ export class ObservabilityBus {
         runtimeState: string;
         strategy: string;
         txHash?: string | null;
+        submitTsMs?: number | null;
+        submitResponseTsMs?: number | null;
+        ackTsMs?: number | null;
+        engineResult?: string | null;
+        ackStatus?: 'accepted' | 'queued' | 'rejected' | 'unknown' | null;
         nowMs?: number;
     }): ObservabilityEvent | null {
+        const submitResponseTsMs = params.submitResponseTsMs ?? params.ackTsMs ?? null;
         return this.emit({
             eventType: 'SUBMIT_SUCCESS',
             pairKey: params.pairKey,
@@ -666,6 +676,11 @@ export class ObservabilityBus {
             detail: {
                 strategy: params.strategy,
                 txHash: params.txHash ?? null,
+                submit_ts_ms: params.submitTsMs ?? null,
+                submit_response_ts_ms: submitResponseTsMs,
+                ack_ts_ms: params.ackTsMs ?? submitResponseTsMs,
+                engine_result: params.engineResult ?? null,
+                ack_status: params.ackStatus ?? null,
             },
             nowMs: params.nowMs,
         });
@@ -680,8 +695,14 @@ export class ObservabilityBus {
         strategy: string;
         txHash?: string | null;
         errorCode?: string | null;
+        submitTsMs?: number | null;
+        submitResponseTsMs?: number | null;
+        ackTsMs?: number | null;
+        engineResult?: string | null;
+        ackStatus?: 'accepted' | 'queued' | 'rejected' | 'unknown' | null;
         nowMs?: number;
     }): ObservabilityEvent | null {
+        const submitResponseTsMs = params.submitResponseTsMs ?? params.ackTsMs ?? null;
         return this.emit({
             eventType: 'SUBMIT_FAIL',
             pairKey: params.pairKey,
@@ -690,6 +711,11 @@ export class ObservabilityBus {
                 strategy: params.strategy,
                 txHash: params.txHash ?? null,
                 errorCode: params.errorCode ?? null,
+                submit_ts_ms: params.submitTsMs ?? null,
+                submit_response_ts_ms: submitResponseTsMs,
+                ack_ts_ms: params.ackTsMs ?? submitResponseTsMs,
+                engine_result: params.engineResult ?? null,
+                ack_status: params.ackStatus ?? null,
             },
             nowMs: params.nowMs,
         });

@@ -44,6 +44,7 @@ export interface TradeTrace {
     trade_id: string;
     decision_ts_ms: number | null;
     submit_ts_ms: number | null;
+    submit_response_ts_ms: number | null;
     ack_ts_ms: number | null;
     validated_ts_ms: number | null;
     validated_ledger_index: number | null;

@@ -54,7 +54,7 @@ describe('latencyImpactViewModel', () => {
         const model = deriveLatencyImpactViewModel(makeSummary(), makeConfig());
         expect(model.verdict).toBe('GOOD');
         expect(model.reasons[0]).toContain('within .env limits');
-        expect(model.thresholdChecks.length).toBe(8);
+        expect(model.thresholdChecks.length).toBe(10);
         expect(model.thresholdChecks.every((check) => check.status === 'PASS')).toBe(true);
     });
 

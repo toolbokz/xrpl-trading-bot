@@ -87,4 +87,17 @@ describe('executionQualityMetrics', () => {
         expect(latency.submitToValidatedMs).toBe(200);
         expect(latency.decisionToValidatedMs).toBe(250);
     });
+
+    it('uses fillTs for decision-to-fill while keeping submit-to-validate from validatedTs', () => {
+        const latency = computeLatencyMetrics({
+            decisionTs: 1000,
+            submitTs: 1100,
+            validatedTs: 5000,
+            fillTs: 1600,
+        });
+
+        expect(latency.decisionToSubmitMs).toBe(100);
+        expect(latency.submitToValidatedMs).toBe(3900);
+        expect(latency.decisionToValidatedMs).toBe(600);
+    });
 });

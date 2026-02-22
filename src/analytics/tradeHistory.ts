@@ -80,6 +80,7 @@ export interface TradeTrace {
     trade_id: string;
     decision_ts_ms: number | null;
     submit_ts_ms: number | null;
+    submit_response_ts_ms: number | null;
     ack_ts_ms: number | null;
     validated_ts_ms: number | null;
     validated_ledger_index: number | null;
@@ -277,6 +278,7 @@ function defaultTrace(trade: TraceFallback): TradeTrace {
         trade_id: trade.id,
         decision_ts_ms: trade.timestamp,
         submit_ts_ms: null,
+        submit_response_ts_ms: null,
         ack_ts_ms: null,
         validated_ts_ms: null,
         validated_ledger_index: null,
@@ -296,12 +298,15 @@ function defaultTrace(trade: TraceFallback): TradeTrace {
 
 function parseTrace(raw: unknown, fallback: TraceFallback): TradeTrace | undefined {
     if (!isObject(raw)) return undefined;
+    const submitResponseTsMs = toFiniteNumberOrNull(raw.submit_response_ts_ms);
+    const ackTsMs = toFiniteNumberOrNull(raw.ack_ts_ms);
     const parsed: TradeTrace = {
         ...defaultTrace(fallback),
         trade_id: typeof raw.trade_id === 'string' && raw.trade_id.length > 0 ? raw.trade_id : fallback.id,
         decision_ts_ms: toFiniteNumberOrNull(raw.decision_ts_ms) ?? fallback.timestamp,
         submit_ts_ms: toFiniteNumberOrNull(raw.submit_ts_ms),
-        ack_ts_ms: toFiniteNumberOrNull(raw.ack_ts_ms),
+        submit_response_ts_ms: submitResponseTsMs,
+        ack_ts_ms: ackTsMs ?? submitResponseTsMs,
         validated_ts_ms: toFiniteNumberOrNull(raw.validated_ts_ms),
         validated_ledger_index: toFiniteNumberOrNull(raw.validated_ledger_index),
         validated_ledger_time: toFiniteNumberOrNull(raw.validated_ledger_time),
@@ -336,6 +341,12 @@ function mergeTrace(
     fallback: TraceFallback,
 ): TradeTrace {
     const base = existing ?? defaultTrace(fallback);
+    const nextSubmitResponseTs = patch.submit_response_ts_ms !== undefined
+        ? patch.submit_response_ts_ms
+        : (patch.ack_ts_ms !== undefined ? patch.ack_ts_ms : base.submit_response_ts_ms);
+    const nextAckTs = patch.ack_ts_ms !== undefined
+        ? patch.ack_ts_ms
+        : (patch.submit_response_ts_ms !== undefined ? patch.submit_response_ts_ms : base.ack_ts_ms);
     const merged: TradeTrace = {
         ...base,
         ...patch,
@@ -344,6 +355,8 @@ function mergeTrace(
             ? patch.tx_hash
             : (base.tx_hash ?? fallback.hash ?? null),
         decision_ts_ms: patch.decision_ts_ms !== undefined ? patch.decision_ts_ms : base.decision_ts_ms,
+        submit_response_ts_ms: nextSubmitResponseTs ?? null,
+        ack_ts_ms: nextAckTs ?? nextSubmitResponseTs ?? null,
         markouts: patch.markouts !== undefined ? [...patch.markouts] : base.markouts,
     };
 

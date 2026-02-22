@@ -42,6 +42,7 @@ export interface StrategySubmitTelemetryEvent {
     amountBase?: number;
     intentPrice?: number;
     submitTsMs?: number;
+    submitResponseTsMs?: number;
     ackTsMs?: number;
     validatedTsMs?: number;
     nodeEndpoint?: string | null;

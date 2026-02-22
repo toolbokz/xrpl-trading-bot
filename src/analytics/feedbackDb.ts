@@ -152,7 +152,10 @@ export interface ExecutionQualityEventRecord {
     guardQuarantined: number | null; // 1=true, 0=false, null=unknown
     decisionTs: number | null;
     submitTs: number | null;
+    submitResponseTs?: number | null;
     validatedTs: number | null;
+    submitResultEngine?: string | null;
+    submitError?: string | null;
     decisionToSubmitMs: number | null;
     submitToValidatedMs: number | null;
     decisionToValidatedMs: number | null;
@@ -379,7 +382,10 @@ function initSchema(db: DatabaseType): void {
             guardQuarantined INTEGER,
             decisionTs INTEGER,
             submitTs INTEGER,
+            submitResponseTs INTEGER,
             validatedTs INTEGER,
+            submitResultEngine TEXT,
+            submitError TEXT,
             decisionToSubmitMs INTEGER,
             submitToValidatedMs INTEGER,
             decisionToValidatedMs INTEGER
@@ -544,7 +550,10 @@ const EXECUTION_QUALITY_EXTRA_COLUMNS = {
     guardQuarantined: 'INTEGER',
     decisionTs: 'INTEGER',
     submitTs: 'INTEGER',
+    submitResponseTs: 'INTEGER',
     validatedTs: 'INTEGER',
+    submitResultEngine: 'TEXT',
+    submitError: 'TEXT',
     decisionToSubmitMs: 'INTEGER',
     submitToValidatedMs: 'INTEGER',
     decisionToValidatedMs: 'INTEGER',
@@ -655,7 +664,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 effSpreadBps, realizedSpreadBps1m, realizedSpreadBps5m,
                 impactBps1m, impactBps5m, implShortfallQuote, fillRatio,
                 status, rejectReason, flags, guardQuarantined,
-                decisionTs, submitTs, validatedTs,
+                decisionTs, submitTs, submitResponseTs, validatedTs,
+                submitResultEngine, submitError,
                 decisionToSubmitMs, submitToValidatedMs, decisionToValidatedMs
             ) VALUES (
                 @id, @ts, @eventId, @txHash, @pairKeyCanonical, @pairAliases,
@@ -667,7 +677,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 @effSpreadBps, @realizedSpreadBps1m, @realizedSpreadBps5m,
                 @impactBps1m, @impactBps5m, @implShortfallQuote, @fillRatio,
                 @status, @rejectReason, @flags, @guardQuarantined,
-                @decisionTs, @submitTs, @validatedTs,
+                @decisionTs, @submitTs, @submitResponseTs, @validatedTs,
+                @submitResultEngine, @submitError,
                 @decisionToSubmitMs, @submitToValidatedMs, @decisionToValidatedMs
             )
         `),
@@ -958,7 +969,10 @@ export function insertExecutionQualityEvent(event: ExecutionQualityEventRecord):
             guardQuarantined: event.guardQuarantined,
             decisionTs: event.decisionTs,
             submitTs: event.submitTs,
+            submitResponseTs: event.submitResponseTs ?? null,
             validatedTs: event.validatedTs,
+            submitResultEngine: event.submitResultEngine ?? null,
+            submitError: event.submitError ?? null,
             decisionToSubmitMs: event.decisionToSubmitMs,
             submitToValidatedMs: event.submitToValidatedMs,
             decisionToValidatedMs: event.decisionToValidatedMs,

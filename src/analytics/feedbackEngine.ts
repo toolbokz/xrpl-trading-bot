@@ -166,7 +166,10 @@ export interface ExecutionQualityEventInput {
     guardQuarantined?: boolean | null;
     decisionTs?: number | null;
     submitTs?: number | null;
+    submitResponseTs?: number | null;
     validatedTs?: number | null;
+    submitResultEngine?: string | null;
+    submitError?: string | null;
     decisionToSubmitMs?: number | null;
     submitToValidatedMs?: number | null;
     decisionToValidatedMs?: number | null;
@@ -945,7 +948,10 @@ class FeedbackEngine {
                 guardQuarantined: input.guardQuarantined == null ? null : (input.guardQuarantined ? 1 : 0),
                 decisionTs: input.decisionTs ?? null,
                 submitTs: input.submitTs ?? null,
+                submitResponseTs: input.submitResponseTs ?? null,
                 validatedTs: input.validatedTs ?? null,
+                submitResultEngine: input.submitResultEngine ?? null,
+                submitError: input.submitError ?? null,
                 decisionToSubmitMs: input.decisionToSubmitMs ?? null,
                 submitToValidatedMs: input.submitToValidatedMs ?? null,
                 decisionToValidatedMs: input.decisionToValidatedMs ?? null,
@@ -1639,7 +1645,15 @@ class FeedbackEngine {
                     ? fills.filter((e) => e.decisionTs == null || e.submitTs == null || e.validatedTs == null).length / fills.length
                     : 0,
                 missingAckRate: fills.length > 0
-                    ? fills.filter((e) => e.validatedTs == null).length / fills.length
+                    ? fills.filter((e) => {
+                        const responseTs = e.submitResponseTs ?? e.submitTs;
+                        const hasSubmitResponse = responseTs != null && Number.isFinite(responseTs);
+                        const hasSubmitResult = (typeof e.submitResultEngine === 'string' && e.submitResultEngine.length > 0)
+                            || (e.status === 'FILLED' || e.status === 'PARTIAL' || e.status === 'REJECTED');
+                        const hasRecordedError = (typeof e.submitError === 'string' && e.submitError.length > 0)
+                            || (typeof e.rejectReason === 'string' && e.rejectReason.length > 0);
+                        return !(hasSubmitResponse && (hasSubmitResult || hasRecordedError));
+                    }).length / fills.length
                     : 0,
                 missingMarkoutRate: fills.length > 0
                     ? fills.filter((e) => e.realizedSpreadBps1m == null && e.realizedSpreadBps5m == null).length / fills.length

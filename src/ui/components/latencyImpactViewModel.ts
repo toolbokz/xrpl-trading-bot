@@ -88,6 +88,8 @@ export function deriveLatencyImpactViewModel(
     const rejectRate = safeRate(summary.rejects, summary.events);
     const partialRate = safeRate(summary.partials, summary.events);
 
+    const avgDecisionToSubmit = summary.avgDecisionToSubmitMs;
+    const avgSubmitToValidate = summary.avgSubmitToValidatedMs;
     const avgLatency = summary.avgDecisionToValidatedMs;
     const budgetLatency = config.decisionFreshnessMs;
     const latencyBudgetUsedPct = avgLatency == null || budgetLatency <= 0
@@ -137,6 +139,8 @@ export function deriveLatencyImpactViewModel(
     checkThreshold('negAgeDelta', 'Negative slippage age-delta rate', summary.negRateAgeDelta, config.maxNegRateAgeDelta, '%');
     checkThreshold('weeklyP50Drift', 'Weekly P50 drift', summary.weeklyP50DriftBps, config.weeklyP50DriftLimitBps, 'bps');
     checkThreshold('weeklyP90Drift', 'Weekly P90 drift', summary.weeklyP90DriftBps, config.weeklyP90DriftLimitBps, 'bps');
+    checkThreshold('decisionToSubmitLatency', 'Decision-to-submit latency', avgDecisionToSubmit, config.sendFreshnessMs, 'ms');
+    checkThreshold('submitToValidateLatency', 'Submit-to-validate latency', avgSubmitToValidate, config.fillFreshnessMs, 'ms');
     checkThreshold('decisionToFillLatency', 'Decision-to-fill latency', avgLatency, budgetLatency, 'ms');
 
     const profitabilityScore = (

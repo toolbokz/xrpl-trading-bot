@@ -1218,7 +1218,32 @@ export class OfferExecutor {
         ]);
     }
 
-    // Timeout for submitAndWait (12 seconds - ~3 ledger closes)
+    private async submitTransaction(txBlob: string, txType: string): Promise<{ result: Record<string, unknown> }> {
+        const xrplClient = this.client as unknown as {
+            submit?: (blob: string) => Promise<{ result: Record<string, unknown> }>;
+            submitAndWait?: (blob: string) => Promise<{ result: Record<string, unknown> }>;
+        };
+
+        if (typeof xrplClient.submit === 'function') {
+            return this.withTimeout(
+                xrplClient.submit(txBlob),
+                OfferExecutor.SUBMIT_TIMEOUT_MS,
+                `submit for ${txType}`,
+            );
+        }
+
+        if (typeof xrplClient.submitAndWait === 'function') {
+            return this.withTimeout(
+                xrplClient.submitAndWait(txBlob),
+                OfferExecutor.SUBMIT_TIMEOUT_MS,
+                `submitAndWait for ${txType}`,
+            );
+        }
+
+        throw new Error('xrpl-submit-method-missing');
+    }
+
+    // Timeout for submit RPC (12 seconds - ~3 ledger closes)
     private static readonly SUBMIT_TIMEOUT_MS = 12_000;
     private static readonly VALIDATION_LOOKUP_DEADLINE_MS = 10_000;
     private static readonly VALIDATION_POLL_INTERVAL_MS = 1_000;
@@ -1415,6 +1440,7 @@ export class OfferExecutor {
         }
         const decisionTs = inflightTrace?.trace.decisionTimeMs ?? null;
         let eqSubmitTimeMs: number | null = null;
+        let submitResponseTsMs: number | null = null;
         let tradeId: string | null = null;
         let txHash: string | null = null;
         let nodeEndpoint: string | null = this.inferNodeEndpoint();
@@ -1516,14 +1542,11 @@ export class OfferExecutor {
                 })(),
             });
 
-            // Wrap submitAndWait with timeout to prevent blocking indefinitely
+            // Wrap submit call with timeout to prevent blocking indefinitely
             let res;
             try {
-                res = await this.withTimeout(
-                    this.client.submitAndWait(signed.tx_blob),
-                    OfferExecutor.SUBMIT_TIMEOUT_MS,
-                    `submitAndWait for ${tx.TransactionType}`
-                );
+                res = await this.submitTransaction(signed.tx_blob, tx.TransactionType);
+                submitResponseTsMs = Date.now();
             } catch (timeoutErr: any) {
                 // Timeout does NOT mean failure - tx may still succeed
                 // Log warning and return unknown finality
@@ -1533,6 +1556,8 @@ export class OfferExecutor {
                     pair: pairSymbol,
                     hash: signed.hash,
                 }, 'Transaction timeout - finality unknown, requires reconciliation');
+
+                submitResponseTsMs = Date.now();
 
                 if (intent && executionSide) {
                     const latency = computeLatencyMetrics({
@@ -1562,14 +1587,17 @@ export class OfferExecutor {
                         flags: this.buildExecutionFlags(flags),
                         decisionTs,
                         submitTs: eqSubmitTimeMs,
+                        submitResponseTs: submitResponseTsMs,
                         validatedTs: null,
+                        submitResultEngine: null,
+                        submitError: 'timeout-unknown-finality',
                         decisionToSubmitMs: latency.decisionToSubmitMs,
                         submitToValidatedMs: latency.submitToValidatedMs,
                         decisionToValidatedMs: latency.decisionToValidatedMs,
                     });
                 }
 
-                const timeoutAckTsMs = Date.now();
+                const timeoutAckTsMs = submitResponseTsMs;
                 if (intent) {
                     tradeHistory.recordTrade({
                         pair: canonicalPair,
@@ -1593,10 +1621,8 @@ export class OfferExecutor {
                         tradeId,
                         patch: {
                             submit_ts_ms: eqSubmitTimeMs,
+                            submit_response_ts_ms: submitResponseTsMs,
                             ack_ts_ms: timeoutAckTsMs,
-                            validated_ts_ms: null,
-                            validated_ledger_index: null,
-                            validated_ledger_time: null,
                             submit_result: {
                                 engine_result: null,
                                 engine_result_code: null,
@@ -1615,6 +1641,7 @@ export class OfferExecutor {
                     stage: 'fail',
                     tradeId,
                     submitTsMs: eqSubmitTimeMs,
+                    submitResponseTsMs: submitResponseTsMs,
                     ackTsMs: timeoutAckTsMs,
                     nodeEndpoint,
                     feeDrops,
@@ -1642,12 +1669,15 @@ export class OfferExecutor {
                 };
             }
 
-            logger.info({ result: res.result, pair: pairSymbol }, 'XRPL submitAndWait result');
+            logger.info({ result: res.result, pair: pairSymbol }, 'XRPL submit result');
 
             const submitResultRaw = res.result as unknown as Record<string, unknown>;
+            const submitResultTx = submitResultRaw.tx_json as Record<string, unknown> | undefined;
             const responseTxHash = typeof submitResultRaw.hash === 'string' && submitResultRaw.hash.length > 0
                 ? submitResultRaw.hash
-                : signed.hash;
+                : (typeof submitResultTx?.hash === 'string' && submitResultTx.hash.length > 0
+                    ? submitResultTx.hash
+                    : signed.hash);
             txHash = responseTxHash;
             const submitResult = {
                 engine_result: typeof submitResultRaw.engine_result === 'string'
@@ -1661,7 +1691,8 @@ export class OfferExecutor {
                     : null,
             };
             const ackStatus = this.deriveAckStatus(submitResult.engine_result);
-            const ackTsMs = Date.now();
+            const ackTsMs = submitResponseTsMs ?? Date.now();
+            submitResponseTsMs = ackTsMs;
 
             if (intent) {
                 tradeHistory.upsertTradeTrace({
@@ -1670,6 +1701,7 @@ export class OfferExecutor {
                     patch: {
                         tx_hash: responseTxHash,
                         submit_ts_ms: eqSubmitTimeMs,
+                        submit_response_ts_ms: submitResponseTsMs,
                         ack_ts_ms: ackTsMs,
                         submit_result: submitResult,
                         ack_status: ackStatus,
@@ -1683,6 +1715,7 @@ export class OfferExecutor {
                 stage: (ackStatus === 'accepted' || ackStatus === 'queued') ? 'success' : 'fail',
                 tradeId,
                 submitTsMs: eqSubmitTimeMs,
+                submitResponseTsMs: submitResponseTsMs,
                 ackTsMs,
                 nodeEndpoint,
                 feeDrops,
@@ -1740,9 +1773,9 @@ export class OfferExecutor {
                     tradeId,
                     patch: {
                         tx_hash: responseTxHash,
-                        validated_ts_ms: validatedTs,
-                        validated_ledger_index: validatedLedgerIndex,
-                        validated_ledger_time: validatedLedgerTime,
+                        ...(validatedTs != null ? { validated_ts_ms: validatedTs } : {}),
+                        ...(validatedLedgerIndex != null ? { validated_ledger_index: validatedLedgerIndex } : {}),
+                        ...(validatedLedgerTime != null ? { validated_ledger_time: validatedLedgerTime } : {}),
                         ...(traceOutcome ? { outcome: traceOutcome } : {}),
                         ...(traceReason ? { outcome_reason: traceReason } : {}),
                     },
@@ -1816,7 +1849,10 @@ export class OfferExecutor {
                             flags: this.buildExecutionFlags(flags),
                             decisionTs,
                             submitTs: eqSubmitTimeMs,
+                            submitResponseTs: submitResponseTsMs,
                             validatedTs,
+                            submitResultEngine: submitResult.engine_result,
+                            submitError: txResult ?? 'unknown-error',
                             decisionToSubmitMs: latency.decisionToSubmitMs,
                             submitToValidatedMs: latency.submitToValidatedMs,
                             decisionToValidatedMs: latency.decisionToValidatedMs,
@@ -1930,14 +1966,18 @@ export class OfferExecutor {
                     });
                 }
 
-                const fillTsMs = validatedTs ?? Date.now();
+                const hasMetaFillTs = typeof validatedLedgerTime === 'number'
+                    && Number.isFinite(validatedLedgerTime)
+                    && (submitResponseTsMs == null || validatedLedgerTime >= submitResponseTsMs);
+                const fillTsMs = hasMetaFillTs
+                    ? (validatedLedgerTime as number)
+                    : (validatedTs ?? Date.now());
                 if (integrity.ok) {
                     tradeHistory.upsertTradeTrace({
                         hash: responseTxHash,
                         tradeId,
                         patch: {
                             tx_hash: responseTxHash,
-                            validated_ts_ms: fillTsMs,
                             validated_ledger_index: validatedLedgerIndex,
                             validated_ledger_time: validatedLedgerTime,
                             outcome: status === 'FILLED' ? 'filled' : 'partial',
@@ -2044,11 +2084,12 @@ export class OfferExecutor {
 
                 // Standard XRPL transaction fee in XRP
                 const txFeeXrp = 0.000012;
-                const validatedTsForMetrics = validatedTs ?? Date.now();
+                const validatedTsForMetrics = validatedTs;
                 const latency = computeLatencyMetrics({
                     decisionTs,
                     submitTs: eqSubmitTimeMs,
                     validatedTs: validatedTsForMetrics,
+                    fillTs: fillTsMs,
                 });
                 const executionFlags = [
                     ...this.buildExecutionFlags(flags),
@@ -2096,7 +2137,10 @@ export class OfferExecutor {
                     guardQuarantined: !integrity.ok,
                     decisionTs,
                     submitTs: eqSubmitTimeMs,
+                    submitResponseTs: submitResponseTsMs,
                     validatedTs: validatedTsForMetrics,
+                    submitResultEngine: submitResult.engine_result,
+                    submitError: integrity.ok ? null : integrity.reasons.join(','),
                     decisionToSubmitMs: latency.decisionToSubmitMs,
                     submitToValidatedMs: latency.submitToValidatedMs,
                     decisionToValidatedMs: latency.decisionToValidatedMs,
@@ -2117,7 +2161,7 @@ export class OfferExecutor {
                     filledQuote,
                     strategyFair: intent.expectedPrice ?? null,
                     decisionTs,
-                    fillTs: validatedTsForMetrics,
+                    fillTs: fillTsMs,
                 });
 
                 if (
@@ -2160,8 +2204,8 @@ export class OfferExecutor {
                     && Number.isFinite(filledBase)
                     && filledBase > 0
                 ) {
-                    const fillTs = validatedTsForMetrics;
-                    const decisionTsForHorizon = decisionTs ?? validatedTsForMetrics;
+                    const fillTs = fillTsMs;
+                    const decisionTsForHorizon = decisionTs ?? fillTsMs;
                     const decisionMidForHorizon = this.currentMidPrice as number;
                     const fillPriceForHorizon = actualFillPrice;
                     const baseFilledForHorizon = filledBase;
@@ -2326,7 +2370,8 @@ export class OfferExecutor {
             };
         } catch (err: any) {
             logger.error({ err, txType: tx?.TransactionType, tx, pair: pairSymbol }, 'XRPL submission failed');
-            const failureAckTsMs = Date.now();
+            submitResponseTsMs = Date.now();
+            const failureAckTsMs = submitResponseTsMs;
             const failureMessage = err?.message || 'submit-failed';
             if (txHash && intent) {
                 tradeHistory.upsertTradeTrace({
@@ -2334,6 +2379,7 @@ export class OfferExecutor {
                     tradeId,
                     patch: {
                         submit_ts_ms: eqSubmitTimeMs,
+                        submit_response_ts_ms: submitResponseTsMs,
                         ack_ts_ms: failureAckTsMs,
                         submit_result: {
                             engine_result: null,
@@ -2351,6 +2397,7 @@ export class OfferExecutor {
                 pairKey: canonicalPair,
                 stage: 'fail',
                 tradeId,
+                submitResponseTsMs: submitResponseTsMs,
                 ackTsMs: failureAckTsMs,
                 nodeEndpoint,
                 feeDrops,
@@ -2409,11 +2456,10 @@ export class OfferExecutor {
                 } catch { /* feedback should never crash trading */ }
 
                 if (executionSide) {
-                    const failedAt = Date.now();
                     const latency = computeLatencyMetrics({
                         decisionTs: inflightTrace?.trace.decisionTimeMs ?? null,
                         submitTs: eqSubmitTimeMs,
-                        validatedTs: failedAt,
+                        validatedTs: null,
                     });
                     feedbackEngine.recordExecutionQualityEvent({
                         txHash: txHash ?? null,
@@ -2437,7 +2483,10 @@ export class OfferExecutor {
                         flags: this.buildExecutionFlags(flags),
                         decisionTs: inflightTrace?.trace.decisionTimeMs ?? null,
                         submitTs: eqSubmitTimeMs,
-                        validatedTs: failedAt,
+                        submitResponseTs: submitResponseTsMs,
+                        validatedTs: null,
+                        submitResultEngine: null,
+                        submitError: failureMessage,
                         decisionToSubmitMs: latency.decisionToSubmitMs,
                         submitToValidatedMs: latency.submitToValidatedMs,
                         decisionToValidatedMs: latency.decisionToValidatedMs,
