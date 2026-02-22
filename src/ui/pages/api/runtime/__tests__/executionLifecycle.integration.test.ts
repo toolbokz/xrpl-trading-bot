@@ -304,6 +304,16 @@ describe.sequential('Execution lifecycle API integration', () => {
 
         const executor = new OfferExecutor(node as any, wallet as any, risk as any, false, pair as any, undefined);
         executor.setCurrentStrategy('integration-scalper');
+        executor.setCurrentMarketContext({
+            midPrice: 1.405,
+            bestBid: 1.404,
+            bestAsk: 1.406,
+            spreadBps: 14.23,
+            bookAgeMs: 120,
+            flowCombined: 0.1,
+            flowStrength: 0.2,
+            flowRegime: 'quiet',
+        });
         await executor.placeOffer({
             side: 'buy',
             price: 1.41,
@@ -343,6 +353,15 @@ describe.sequential('Execution lifecycle API integration', () => {
         expect((trade.trace.submit_response_ts_ms as number) - (trade.trace.submit_ts_ms as number)).toBeLessThan(250);
         expect(trade.trace.validated_ts_ms).toBeGreaterThanOrEqual(trade.trace.submit_response_ts_ms);
         expect(trade.trace.validated_ledger_index).toBe(900001);
+        expect(trade.trace.baseline_best_bid).toBeCloseTo(1.404, 8);
+        expect(trade.trace.baseline_best_ask).toBeCloseTo(1.406, 8);
+        expect(trade.trace.baseline_mid).toBeCloseTo(1.405, 8);
+        expect(trade.trace.baseline_source).toBe('orderbook_snapshot');
+        expect(trade.trace.expected_price).toBeCloseTo(1.406, 8);
+        expect(trade.trace.expected_rule).toBe('BUY->best_ask');
+        expect(trade.trace.price_convention).toBe('quote_per_base');
+        expect((trade.trace.baseline_ts_ms as number)).toBeLessThanOrEqual(trade.trace.decision_ts_ms as number);
+        expect((trade.trace.decision_ts_ms as number)).toBeLessThanOrEqual(trade.trace.submit_ts_ms as number);
         expect(trade.trace.fill_snapshot).toEqual(expect.objectContaining({
             fill_ts_ms: expect.any(Number),
             filled_base: expect.any(Number),

@@ -126,9 +126,21 @@ export interface ExecutionQualityEventRecord {
     strategy: string | null;
     regime: FlowRegime | null;
     source: 'bot' | 'manual' | 'unknown';
+    venue?: string | null;
     intentPrice: number | null;
     expectedPrice: number | null;
     expectedPriceSource: 'intent' | 'mid' | 'bbo' | 'fallback_intent' | null;
+    baselineTs?: number | null;
+    baselineBestBid?: number | null;
+    baselineBestAsk?: number | null;
+    baselineMid?: number | null;
+    baselineSpreadBps?: number | null;
+    baselineSource?: string | null;
+    expectedRule?: string | null;
+    slippageBaselineUsed?: string | null;
+    priceConvention?: 'quote_per_base' | 'base_per_quote' | null;
+    baselineBookAgeMs?: number | null;
+    fillTs?: number | null;
     decisionMid: number | null;
     decisionBid: number | null;
     decisionAsk: number | null;
@@ -356,9 +368,21 @@ function initSchema(db: DatabaseType): void {
             strategy TEXT,
             regime TEXT,
             source TEXT,
+            venue TEXT,
             intentPrice REAL,
             expectedPrice REAL,
             expectedPriceSource TEXT,
+            baselineTs INTEGER,
+            baselineBestBid REAL,
+            baselineBestAsk REAL,
+            baselineMid REAL,
+            baselineSpreadBps REAL,
+            baselineSource TEXT,
+            expectedRule TEXT,
+            slippageBaselineUsed TEXT,
+            priceConvention TEXT,
+            baselineBookAgeMs REAL,
+            fillTs INTEGER,
             decisionMid REAL,
             decisionBid REAL,
             decisionAsk REAL,
@@ -524,9 +548,21 @@ const EXECUTION_QUALITY_EXTRA_COLUMNS = {
     strategy: 'TEXT',
     regime: 'TEXT',
     source: 'TEXT',
+    venue: 'TEXT',
     intentPrice: 'REAL',
     expectedPrice: 'REAL',
     expectedPriceSource: 'TEXT',
+    baselineTs: 'INTEGER',
+    baselineBestBid: 'REAL',
+    baselineBestAsk: 'REAL',
+    baselineMid: 'REAL',
+    baselineSpreadBps: 'REAL',
+    baselineSource: 'TEXT',
+    expectedRule: 'TEXT',
+    slippageBaselineUsed: 'TEXT',
+    priceConvention: 'TEXT',
+    baselineBookAgeMs: 'REAL',
+    fillTs: 'INTEGER',
     decisionMid: 'REAL',
     decisionBid: 'REAL',
     decisionAsk: 'REAL',
@@ -656,8 +692,10 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
         insertExecutionQualityEvent: db.prepare(`
             INSERT OR IGNORE INTO execution_quality_events (
                 id, ts, eventId, txHash, pairKeyCanonical, pairAliases,
-                side, strategy, regime, source,
+                side, strategy, regime, source, venue,
                 intentPrice, expectedPrice, expectedPriceSource,
+                baselineTs, baselineBestBid, baselineBestAsk, baselineMid, baselineSpreadBps,
+                baselineSource, expectedRule, slippageBaselineUsed, priceConvention, baselineBookAgeMs, fillTs,
                 decisionMid, decisionBid, decisionAsk, fillPrice,
                 amountBase, filledBase, filledQuote,
                 slippageBpsVsIntent, slippageBpsVsMid, slippageBpsVsBbo,
@@ -669,8 +707,10 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 decisionToSubmitMs, submitToValidatedMs, decisionToValidatedMs
             ) VALUES (
                 @id, @ts, @eventId, @txHash, @pairKeyCanonical, @pairAliases,
-                @side, @strategy, @regime, @source,
+                @side, @strategy, @regime, @source, @venue,
                 @intentPrice, @expectedPrice, @expectedPriceSource,
+                @baselineTs, @baselineBestBid, @baselineBestAsk, @baselineMid, @baselineSpreadBps,
+                @baselineSource, @expectedRule, @slippageBaselineUsed, @priceConvention, @baselineBookAgeMs, @fillTs,
                 @decisionMid, @decisionBid, @decisionAsk, @fillPrice,
                 @amountBase, @filledBase, @filledQuote,
                 @slippageBpsVsIntent, @slippageBpsVsMid, @slippageBpsVsBbo,
@@ -943,9 +983,21 @@ export function insertExecutionQualityEvent(event: ExecutionQualityEventRecord):
             strategy: event.strategy,
             regime: event.regime,
             source: event.source,
+            venue: event.venue ?? null,
             intentPrice: event.intentPrice,
             expectedPrice: event.expectedPrice,
             expectedPriceSource: event.expectedPriceSource,
+            baselineTs: event.baselineTs ?? null,
+            baselineBestBid: event.baselineBestBid ?? null,
+            baselineBestAsk: event.baselineBestAsk ?? null,
+            baselineMid: event.baselineMid ?? null,
+            baselineSpreadBps: event.baselineSpreadBps ?? null,
+            baselineSource: event.baselineSource ?? null,
+            expectedRule: event.expectedRule ?? null,
+            slippageBaselineUsed: event.slippageBaselineUsed ?? null,
+            priceConvention: event.priceConvention ?? null,
+            baselineBookAgeMs: event.baselineBookAgeMs ?? null,
+            fillTs: event.fillTs ?? null,
             decisionMid: event.decisionMid,
             decisionBid: event.decisionBid,
             decisionAsk: event.decisionAsk,

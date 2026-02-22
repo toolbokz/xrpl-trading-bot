@@ -39,6 +39,23 @@ export interface Trade {
 
 export type TradeAckStatus = 'accepted' | 'queued' | 'rejected' | 'unknown';
 export type TradeOutcome = 'filled' | 'partial' | 'rejected' | 'abandoned' | 'timeout';
+export type TradePriceConvention = 'quote_per_base' | 'base_per_quote';
+export type TradeBaselineSource =
+    | 'orderbook_snapshot'
+    | 'fair_value'
+    | 'intent_fallback'
+    | 'invalid'
+    | 'missing';
+export type TradeExpectedRule =
+    | 'BUY->best_ask'
+    | 'SELL->best_bid'
+    | 'BUY->mid'
+    | 'SELL->mid'
+    | 'BUY->intent_price'
+    | 'SELL->intent_price'
+    | 'BUY->fallback_intent'
+    | 'SELL->fallback_intent'
+    | 'UNKNOWN';
 export type TradeMarkoutMissingReason =
     | 'price_source_down'
     | 'timeout'
@@ -79,6 +96,16 @@ export interface TradeMarkoutRecord {
 export interface TradeTrace {
     trade_id: string;
     decision_ts_ms: number | null;
+    baseline_ts_ms: number | null;
+    baseline_best_bid: number | null;
+    baseline_best_ask: number | null;
+    baseline_mid: number | null;
+    baseline_spread_bps: number | null;
+    baseline_source: TradeBaselineSource | null;
+    expected_price: number | null;
+    expected_rule: TradeExpectedRule | null;
+    price_convention: TradePriceConvention | null;
+    baseline_book_age_ms: number | null;
     submit_ts_ms: number | null;
     submit_response_ts_ms: number | null;
     ack_ts_ms: number | null;
@@ -277,6 +304,16 @@ function defaultTrace(trade: TraceFallback): TradeTrace {
     return {
         trade_id: trade.id,
         decision_ts_ms: trade.timestamp,
+        baseline_ts_ms: null,
+        baseline_best_bid: null,
+        baseline_best_ask: null,
+        baseline_mid: null,
+        baseline_spread_bps: null,
+        baseline_source: null,
+        expected_price: null,
+        expected_rule: null,
+        price_convention: null,
+        baseline_book_age_ms: null,
         submit_ts_ms: null,
         submit_response_ts_ms: null,
         ack_ts_ms: null,
@@ -300,10 +337,41 @@ function parseTrace(raw: unknown, fallback: TraceFallback): TradeTrace | undefin
     if (!isObject(raw)) return undefined;
     const submitResponseTsMs = toFiniteNumberOrNull(raw.submit_response_ts_ms);
     const ackTsMs = toFiniteNumberOrNull(raw.ack_ts_ms);
+    const baselineSource = raw.baseline_source;
+    const expectedRule = raw.expected_rule;
+    const priceConvention = raw.price_convention;
     const parsed: TradeTrace = {
         ...defaultTrace(fallback),
         trade_id: typeof raw.trade_id === 'string' && raw.trade_id.length > 0 ? raw.trade_id : fallback.id,
         decision_ts_ms: toFiniteNumberOrNull(raw.decision_ts_ms) ?? fallback.timestamp,
+        baseline_ts_ms: toFiniteNumberOrNull(raw.baseline_ts_ms),
+        baseline_best_bid: toFiniteNumberOrNull(raw.baseline_best_bid),
+        baseline_best_ask: toFiniteNumberOrNull(raw.baseline_best_ask),
+        baseline_mid: toFiniteNumberOrNull(raw.baseline_mid),
+        baseline_spread_bps: toFiniteNumberOrNull(raw.baseline_spread_bps),
+        baseline_source: baselineSource === 'orderbook_snapshot'
+            || baselineSource === 'fair_value'
+            || baselineSource === 'intent_fallback'
+            || baselineSource === 'invalid'
+            || baselineSource === 'missing'
+            ? baselineSource
+            : null,
+        expected_price: toFiniteNumberOrNull(raw.expected_price),
+        expected_rule: expectedRule === 'BUY->best_ask'
+            || expectedRule === 'SELL->best_bid'
+            || expectedRule === 'BUY->mid'
+            || expectedRule === 'SELL->mid'
+            || expectedRule === 'BUY->intent_price'
+            || expectedRule === 'SELL->intent_price'
+            || expectedRule === 'BUY->fallback_intent'
+            || expectedRule === 'SELL->fallback_intent'
+            || expectedRule === 'UNKNOWN'
+            ? expectedRule
+            : null,
+        price_convention: priceConvention === 'quote_per_base' || priceConvention === 'base_per_quote'
+            ? priceConvention
+            : null,
+        baseline_book_age_ms: toFiniteNumberOrNull(raw.baseline_book_age_ms),
         submit_ts_ms: toFiniteNumberOrNull(raw.submit_ts_ms),
         submit_response_ts_ms: submitResponseTsMs,
         ack_ts_ms: ackTsMs ?? submitResponseTsMs,

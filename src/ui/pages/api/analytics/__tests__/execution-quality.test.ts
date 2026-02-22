@@ -79,6 +79,7 @@ const defaultAnalytics = {
         partialFillAnomalies: 0,
         quoteBaseIntegrityViolations: 0,
     },
+    slippageRealismDiagnostics: [],
 };
 
 describe('GET /api/analytics/execution-quality', () => {

@@ -7,8 +7,12 @@ export interface SlippageRealismSummary {
     avgDecisionToValidatedMs: number | null;
     missingFillSnapshotRate: number;
     staleFillSnapshotRate: number;
+    staleFillSnapshotSampleCount?: number;
+    staleFillSnapshotNoDataCount?: number;
     tsMonotonicityViolationRate: number;
     negSlippageRate: number;
+    negSlippageSampleCount?: number;
+    negSlippageNoDataCount?: number;
     tooGoodRate: number;
     tooBadRate: number;
 }
@@ -74,10 +78,17 @@ export function deriveSlippageRealismViewModel(
         {
             key: 'staleFillSnapshot',
             label: 'Stale fill snapshot rate',
-            actual: summary.staleFillSnapshotRate,
+            actual: (summary.staleFillSnapshotSampleCount ?? summary.fills) > 0
+                ? summary.staleFillSnapshotRate
+                : null,
             limit: config.maxStaleFillSnapshotRate,
             unit: '%',
-            status: resolveStatus(summary.staleFillSnapshotRate, config.maxStaleFillSnapshotRate),
+            status: resolveStatus(
+                (summary.staleFillSnapshotSampleCount ?? summary.fills) > 0
+                    ? summary.staleFillSnapshotRate
+                    : null,
+                config.maxStaleFillSnapshotRate,
+            ),
         },
         {
             key: 'tsMonotonicity',
@@ -106,26 +117,47 @@ export function deriveSlippageRealismViewModel(
         {
             key: 'negTier1',
             label: 'Negative slippage rate (tier1)',
-            actual: summary.negSlippageRate,
+            actual: (summary.negSlippageSampleCount ?? summary.fills) > 0
+                ? summary.negSlippageRate
+                : null,
             limit: config.maxNegRateTier1,
             unit: '%',
-            status: resolveStatus(summary.negSlippageRate, config.maxNegRateTier1),
+            status: resolveStatus(
+                (summary.negSlippageSampleCount ?? summary.fills) > 0
+                    ? summary.negSlippageRate
+                    : null,
+                config.maxNegRateTier1,
+            ),
         },
         {
             key: 'negTier2',
             label: 'Negative slippage rate (tier2)',
-            actual: summary.negSlippageRate,
+            actual: (summary.negSlippageSampleCount ?? summary.fills) > 0
+                ? summary.negSlippageRate
+                : null,
             limit: config.maxNegRateTier2,
             unit: '%',
-            status: resolveStatus(summary.negSlippageRate, config.maxNegRateTier2),
+            status: resolveStatus(
+                (summary.negSlippageSampleCount ?? summary.fills) > 0
+                    ? summary.negSlippageRate
+                    : null,
+                config.maxNegRateTier2,
+            ),
         },
         {
             key: 'negTier3',
             label: 'Negative slippage rate (tier3)',
-            actual: summary.negSlippageRate,
+            actual: (summary.negSlippageSampleCount ?? summary.fills) > 0
+                ? summary.negSlippageRate
+                : null,
             limit: config.maxNegRateTier3,
             unit: '%',
-            status: resolveStatus(summary.negSlippageRate, config.maxNegRateTier3),
+            status: resolveStatus(
+                (summary.negSlippageSampleCount ?? summary.fills) > 0
+                    ? summary.negSlippageRate
+                    : null,
+                config.maxNegRateTier3,
+            ),
         },
         {
             key: 'decisionLatency',

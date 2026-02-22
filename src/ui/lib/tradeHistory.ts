@@ -3,6 +3,23 @@ import path from 'path';
 
 export type TradeAckStatus = 'accepted' | 'queued' | 'rejected' | 'unknown';
 export type TradeOutcome = 'filled' | 'partial' | 'rejected' | 'abandoned' | 'timeout';
+export type TradePriceConvention = 'quote_per_base' | 'base_per_quote';
+export type TradeBaselineSource =
+    | 'orderbook_snapshot'
+    | 'fair_value'
+    | 'intent_fallback'
+    | 'invalid'
+    | 'missing';
+export type TradeExpectedRule =
+    | 'BUY->best_ask'
+    | 'SELL->best_bid'
+    | 'BUY->mid'
+    | 'SELL->mid'
+    | 'BUY->intent_price'
+    | 'SELL->intent_price'
+    | 'BUY->fallback_intent'
+    | 'SELL->fallback_intent'
+    | 'UNKNOWN';
 export type TradeMarkoutMissingReason =
     | 'price_source_down'
     | 'timeout'
@@ -43,6 +60,16 @@ export interface TradeMarkoutRecord {
 export interface TradeTrace {
     trade_id: string;
     decision_ts_ms: number | null;
+    baseline_ts_ms: number | null;
+    baseline_best_bid: number | null;
+    baseline_best_ask: number | null;
+    baseline_mid: number | null;
+    baseline_spread_bps: number | null;
+    baseline_source: TradeBaselineSource | null;
+    expected_price: number | null;
+    expected_rule: TradeExpectedRule | null;
+    price_convention: TradePriceConvention | null;
+    baseline_book_age_ms: number | null;
     submit_ts_ms: number | null;
     submit_response_ts_ms: number | null;
     ack_ts_ms: number | null;

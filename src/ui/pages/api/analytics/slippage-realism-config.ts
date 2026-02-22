@@ -12,6 +12,7 @@ interface SlippageRealismConfigResponse {
         decisionFreshnessMs: number;
         sendFreshnessMs: number;
         fillFreshnessMs: number;
+        fillFreshnessMsXrpl: number;
         illiqFillFreshnessMs: number;
         feeBps: number;
         tooGoodSpreadWeight: number;
@@ -51,6 +52,7 @@ function handler(req: LocalRequest, res: NextApiResponse<SlippageRealismConfigRe
             decisionFreshnessMs: num(process.env.SLIPPAGE_REALISM_DECISION_FRESHNESS_MS, 1000),
             sendFreshnessMs: num(process.env.SLIPPAGE_REALISM_SEND_FRESHNESS_MS, 500),
             fillFreshnessMs: num(process.env.SLIPPAGE_REALISM_FILL_FRESHNESS_MS, 500),
+            fillFreshnessMsXrpl: num(process.env.SLIPPAGE_REALISM_FILL_FRESHNESS_MS_XRPL, 12000),
             illiqFillFreshnessMs: num(process.env.SLIPPAGE_REALISM_ILLIQ_FILL_FRESHNESS_MS, 1000),
             feeBps: num(process.env.SLIPPAGE_REALISM_FEE_BPS, 0),
             tooGoodSpreadWeight: num(process.env.SLIPPAGE_REALISM_TOO_GOOD_SPREAD_WEIGHT, 0.25),

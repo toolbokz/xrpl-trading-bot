@@ -9,6 +9,7 @@ import {
     ExecutionQualityHistogramBin,
     ExecutionQualityBreakdownRow,
     ExecutionQualityAnomalies,
+    ExecutionQualityRealismDiagnostic,
 } from '../../../../analytics/feedbackEngine';
 import { canonicalizePairKey } from '../../../../xrpl/currency';
 import { buildAnalyticsCacheKey, getAnalyticsCacheTtlMs, getCachedAnalytics, setCachedAnalytics } from './_cache';
@@ -42,6 +43,7 @@ export interface ExecutionQualityApiResponse {
         byRegime: ExecutionQualityBreakdownRow[];
     };
     anomalies: ExecutionQualityAnomalies;
+    slippageRealismDiagnostics: ExecutionQualityRealismDiagnostic[];
 }
 
 function parseSide(value: unknown): 'buy' | 'sell' | null {
@@ -146,6 +148,7 @@ function handler(req: LocalRequest, res: NextApiResponse<ExecutionQualityApiResp
             histograms: analytics.histograms,
             breakdowns: analytics.breakdowns,
             anomalies: analytics.anomalies,
+            slippageRealismDiagnostics: analytics.slippageRealismDiagnostics,
         };
 
         setCachedAnalytics(cacheKey, payload, getAnalyticsCacheTtlMs());

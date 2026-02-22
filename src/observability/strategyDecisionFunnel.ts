@@ -41,6 +41,16 @@ export interface StrategySubmitTelemetryEvent {
     side?: 'buy' | 'sell';
     amountBase?: number;
     intentPrice?: number;
+    baselineTsMs?: number | null;
+    baselineBestBid?: number | null;
+    baselineBestAsk?: number | null;
+    baselineMid?: number | null;
+    baselineSpreadBps?: number | null;
+    baselineSource?: string | null;
+    expectedPrice?: number | null;
+    expectedRule?: string | null;
+    priceConvention?: 'quote_per_base' | 'base_per_quote' | null;
+    baselineBookAgeMs?: number | null;
     submitTsMs?: number;
     submitResponseTsMs?: number;
     ackTsMs?: number;

@@ -3,7 +3,12 @@ import { ExecutionResult, OrderBookState, PartialFillResult } from '../utils/typ
 import { RiskEngine } from '../risk/riskEngine';
 import { StrategyConfig, TradingPair } from '../config';
 import { executionLog as logger } from '../analytics/logger';
-import { tradeHistory } from '../analytics/tradeHistory';
+import {
+    tradeHistory,
+    TradeBaselineSource,
+    TradeExpectedRule,
+    TradePriceConvention,
+} from '../analytics/tradeHistory';
 import { feedbackEngine } from '../analytics/feedbackEngine';
 import { tradeMarkoutScheduler } from '../analytics/tradeMarkoutScheduler';
 import { computeCostRealism } from '../analytics/costRealism';
@@ -48,6 +53,24 @@ export interface PostFillSnapshot {
     flowRegime: FlowRegime | null;
 }
 
+type SlippageBaselineUsed = 'best_bid' | 'best_ask' | 'mid' | 'vwap' | 'intent' | 'unknown';
+
+interface ExpectedBaselineContext {
+    baselineTsMs: number;
+    baselineBestBid: number | null;
+    baselineBestAsk: number | null;
+    baselineMid: number | null;
+    baselineSpreadBps: number | null;
+    baselineSource: TradeBaselineSource;
+    expectedPrice: number | null;
+    expectedRule: TradeExpectedRule;
+    expectedPriceSource: ExpectedPriceSource;
+    slippageBaselineUsed: SlippageBaselineUsed;
+    priceConvention: TradePriceConvention;
+    baselineBookAgeMs: number | null;
+    orderingValid: boolean;
+}
+
 export function schedulePostFillSnapshots(opts: {
     eventId: string;
     getSnapshot: () => PostFillSnapshot;
@@ -74,6 +97,7 @@ export class OfferExecutor {
     private currentBestBid: number | null = null;
     private currentBestAsk: number | null = null;
     private currentSpreadBps: number | null = null;
+    private currentBookAgeMs: number | null = null;
     private currentFlowCombined: number | null = null;
     private currentFlowStrength: number | null = null;
     private currentFlowRegime: FlowRegime | null = null;
@@ -148,6 +172,7 @@ export class OfferExecutor {
         bestBid?: number | null;
         bestAsk?: number | null;
         spreadBps: number | null;
+        bookAgeMs?: number | null;
         flowCombined: number | null;
         flowStrength: number | null;
         flowRegime: FlowRegime | null;
@@ -157,6 +182,7 @@ export class OfferExecutor {
         this.currentBestBid = input.bestBid ?? null;
         this.currentBestAsk = input.bestAsk ?? null;
         this.currentSpreadBps = input.spreadBps;
+        this.currentBookAgeMs = input.bookAgeMs ?? null;
         this.currentFlowCombined = input.flowCombined;
         this.currentFlowStrength = input.flowStrength;
         this.currentFlowRegime = input.flowRegime;
@@ -572,10 +598,12 @@ export class OfferExecutor {
         const effectiveExpectedPrice = expectedPriceOverride ?? intent.expectedPrice ?? intent.price;
         const normalizedIntent: TradeIntent = { ...intent, expectedPrice: effectiveExpectedPrice };
         const normalizedSide = normalizedIntent.side.toLowerCase() as 'buy' | 'sell';
+        const baselineDecisionTs = Date.now();
         const expectedBaseline = this.resolveExpectedBaseline({
             side: normalizedSide,
             intentPrice: normalizedIntent.price,
             expectedPrice: normalizedIntent.expectedPrice,
+            decisionTsMs: baselineDecisionTs,
         });
         const bboBaseline = this.getBboBaseline(normalizedSide);
 
@@ -603,7 +631,7 @@ export class OfferExecutor {
             const side = normalizedIntent.side.toLowerCase() as 'buy' | 'sell';
             const costMetrics = computeCostRealism({
                 side,
-                intentPrice: normalizedIntent.expectedPrice ?? normalizedIntent.price,
+                intentPrice: expectedBaseline.expectedPrice ?? normalizedIntent.price,
                 fillPrice: normalizedIntent.price, // Paper assumes perfect fill
                 midPriceAtDecision: this.currentMidPrice,
                 ammFeeBps: null, // No AMM fee in paper mode
@@ -614,24 +642,24 @@ export class OfferExecutor {
                     : null;
 
             // Record feedback event for paper trades
-            try {
-                feedbackEngine.recordTradeEvent({
-                    pairKey: pairSymbol,
-                    strategy: this.currentStrategy,
-                    action: 'fill',
-                    side,
-                    intentPrice: normalizedIntent.expectedPrice ?? normalizedIntent.price,
-                    intentSizeBase: normalizedIntent.amount,
-                    fillPrice: normalizedIntent.price,
+                try {
+                    feedbackEngine.recordTradeEvent({
+                        pairKey: pairSymbol,
+                        strategy: this.currentStrategy,
+                        action: 'fill',
+                        side,
+                        intentPrice: normalizedIntent.expectedPrice ?? normalizedIntent.price,
+                        intentSizeBase: normalizedIntent.amount,
+                        fillPrice: normalizedIntent.price,
                     fillSizeBase: normalizedIntent.amount,
                     resultCode: 'paper-mode',
                     isBotTrade: true,
                     midPriceAtDecision: this.currentMidPrice ?? undefined,
                     // Cost realism fields
-                    slippageBpsVsIntent: costMetrics.slippageBpsVsIntent,
-                    slippageBpsVsMid: costMetrics.slippageBpsVsMid,
-                    slippageBpsVsBbo,
-                    expectedPriceSource: expectedBaseline.source,
+                        slippageBpsVsIntent: costMetrics.slippageBpsVsIntent,
+                        slippageBpsVsMid: costMetrics.slippageBpsVsMid,
+                        slippageBpsVsBbo,
+                        expectedPriceSource: expectedBaseline.expectedPriceSource,
                     decisionMidPrice: this.currentMidPrice,
                     decisionBestBid: this.currentBestBid,
                     decisionBestAsk: this.currentBestAsk,
@@ -661,7 +689,7 @@ export class OfferExecutor {
                         strategy: this.currentStrategy,
                         side,
                         arrivalMid: this.currentMidPrice ?? normalizedIntent.price,
-                        expectedPrice: expectedBaseline.expectedPrice,
+                        expectedPrice: expectedBaseline.expectedPrice ?? normalizedIntent.price,
                         isMaker: false,
                     });
                     this.executionQualityCollector.recordFill(paperTrace, {
@@ -1047,26 +1075,142 @@ export class OfferExecutor {
         return null;
     }
 
+    private normalizeQuotePerBase(value: number | null | undefined): number | null {
+        if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+            return null;
+        }
+        return value;
+    }
+
+    private normalizeNonNegative(value: number | null | undefined): number | null {
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+            return null;
+        }
+        return value;
+    }
+
+    private resolveBaselineSpreadBps(bestBid: number | null, bestAsk: number | null): number | null {
+        if (this.currentSpreadBps != null && Number.isFinite(this.currentSpreadBps)) {
+            return this.currentSpreadBps;
+        }
+        if (bestBid == null || bestAsk == null || bestBid <= 0 || bestAsk <= 0) {
+            return null;
+        }
+        const mid = (bestBid + bestAsk) / 2;
+        if (!Number.isFinite(mid) || mid <= 0) return null;
+        return ((bestAsk - bestBid) / mid) * 10_000;
+    }
+
+    private isBaselineOrderingValid(input: {
+        baselineTsMs: number | null;
+        decisionTsMs: number | null;
+        submitTsMs: number | null;
+    }): boolean {
+        const { baselineTsMs, decisionTsMs, submitTsMs } = input;
+        if (
+            baselineTsMs != null
+            && decisionTsMs != null
+            && Number.isFinite(baselineTsMs)
+            && Number.isFinite(decisionTsMs)
+            && baselineTsMs > decisionTsMs
+        ) {
+            return false;
+        }
+        if (
+            decisionTsMs != null
+            && submitTsMs != null
+            && Number.isFinite(decisionTsMs)
+            && Number.isFinite(submitTsMs)
+            && decisionTsMs > submitTsMs
+        ) {
+            return false;
+        }
+        return true;
+    }
+
     private resolveExpectedBaseline(input: {
         side: 'buy' | 'sell';
         intentPrice: number;
         expectedPrice: number | undefined;
-    }): { expectedPrice: number; source: ExpectedPriceSource } {
-        const expected = input.expectedPrice;
-        if (expected != null && Number.isFinite(expected) && expected > 0) {
-            return { expectedPrice: expected, source: 'intent' };
+        decisionTsMs: number | null;
+        submitTsMs?: number | null;
+    }): ExpectedBaselineContext {
+        const sideUpper = input.side === 'buy' ? 'BUY' : 'SELL';
+        const baselineBestBid = this.normalizeQuotePerBase(this.currentBestBid);
+        const baselineBestAsk = this.normalizeQuotePerBase(this.currentBestAsk);
+        const baselineMid = this.normalizeQuotePerBase(
+            this.currentMidPrice
+            ?? (
+                baselineBestBid != null && baselineBestAsk != null
+                    ? (baselineBestBid + baselineBestAsk) / 2
+                    : null
+            )
+        );
+        const baselineSpreadBps = this.resolveBaselineSpreadBps(baselineBestBid, baselineBestAsk);
+        const baselineBookAgeMs = this.normalizeNonNegative(this.currentBookAgeMs);
+        const baselineTsMs = input.decisionTsMs ?? Date.now();
+        const hintedExpected = this.normalizeQuotePerBase(input.expectedPrice);
+        const intentPrice = this.normalizeQuotePerBase(input.intentPrice);
+
+        let expectedPrice: number | null = null;
+        let expectedRule: TradeExpectedRule = 'UNKNOWN';
+        let expectedPriceSource: ExpectedPriceSource = 'fallback_intent';
+        let slippageBaselineUsed: SlippageBaselineUsed = 'unknown';
+        let baselineSource: TradeBaselineSource = 'missing';
+
+        if (input.side === 'buy' && baselineBestAsk != null) {
+            expectedPrice = baselineBestAsk;
+            expectedRule = 'BUY->best_ask';
+            expectedPriceSource = 'bbo';
+            slippageBaselineUsed = 'best_ask';
+            baselineSource = 'orderbook_snapshot';
+        } else if (input.side === 'sell' && baselineBestBid != null) {
+            expectedPrice = baselineBestBid;
+            expectedRule = 'SELL->best_bid';
+            expectedPriceSource = 'bbo';
+            slippageBaselineUsed = 'best_bid';
+            baselineSource = 'orderbook_snapshot';
+        } else if (baselineMid != null) {
+            expectedPrice = baselineMid;
+            expectedRule = sideUpper === 'BUY' ? 'BUY->mid' : 'SELL->mid';
+            expectedPriceSource = 'mid';
+            slippageBaselineUsed = 'mid';
+            baselineSource = 'fair_value';
+        } else if (hintedExpected != null) {
+            expectedPrice = hintedExpected;
+            expectedRule = sideUpper === 'BUY' ? 'BUY->intent_price' : 'SELL->intent_price';
+            expectedPriceSource = 'intent';
+            slippageBaselineUsed = 'intent';
+            baselineSource = 'intent_fallback';
+        } else if (intentPrice != null) {
+            expectedPrice = intentPrice;
+            expectedRule = sideUpper === 'BUY' ? 'BUY->fallback_intent' : 'SELL->fallback_intent';
+            expectedPriceSource = 'fallback_intent';
+            slippageBaselineUsed = 'intent';
+            baselineSource = 'intent_fallback';
         }
 
-        if (this.currentMidPrice != null && Number.isFinite(this.currentMidPrice) && this.currentMidPrice > 0) {
-            return { expectedPrice: this.currentMidPrice, source: 'mid' };
-        }
+        const orderingValid = this.isBaselineOrderingValid({
+            baselineTsMs,
+            decisionTsMs: input.decisionTsMs,
+            submitTsMs: input.submitTsMs ?? null,
+        });
 
-        const bbo = this.getBboBaseline(input.side);
-        if (bbo != null) {
-            return { expectedPrice: bbo, source: 'bbo' };
-        }
-
-        return { expectedPrice: input.intentPrice, source: 'fallback_intent' };
+        return {
+            baselineTsMs,
+            baselineBestBid,
+            baselineBestAsk,
+            baselineMid,
+            baselineSpreadBps,
+            baselineSource: orderingValid ? baselineSource : 'invalid',
+            expectedPrice,
+            expectedRule,
+            expectedPriceSource,
+            slippageBaselineUsed,
+            priceConvention: 'quote_per_base',
+            baselineBookAgeMs,
+            orderingValid,
+        };
     }
 
     /**
@@ -1414,15 +1558,17 @@ export class OfferExecutor {
         );
         const intentBaselinePrice = intent?.expectedPrice ?? intent?.price;
         const executionSide = intent ? (intent.side.toLowerCase() as 'buy' | 'sell') : null;
+        const baselineDecisionTsSeed = Date.now();
         const expectedBaseline = (intent && executionSide)
             ? this.resolveExpectedBaseline({
                 side: executionSide,
                 intentPrice: intent.price,
                 expectedPrice: intent.expectedPrice,
+                decisionTsMs: baselineDecisionTsSeed,
             })
             : null;
-        const selectedExpectedPrice = expectedBaseline?.expectedPrice ?? intentBaselinePrice;
-        const expectedPriceSource = expectedBaseline?.source ?? 'fallback_intent';
+        const selectedExpectedPrice = expectedBaseline?.expectedPrice ?? this.normalizeQuotePerBase(intentBaselinePrice);
+        const expectedPriceSource = expectedBaseline?.expectedPriceSource ?? 'fallback_intent';
         const bboBaseline = executionSide ? this.getBboBaseline(executionSide) : null;
 
         // ── Execution quality trace: start ──────────────────────────────────
@@ -1438,7 +1584,7 @@ export class OfferExecutor {
                 isMaker: flags?.passive ?? false,
             });
         }
-        const decisionTs = inflightTrace?.trace.decisionTimeMs ?? null;
+        const decisionTs = inflightTrace?.trace.decisionTimeMs ?? (intent ? baselineDecisionTsSeed : null);
         let eqSubmitTimeMs: number | null = null;
         let submitResponseTsMs: number | null = null;
         let tradeId: string | null = null;
@@ -1446,6 +1592,13 @@ export class OfferExecutor {
         let nodeEndpoint: string | null = this.inferNodeEndpoint();
         let feeDrops: string | null = null;
         let sequence: number | null = null;
+        let baselineContext: ExpectedBaselineContext | null = expectedBaseline
+            ? {
+                ...expectedBaseline,
+                baselineTsMs: expectedBaseline.baselineTsMs ?? decisionTs ?? baselineDecisionTsSeed,
+            }
+            : null;
+        let expectedPriceForRealism: number | null = baselineContext?.expectedPrice ?? selectedExpectedPrice ?? null;
 
         try {
             if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
@@ -1501,6 +1654,16 @@ export class OfferExecutor {
                     tradeId,
                     patch: {
                         decision_ts_ms: decisionTs ?? pendingTrade.timestamp,
+                        baseline_ts_ms: baselineContext?.baselineTsMs ?? null,
+                        baseline_best_bid: baselineContext?.baselineBestBid ?? null,
+                        baseline_best_ask: baselineContext?.baselineBestAsk ?? null,
+                        baseline_mid: baselineContext?.baselineMid ?? null,
+                        baseline_spread_bps: baselineContext?.baselineSpreadBps ?? null,
+                        baseline_source: baselineContext?.baselineSource ?? null,
+                        expected_price: baselineContext?.expectedPrice ?? null,
+                        expected_rule: baselineContext?.expectedRule ?? null,
+                        price_convention: baselineContext?.priceConvention ?? null,
+                        baseline_book_age_ms: baselineContext?.baselineBookAgeMs ?? null,
                         tx_hash: signed.hash,
                         node_endpoint: nodeEndpoint,
                         fee_drops: feeDrops,
@@ -1514,12 +1677,39 @@ export class OfferExecutor {
 
             // ── Execution quality trace: mark submit ────────────────────────
             eqSubmitTimeMs = Date.now();
+            if (baselineContext) {
+                const orderingValid = this.isBaselineOrderingValid({
+                    baselineTsMs: baselineContext.baselineTsMs,
+                    decisionTsMs: decisionTs,
+                    submitTsMs: eqSubmitTimeMs,
+                });
+                if (!orderingValid) {
+                    logger.warn({
+                        pair: canonicalPair,
+                        side: executionSide,
+                        baselineTsMs: baselineContext.baselineTsMs,
+                        decisionTsMs: decisionTs,
+                        submitTsMs: eqSubmitTimeMs,
+                    }, 'Invalid baseline ordering detected; slippage realism will be flagged as NO_DATA');
+                    baselineContext = {
+                        ...baselineContext,
+                        orderingValid: false,
+                        baselineSource: 'invalid',
+                    };
+                }
+                expectedPriceForRealism = baselineContext.orderingValid
+                    ? (baselineContext.expectedPrice ?? null)
+                    : null;
+            } else {
+                expectedPriceForRealism = null;
+            }
             if (intent && signed.hash) {
                 tradeHistory.upsertTradeTrace({
                     hash: signed.hash,
                     tradeId,
                     patch: {
                         submit_ts_ms: eqSubmitTimeMs,
+                        baseline_source: baselineContext?.baselineSource ?? null,
                     },
                 });
             }
@@ -1534,6 +1724,16 @@ export class OfferExecutor {
                 feeDrops,
                 sequence,
                 txHash: signed.hash,
+                baselineTsMs: baselineContext?.baselineTsMs ?? null,
+                baselineBestBid: baselineContext?.baselineBestBid ?? null,
+                baselineBestAsk: baselineContext?.baselineBestAsk ?? null,
+                baselineMid: baselineContext?.baselineMid ?? null,
+                baselineSpreadBps: baselineContext?.baselineSpreadBps ?? null,
+                baselineSource: baselineContext?.baselineSource ?? null,
+                expectedPrice: baselineContext?.expectedPrice ?? null,
+                expectedRule: baselineContext?.expectedRule ?? null,
+                priceConvention: baselineContext?.priceConvention ?? null,
+                baselineBookAgeMs: baselineContext?.baselineBookAgeMs ?? null,
                 ...(executionSide ? { side: executionSide } : {}),
                 ...(typeof intent?.amount === 'number' ? { amountBase: intent.amount } : {}),
                 ...(() => {
@@ -1573,8 +1773,20 @@ export class OfferExecutor {
                         regime: this.currentFlowRegime,
                         source: 'bot',
                         intentPrice: intentBaselinePrice ?? intent.price,
-                        expectedPrice: selectedExpectedPrice ?? null,
+                        expectedPrice: expectedPriceForRealism,
                         expectedPriceSource,
+                        venue: 'XRPL',
+                        baselineTs: baselineContext?.baselineTsMs ?? null,
+                        baselineBestBid: baselineContext?.baselineBestBid ?? null,
+                        baselineBestAsk: baselineContext?.baselineBestAsk ?? null,
+                        baselineMid: baselineContext?.baselineMid ?? null,
+                        baselineSpreadBps: baselineContext?.baselineSpreadBps ?? null,
+                        baselineSource: baselineContext?.baselineSource ?? null,
+                        expectedRule: baselineContext?.expectedRule ?? null,
+                        slippageBaselineUsed: baselineContext?.slippageBaselineUsed ?? null,
+                        priceConvention: baselineContext?.priceConvention ?? null,
+                        baselineBookAgeMs: baselineContext?.baselineBookAgeMs ?? null,
+                        fillTs: null,
                         decisionMid: this.currentMidPrice,
                         decisionBid: this.currentBestBid,
                         decisionAsk: this.currentBestAsk,
@@ -1654,6 +1866,16 @@ export class OfferExecutor {
                     ackStatus: 'unknown',
                     txHash: signed.hash,
                     errorCode: 'timeout-unknown-finality',
+                    baselineTsMs: baselineContext?.baselineTsMs ?? null,
+                    baselineBestBid: baselineContext?.baselineBestBid ?? null,
+                    baselineBestAsk: baselineContext?.baselineBestAsk ?? null,
+                    baselineMid: baselineContext?.baselineMid ?? null,
+                    baselineSpreadBps: baselineContext?.baselineSpreadBps ?? null,
+                    baselineSource: baselineContext?.baselineSource ?? null,
+                    expectedPrice: baselineContext?.expectedPrice ?? null,
+                    expectedRule: baselineContext?.expectedRule ?? null,
+                    priceConvention: baselineContext?.priceConvention ?? null,
+                    baselineBookAgeMs: baselineContext?.baselineBookAgeMs ?? null,
                     ...(executionSide ? { side: executionSide } : {}),
                     ...(typeof intent?.amount === 'number' ? { amountBase: intent.amount } : {}),
                     ...(() => {
@@ -1723,6 +1945,16 @@ export class OfferExecutor {
                 submitResult,
                 ackStatus,
                 txHash: responseTxHash,
+                baselineTsMs: baselineContext?.baselineTsMs ?? null,
+                baselineBestBid: baselineContext?.baselineBestBid ?? null,
+                baselineBestAsk: baselineContext?.baselineBestAsk ?? null,
+                baselineMid: baselineContext?.baselineMid ?? null,
+                baselineSpreadBps: baselineContext?.baselineSpreadBps ?? null,
+                baselineSource: baselineContext?.baselineSource ?? null,
+                expectedPrice: baselineContext?.expectedPrice ?? null,
+                expectedRule: baselineContext?.expectedRule ?? null,
+                priceConvention: baselineContext?.priceConvention ?? null,
+                baselineBookAgeMs: baselineContext?.baselineBookAgeMs ?? null,
                 ...(executionSide ? { side: executionSide } : {}),
                 ...(typeof intent?.amount === 'number' ? { amountBase: intent.amount } : {}),
                 ...(() => {
@@ -1835,8 +2067,20 @@ export class OfferExecutor {
                             regime: this.currentFlowRegime,
                             source: 'bot',
                             intentPrice: intentBaselinePrice ?? intent.price,
-                            expectedPrice: selectedExpectedPrice ?? null,
+                            expectedPrice: expectedPriceForRealism,
                             expectedPriceSource,
+                            venue: 'XRPL',
+                            baselineTs: baselineContext?.baselineTsMs ?? null,
+                            baselineBestBid: baselineContext?.baselineBestBid ?? null,
+                            baselineBestAsk: baselineContext?.baselineBestAsk ?? null,
+                            baselineMid: baselineContext?.baselineMid ?? null,
+                            baselineSpreadBps: baselineContext?.baselineSpreadBps ?? null,
+                            baselineSource: baselineContext?.baselineSource ?? null,
+                            expectedRule: baselineContext?.expectedRule ?? null,
+                            slippageBaselineUsed: baselineContext?.slippageBaselineUsed ?? null,
+                            priceConvention: baselineContext?.priceConvention ?? null,
+                            baselineBookAgeMs: baselineContext?.baselineBookAgeMs ?? null,
+                            fillTs: null,
                             decisionMid: this.currentMidPrice,
                             decisionBid: this.currentBestBid,
                             decisionAsk: this.currentBestAsk,
@@ -1871,14 +2115,14 @@ export class OfferExecutor {
                 prepared.TakerGets as Amount,
                 prepared.TakerPays as Amount,
                 intent?.side ?? 'BUY',
-                selectedExpectedPrice
+                expectedPriceForRealism ?? undefined
             );
 
             // Log slippage metrics for monitoring
             if (fillResult.slippageBps !== 0) {
                 logger.info({
                     pair: pairSymbol,
-                    expectedPrice: selectedExpectedPrice,
+                    expectedPrice: expectedPriceForRealism,
                     effectivePrice: fillResult.effectivePrice,
                     slippageBps: fillResult.slippageBps,
                     fillRatio: fillResult.fillRatio,
@@ -1915,8 +2159,8 @@ export class OfferExecutor {
                     source: 'bot',
                 } as const;
                 const integrity = validateTradeIntegrity(
-                    selectedExpectedPrice != null
-                        ? { ...integrityInput, expectedPrice: selectedExpectedPrice }
+                    expectedPriceForRealism != null
+                        ? { ...integrityInput, expectedPrice: expectedPriceForRealism }
                         : integrityInput
                 );
 
@@ -1930,7 +2174,7 @@ export class OfferExecutor {
                         filledBase,
                         filledQuote,
                         priceQuotePerBase: actualFillPrice,
-                        expectedPrice: selectedExpectedPrice,
+                        expectedPrice: expectedPriceForRealism,
                         reasons: integrity.reasons,
                     }, 'Blocked corrupted fill persistence');
                     quarantineTradeRecord({
@@ -1943,7 +2187,7 @@ export class OfferExecutor {
                         filledBase,
                         filledQuote,
                         priceQuotePerBase: actualFillPrice,
-                        expectedPrice: selectedExpectedPrice,
+                        expectedPrice: expectedPriceForRealism,
                         reasons: integrity.reasons,
                     });
                 } else {
@@ -2026,14 +2270,14 @@ export class OfferExecutor {
                 // Compute cost realism metrics
                 const costMetrics = computeCostRealism({
                     side,
-                    intentPrice: intentBaselinePrice ?? intent.price,
+                    intentPrice: expectedPriceForRealism ?? intentBaselinePrice ?? intent.price,
                     fillPrice: actualFillPrice,
                     midPriceAtDecision: this.currentMidPrice,
                     ammFeeBps: null, // Populated below if AMM fill detected
                 });
                 const slippageBpsVsIntent = computeCanonicalSlippageBps(
                     side,
-                    intentBaselinePrice ?? intent.price,
+                    expectedPriceForRealism ?? NaN,
                     actualFillPrice
                 );
                 const slippageBpsVsMid =
@@ -2047,11 +2291,11 @@ export class OfferExecutor {
 
                 warnSuspiciousSlippage({
                     slippageBps: slippageBpsVsIntent,
-                    baseline: 'intent',
+                    baseline: expectedPriceSource,
                     pair: canonicalPair,
                     side: intent.side,
                     txHash: responseTxHash,
-                    expectedPrice: intentBaselinePrice ?? intent.price,
+                    expectedPrice: expectedPriceForRealism,
                     fillPrice: actualFillPrice,
                     bestBid: this.currentBestBid,
                     bestAsk: this.currentBestAsk,
@@ -2097,10 +2341,10 @@ export class OfferExecutor {
                 ];
                 const eqMetrics = buildExecutionQualityMetrics({
                     side,
-                    intentPrice: intentBaselinePrice ?? intent.price,
+                    intentPrice: expectedPriceForRealism ?? null,
                     midAtDecision: this.currentMidPrice,
                     bboAtDecision: side === 'buy' ? this.currentBestAsk : this.currentBestBid,
-                    decisionPrice: selectedExpectedPrice ?? intent.price,
+                    decisionPrice: expectedPriceForRealism ?? intent.price,
                     fillPrice: actualFillPrice,
                     amountBase: intent.amount,
                     filledBase,
@@ -2116,8 +2360,20 @@ export class OfferExecutor {
                     regime: this.currentFlowRegime,
                     source: 'bot',
                     intentPrice: intentBaselinePrice ?? intent.price,
-                    expectedPrice: selectedExpectedPrice ?? null,
+                    expectedPrice: expectedPriceForRealism,
                     expectedPriceSource,
+                    venue: 'XRPL',
+                    baselineTs: baselineContext?.baselineTsMs ?? null,
+                    baselineBestBid: baselineContext?.baselineBestBid ?? null,
+                    baselineBestAsk: baselineContext?.baselineBestAsk ?? null,
+                    baselineMid: baselineContext?.baselineMid ?? null,
+                    baselineSpreadBps: baselineContext?.baselineSpreadBps ?? null,
+                    baselineSource: baselineContext?.baselineSource ?? null,
+                    expectedRule: baselineContext?.expectedRule ?? null,
+                    slippageBaselineUsed: baselineContext?.slippageBaselineUsed ?? null,
+                    priceConvention: baselineContext?.priceConvention ?? null,
+                    baselineBookAgeMs: baselineContext?.baselineBookAgeMs ?? null,
+                    fillTs: fillTsMs,
                     decisionMid: this.currentMidPrice,
                     decisionBid: this.currentBestBid,
                     decisionAsk: this.currentBestAsk,
@@ -2125,7 +2381,9 @@ export class OfferExecutor {
                     amountBase: intent.amount,
                     filledBase,
                     filledQuote,
-                    slippageBpsVsIntent: slippageBpsVsIntent ?? eqMetrics.slippageBpsVsIntent,
+                    slippageBpsVsIntent: expectedPriceForRealism != null
+                        ? (slippageBpsVsIntent ?? eqMetrics.slippageBpsVsIntent)
+                        : null,
                     slippageBpsVsMid: slippageBpsVsMid ?? eqMetrics.slippageBpsVsMid,
                     slippageBpsVsBbo: slippageBpsVsBbo ?? eqMetrics.slippageBpsVsBbo,
                     effSpreadBps: eqMetrics.effSpreadBps,
@@ -2410,6 +2668,16 @@ export class OfferExecutor {
                 ackStatus: 'unknown',
                 txHash,
                 errorCode: failureMessage,
+                baselineTsMs: baselineContext?.baselineTsMs ?? null,
+                baselineBestBid: baselineContext?.baselineBestBid ?? null,
+                baselineBestAsk: baselineContext?.baselineBestAsk ?? null,
+                baselineMid: baselineContext?.baselineMid ?? null,
+                baselineSpreadBps: baselineContext?.baselineSpreadBps ?? null,
+                baselineSource: baselineContext?.baselineSource ?? null,
+                expectedPrice: baselineContext?.expectedPrice ?? null,
+                expectedRule: baselineContext?.expectedRule ?? null,
+                priceConvention: baselineContext?.priceConvention ?? null,
+                baselineBookAgeMs: baselineContext?.baselineBookAgeMs ?? null,
                 ...(executionSide ? { side: executionSide } : {}),
                 ...(typeof intent?.amount === 'number' ? { amountBase: intent.amount } : {}),
                 ...(() => {
@@ -2469,8 +2737,20 @@ export class OfferExecutor {
                         regime: this.currentFlowRegime,
                         source: 'bot',
                         intentPrice: intentBaselinePrice ?? intent.price,
-                        expectedPrice: selectedExpectedPrice ?? null,
+                        expectedPrice: expectedPriceForRealism,
                         expectedPriceSource,
+                        venue: 'XRPL',
+                        baselineTs: baselineContext?.baselineTsMs ?? null,
+                        baselineBestBid: baselineContext?.baselineBestBid ?? null,
+                        baselineBestAsk: baselineContext?.baselineBestAsk ?? null,
+                        baselineMid: baselineContext?.baselineMid ?? null,
+                        baselineSpreadBps: baselineContext?.baselineSpreadBps ?? null,
+                        baselineSource: baselineContext?.baselineSource ?? null,
+                        expectedRule: baselineContext?.expectedRule ?? null,
+                        slippageBaselineUsed: baselineContext?.slippageBaselineUsed ?? null,
+                        priceConvention: baselineContext?.priceConvention ?? null,
+                        baselineBookAgeMs: baselineContext?.baselineBookAgeMs ?? null,
+                        fillTs: null,
                         decisionMid: this.currentMidPrice,
                         decisionBid: this.currentBestBid,
                         decisionAsk: this.currentBestAsk,

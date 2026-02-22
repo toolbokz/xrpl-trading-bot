@@ -140,9 +140,21 @@ export interface ExecutionQualityEventInput {
     strategy?: string | null;
     regime?: FlowRegime | null;
     source?: 'bot' | 'manual' | 'unknown';
+    venue?: string | null;
     intentPrice?: number | null;
     expectedPrice?: number | null;
     expectedPriceSource?: 'intent' | 'mid' | 'bbo' | 'fallback_intent' | null;
+    baselineTs?: number | null;
+    baselineBestBid?: number | null;
+    baselineBestAsk?: number | null;
+    baselineMid?: number | null;
+    baselineSpreadBps?: number | null;
+    baselineSource?: string | null;
+    expectedRule?: string | null;
+    slippageBaselineUsed?: string | null;
+    priceConvention?: 'quote_per_base' | 'base_per_quote' | null;
+    baselineBookAgeMs?: number | null;
+    fillTs?: number | null;
     decisionMid?: number | null;
     decisionBid?: number | null;
     decisionAsk?: number | null;
@@ -212,8 +224,39 @@ export interface ExecutionQualitySummary {
     weeklyP90DriftBps: number | null;
     staleFillSnapshotRate: number;
     negSlippageRate: number;
+    negSlippageSampleCount: number;
+    negSlippageNoDataCount: number;
+    staleFillSnapshotSampleCount: number;
+    staleFillSnapshotNoDataCount: number;
     tooGoodRate: number;
     tooBadRate: number;
+}
+
+export interface ExecutionQualityRealismDiagnostic {
+    txHash: string | null;
+    pairKey: string;
+    side: 'buy' | 'sell' | null;
+    reason:
+        | 'missing_baseline'
+        | 'missing_fill_ts'
+        | 'invalid_baseline'
+        | 'invalid_fill_price'
+        | 'invalid_side'
+        | 'stale_snapshot';
+    slippage_baseline_used: 'best_bid' | 'best_ask' | 'mid' | 'vwap' | 'intent' | 'unknown';
+    baseline_ts_ms: number | null;
+    fill_ts_ms: number | null;
+    delta_ms: number | null;
+    convention: 'quote_per_base' | 'base_per_quote' | 'unknown';
+    venue: string | null;
+}
+
+interface ExecutionQualityRealismResult {
+    event: ExecutionQualityEventRecord;
+    slippageBps: number | null;
+    stale: boolean | null;
+    staleDeltaMs: number | null;
+    diagnostic: ExecutionQualityRealismDiagnostic | null;
 }
 
 export interface ExecutionQualityBucket {
@@ -264,6 +307,7 @@ export interface ExecutionQualityAnalytics {
         byRegime: ExecutionQualityBreakdownRow[];
     };
     anomalies: ExecutionQualityAnomalies;
+    slippageRealismDiagnostics: ExecutionQualityRealismDiagnostic[];
 }
 
 export interface EdgeAttributionEventInput {
@@ -922,9 +966,21 @@ class FeedbackEngine {
                 strategy: input.strategy ?? null,
                 regime: input.regime ?? null,
                 source: input.source ?? 'unknown',
+                venue: input.venue ?? 'XRPL',
                 intentPrice: input.intentPrice ?? null,
                 expectedPrice: input.expectedPrice ?? null,
                 expectedPriceSource: input.expectedPriceSource ?? null,
+                baselineTs: input.baselineTs ?? input.decisionTs ?? null,
+                baselineBestBid: input.baselineBestBid ?? null,
+                baselineBestAsk: input.baselineBestAsk ?? null,
+                baselineMid: input.baselineMid ?? null,
+                baselineSpreadBps: input.baselineSpreadBps ?? null,
+                baselineSource: input.baselineSource ?? null,
+                expectedRule: input.expectedRule ?? null,
+                slippageBaselineUsed: input.slippageBaselineUsed ?? null,
+                priceConvention: input.priceConvention ?? 'quote_per_base',
+                baselineBookAgeMs: input.baselineBookAgeMs ?? null,
+                fillTs: input.fillTs ?? input.validatedTs ?? null,
                 decisionMid: input.decisionMid ?? null,
                 decisionBid: input.decisionBid ?? null,
                 decisionAsk: input.decisionAsk ?? null,
@@ -1622,6 +1678,20 @@ class FeedbackEngine {
             const rejects = events.filter((e) => e.status === 'REJECTED');
             const partials = events.filter((e) => e.status === 'PARTIAL');
 
+            const realism = fills.map((event) => this.computeExecutionQualityRealism(event));
+            const slippageValues = realism
+                .map((r) => r.slippageBps)
+                .filter((v): v is number => v != null && Number.isFinite(v));
+            const staleMeasured = realism.filter((r) => r.stale != null);
+            const staleCount = staleMeasured.filter((r) => r.stale === true).length;
+            const staleNoDataCount = fills.length - staleMeasured.length;
+            const negCount = slippageValues.filter((v) => v < 0).length;
+            const negNoDataCount = fills.length - slippageValues.length;
+            const slippageRealismDiagnostics = realism
+                .map((r) => r.diagnostic)
+                .filter((d): d is ExecutionQualityRealismDiagnostic => d != null)
+                .slice(0, 200);
+
             const summary: ExecutionQualitySummary = {
                 events: events.length,
                 fills: fills.length,
@@ -1629,7 +1699,7 @@ class FeedbackEngine {
                 partials: partials.length,
                 coverage1m: fills.length > 0 ? fills.filter((e) => e.realizedSpreadBps1m != null).length / fills.length : 0,
                 coverage5m: fills.length > 0 ? fills.filter((e) => e.realizedSpreadBps5m != null).length / fills.length : 0,
-                avgSlippageBpsVsIntent: this.avg(fills.map((e) => e.slippageBpsVsIntent)),
+                avgSlippageBpsVsIntent: this.avg(slippageValues),
                 avgSlippageBpsVsMid: this.avg(fills.map((e) => e.slippageBpsVsMid)),
                 avgSlippageBpsVsBbo: this.avg(fills.map((e) => e.slippageBpsVsBbo)),
                 avgEffSpreadBps: this.avg(fills.map((e) => e.effSpreadBps)),
@@ -1664,7 +1734,7 @@ class FeedbackEngine {
                         return !(e.decisionTs <= e.submitTs && e.submitTs <= e.validatedTs);
                     }).length / fills.length
                     : 0,
-                negRateAgeDelta: this.computeNegRateAgeDelta(fills),
+                negRateAgeDelta: this.computeNegRateAgeDelta(realism),
                 weeklyP50DriftBps: this.percentile(
                     fills
                         .map((e) => e.impactBps1m ?? e.impactBps5m)
@@ -1679,18 +1749,17 @@ class FeedbackEngine {
                         .map((v) => Math.max(0, v)),
                     0.9,
                 ),
-                staleFillSnapshotRate: this.computeStaleFillSnapshotRate(fills),
-                negSlippageRate: fills.length > 0
-                    ? fills.filter((e) => (e.slippageBpsVsIntent ?? 0) < 0).length / fills.length
-                    : 0,
-                tooGoodRate: this.computeTooGoodRate(fills),
-                tooBadRate: this.computeTooBadRate(fills),
+                staleFillSnapshotRate: staleMeasured.length > 0 ? staleCount / staleMeasured.length : 0,
+                negSlippageRate: slippageValues.length > 0 ? negCount / slippageValues.length : 0,
+                negSlippageSampleCount: slippageValues.length,
+                negSlippageNoDataCount: negNoDataCount,
+                staleFillSnapshotSampleCount: staleMeasured.length,
+                staleFillSnapshotNoDataCount: staleNoDataCount,
+                tooGoodRate: this.computeTooGoodRate(slippageValues),
+                tooBadRate: this.computeTooBadRate(slippageValues),
             };
 
             const series = this.buildExecutionQualitySeries(events, bucketMs);
-            const slippageValues = fills
-                .map((e) => e.slippageBpsVsIntent)
-                .filter((v): v is number => v != null && Number.isFinite(v));
             const spreadValues = fills
                 .map((e) => e.effSpreadBps)
                 .filter((v): v is number => v != null && Number.isFinite(v));
@@ -1712,10 +1781,7 @@ class FeedbackEngine {
             };
 
             const anomalies: ExecutionQualityAnomalies = {
-                suspiciousSlippageSpikes: fills.filter((e) => {
-                    const s = e.slippageBpsVsIntent;
-                    return s != null && Number.isFinite(s) && (s < -100 || s > 500);
-                }).length,
+                suspiciousSlippageSpikes: slippageValues.filter((s) => s < -100 || s > 500).length,
                 partialFillAnomalies: partials.filter((e) => (e.fillRatio ?? 0) < 0.999).length,
                 quoteBaseIntegrityViolations: fills.filter((e) => {
                     if (!Number.isFinite(e.fillPrice ?? null) || (e.fillPrice ?? 0) <= 0) return true;
@@ -1731,6 +1797,7 @@ class FeedbackEngine {
                 histograms,
                 breakdowns,
                 anomalies,
+                slippageRealismDiagnostics,
             };
         } catch (err) {
             logger.warn({ err, filters }, 'Failed to compute execution quality analytics');
@@ -1857,6 +1924,10 @@ class FeedbackEngine {
                 weeklyP90DriftBps: null,
                 staleFillSnapshotRate: 0,
                 negSlippageRate: 0,
+                negSlippageSampleCount: 0,
+                negSlippageNoDataCount: 0,
+                staleFillSnapshotSampleCount: 0,
+                staleFillSnapshotNoDataCount: 0,
                 tooGoodRate: 0,
                 tooBadRate: 0,
             },
@@ -1877,6 +1948,7 @@ class FeedbackEngine {
                 partialFillAnomalies: 0,
                 quoteBaseIntegrityViolations: 0,
             },
+            slippageRealismDiagnostics: [],
         };
     }
 
@@ -1940,50 +2012,203 @@ class FeedbackEngine {
         return sorted[idx] ?? null;
     }
 
-    private computeNegRateAgeDelta(fills: ExecutionQualityEventRecord[]): number {
+    private normalizeExecutionVenue(event: ExecutionQualityEventRecord): string {
+        const venue = typeof event.venue === 'string' ? event.venue.trim().toUpperCase() : '';
+        if (venue.length > 0) return venue;
+        const pair = (event.pairKeyCanonical ?? '').toUpperCase();
+        if (pair.includes('XRP/')) return 'XRPL';
+        if (pair.endsWith('/XRP')) return 'XRPL';
+        return 'UNKNOWN';
+    }
+
+    private staleFillSnapshotThresholdMs(venue: string): number {
+        const fallbackRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_FILL_FRESHNESS_MS ?? '');
+        const fallbackMs = Number.isFinite(fallbackRaw) ? Math.max(1, fallbackRaw) : 500;
+        const xrplRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_FILL_FRESHNESS_MS_XRPL ?? '');
+        const xrplMs = Number.isFinite(xrplRaw) ? Math.max(1, xrplRaw) : 12_000;
+        return venue === 'XRPL' ? xrplMs : fallbackMs;
+    }
+
+    private resolveSlippageBaselineUsed(
+        event: ExecutionQualityEventRecord
+    ): 'best_bid' | 'best_ask' | 'mid' | 'vwap' | 'intent' | 'unknown' {
+        const direct = typeof event.slippageBaselineUsed === 'string'
+            ? event.slippageBaselineUsed.trim().toLowerCase()
+            : '';
+        if (
+            direct === 'best_bid'
+            || direct === 'best_ask'
+            || direct === 'mid'
+            || direct === 'vwap'
+            || direct === 'intent'
+            || direct === 'unknown'
+        ) {
+            return direct;
+        }
+
+        if (event.expectedPriceSource === 'mid') return 'mid';
+        if (event.expectedPriceSource === 'bbo') {
+            if (event.side === 'buy') return 'best_ask';
+            if (event.side === 'sell') return 'best_bid';
+            return 'unknown';
+        }
+        if (event.expectedPriceSource === 'intent' || event.expectedPriceSource === 'fallback_intent') {
+            return 'intent';
+        }
+        return 'unknown';
+    }
+
+    private resolvePriceConvention(
+        event: ExecutionQualityEventRecord
+    ): 'quote_per_base' | 'base_per_quote' | 'unknown' {
+        if (event.priceConvention === 'quote_per_base' || event.priceConvention === 'base_per_quote') {
+            return event.priceConvention;
+        }
+        return 'unknown';
+    }
+
+    private computeExecutionQualityRealism(event: ExecutionQualityEventRecord): ExecutionQualityRealismResult {
+        const venue = this.normalizeExecutionVenue(event);
+        const baselineTsMs = Number.isFinite(event.baselineTs ?? null)
+            ? (event.baselineTs as number)
+            : (Number.isFinite(event.decisionTs ?? null) ? (event.decisionTs as number) : null);
+        const fillTsMs = Number.isFinite(event.fillTs ?? null)
+            ? (event.fillTs as number)
+            : (Number.isFinite(event.validatedTs ?? null) ? (event.validatedTs as number) : null);
+        const baselineUsed = this.resolveSlippageBaselineUsed(event);
+        const convention = this.resolvePriceConvention(event);
+
+        const toDiagnostic = (
+            reason: ExecutionQualityRealismDiagnostic['reason'],
+            deltaMs: number | null,
+        ): ExecutionQualityRealismDiagnostic => ({
+            txHash: event.txHash ?? null,
+            pairKey: event.pairKeyCanonical,
+            side: event.side,
+            reason,
+            slippage_baseline_used: baselineUsed,
+            baseline_ts_ms: baselineTsMs,
+            fill_ts_ms: fillTsMs,
+            delta_ms: deltaMs,
+            convention,
+            venue,
+        });
+
+        if (event.side !== 'buy' && event.side !== 'sell') {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('invalid_side', null),
+            };
+        }
+
+        if (event.baselineSource === 'invalid') {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('invalid_baseline', null),
+            };
+        }
+
+        const expectedPrice = event.expectedPrice;
+        if (
+            baselineTsMs == null
+            || !Number.isFinite(expectedPrice ?? null)
+            || (expectedPrice ?? 0) <= 0
+        ) {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('missing_baseline', null),
+            };
+        }
+
+        if (!Number.isFinite(event.fillPrice ?? null) || (event.fillPrice ?? 0) <= 0) {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('invalid_fill_price', null),
+            };
+        }
+
+        const slippageBps = computeCanonicalSlippageBps(event.side, expectedPrice as number, event.fillPrice as number);
+        if (slippageBps == null) {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('invalid_fill_price', null),
+            };
+        }
+
+        if (fillTsMs == null) {
+            return {
+                event,
+                slippageBps,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('missing_fill_ts', null),
+            };
+        }
+
+        const deltaMs = fillTsMs - baselineTsMs;
+        if (!Number.isFinite(deltaMs) || deltaMs < 0) {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('invalid_baseline', deltaMs),
+            };
+        }
+
+        const thresholdMs = this.staleFillSnapshotThresholdMs(venue);
+        const stale = deltaMs > thresholdMs;
+        return {
+            event,
+            slippageBps,
+            stale,
+            staleDeltaMs: deltaMs,
+            diagnostic: stale ? toDiagnostic('stale_snapshot', deltaMs) : null,
+        };
+    }
+
+    private computeNegRateAgeDelta(realism: ExecutionQualityRealismResult[]): number {
         const freshnessMs = Number.parseFloat(process.env.LATENCY_IMPACT_DECISION_FRESHNESS_MS ?? '');
         const slippageImprovementBps = Number.parseFloat(process.env.LATENCY_IMPACT_SLIPPAGE_IMPROVEMENT_BPS ?? '');
         const latencyCap = Number.isFinite(freshnessMs) ? Math.max(1, freshnessMs) : 1000;
         const improvement = Number.isFinite(slippageImprovementBps) ? Math.max(0, slippageImprovementBps) : 5;
 
-        const aged = fills.filter((e) => (e.decisionToValidatedMs ?? 0) > latencyCap);
+        const aged = realism.filter((r) => (r.event.decisionToValidatedMs ?? 0) > latencyCap && r.slippageBps != null);
         if (aged.length === 0) return 0;
 
-        const flagged = aged.filter((e) => {
-            const slippage = e.slippageBpsVsIntent;
-            return slippage != null && Number.isFinite(slippage) && slippage <= -improvement;
-        });
+        const flagged = aged.filter((r) => (r.slippageBps ?? Number.POSITIVE_INFINITY) <= -improvement);
         return flagged.length / aged.length;
     }
 
-    private computeStaleFillSnapshotRate(fills: ExecutionQualityEventRecord[]): number {
-        const freshnessMsRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_FILL_FRESHNESS_MS ?? '');
-        const freshnessMs = Number.isFinite(freshnessMsRaw) ? Math.max(1, freshnessMsRaw) : 500;
-        if (fills.length === 0) return 0;
-        const stale = fills.filter((e) => (e.decisionToValidatedMs ?? 0) > freshnessMs).length;
-        return stale / fills.length;
-    }
-
-    private computeTooGoodRate(fills: ExecutionQualityEventRecord[]): number {
+    private computeTooGoodRate(slippageValues: number[]): number {
         const tooGoodRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_TOO_GOOD_BPS_BUFFER ?? '');
         const tooGood = Number.isFinite(tooGoodRaw) ? Math.max(0, tooGoodRaw) : 2;
-        if (fills.length === 0) return 0;
-        const count = fills.filter((e) => {
-            const slippage = e.slippageBpsVsIntent;
-            return slippage != null && Number.isFinite(slippage) && slippage <= -tooGood;
-        }).length;
-        return count / fills.length;
+        if (slippageValues.length === 0) return 0;
+        const count = slippageValues.filter((slippage) => Number.isFinite(slippage) && slippage <= -tooGood).length;
+        return count / slippageValues.length;
     }
 
-    private computeTooBadRate(fills: ExecutionQualityEventRecord[]): number {
+    private computeTooBadRate(slippageValues: number[]): number {
         const tooBadRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_TOO_BAD_BPS_BUFFER ?? '');
         const tooBad = Number.isFinite(tooBadRaw) ? Math.max(0, tooBadRaw) : 5;
-        if (fills.length === 0) return 0;
-        const count = fills.filter((e) => {
-            const slippage = e.slippageBpsVsIntent;
-            return slippage != null && Number.isFinite(slippage) && slippage >= tooBad;
-        }).length;
-        return count / fills.length;
+        if (slippageValues.length === 0) return 0;
+        const count = slippageValues.filter((slippage) => Number.isFinite(slippage) && slippage >= tooBad).length;
+        return count / slippageValues.length;
     }
 
     private buildExecutionQualitySeries(events: ExecutionQualityEventRecord[], bucketMs: number): ExecutionQualityBucket[] {
