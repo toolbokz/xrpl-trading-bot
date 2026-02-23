@@ -17,7 +17,7 @@ vi.mock('../../../../lib/localApi', () => ({
 
 import handler from '../execution-quality';
 
-function createMockReq(query: Record<string, string> = {}) {
+function createMockReq(query: Record<string, string | string[]> = {}) {
     return {
         method: 'GET',
         query,
@@ -80,6 +80,13 @@ const defaultAnalytics = {
         quoteBaseIntegrityViolations: 0,
     },
     slippageRealismDiagnostics: [],
+    totalEventsRaw: 3,
+    totalEventsAnalyzed: 2,
+    excludedCounts: {
+        noExecutionEvidence: 1,
+        excludedByStrategy: 0,
+        paperTrades: 0,
+    },
 };
 
 describe('GET /api/analytics/execution-quality', () => {
@@ -101,9 +108,16 @@ describe('GET /api/analytics/execution-quality', () => {
         expect(res.body.histograms).toEqual(defaultAnalytics.histograms);
         expect(res.body.breakdowns).toEqual(defaultAnalytics.breakdowns);
         expect(res.body.anomalies).toEqual(defaultAnalytics.anomalies);
+        expect(res.body.totalEventsRaw).toBe(3);
+        expect(res.body.totalEventsAnalyzed).toBe(2);
+        expect(res.body.excludedCounts).toEqual({
+            noExecutionEvidence: 1,
+            excludedByStrategy: 0,
+            paperTrades: 0,
+        });
     });
 
-    it('parses filters and forwards them to feedbackEngine', () => {
+    it('parses filters and forwards them to feedbackEngine with safe defaults', () => {
         const req = createMockReq({
             pairKey: 'XRP/524C555344000000000000000000000000000000',
             sinceMs: '1770000000000',
@@ -124,6 +138,8 @@ describe('GET /api/analytics/execution-quality', () => {
             side: 'sell',
             source: 'bot',
             bucketMs: 300000,
+            includeNonExecutionEvidence: false,
+            excludeStrategies: ['account-ingestion'],
         });
     });
 
@@ -143,8 +159,63 @@ describe('GET /api/analytics/execution-quality', () => {
         expect(mockGetExecutionQualityAnalytics).toHaveBeenCalledWith({
             pairKey: 'XRP/RLUSD',
             sinceMs: expectedSinceMs,
+            includeNonExecutionEvidence: false,
+            excludeStrategies: ['account-ingestion'],
         });
         vi.useRealTimers();
+    });
+
+    it('supports includeNonExecutionEvidence=true opt-in', () => {
+        const req = createMockReq({
+            pairKey: 'XRP/RLUSD',
+            includeNonExecutionEvidence: 'true',
+        });
+        const res = createMockRes();
+
+        handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(mockGetExecutionQualityAnalytics).toHaveBeenCalledWith({
+            pairKey: 'XRP/RLUSD',
+            includeNonExecutionEvidence: true,
+            excludeStrategies: ['account-ingestion'],
+        });
+    });
+
+    it('applies excludeStrategies when includeStrategies is not supplied', () => {
+        const req = createMockReq({
+            pairKey: 'XRP/RLUSD',
+            excludeStrategies: 'account-ingestion,manual-import',
+        });
+        const res = createMockRes();
+
+        handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(mockGetExecutionQualityAnalytics).toHaveBeenCalledWith({
+            pairKey: 'XRP/RLUSD',
+            includeNonExecutionEvidence: false,
+            excludeStrategies: ['account-ingestion', 'manual-import'],
+        });
+    });
+
+    it('gives includeStrategies precedence over excludeStrategies', () => {
+        const req = createMockReq({
+            pairKey: 'XRP/RLUSD',
+            includeStrategies: 'scalper,amm-arb',
+            excludeStrategies: 'account-ingestion,scalper',
+        });
+        const res = createMockRes();
+
+        handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(mockGetExecutionQualityAnalytics).toHaveBeenCalledWith({
+            pairKey: 'XRP/RLUSD',
+            includeNonExecutionEvidence: false,
+            includeStrategies: ['amm-arb', 'scalper'],
+            excludeStrategies: [],
+        });
     });
 
     it('uses analytics cache for repeated identical filters', () => {

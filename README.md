@@ -396,8 +396,8 @@ These are exposed through runtime cache snapshots (`/api/metrics/runtime` payloa
 - Panel: `src/ui/components/ExecutionQualityPanel.tsx`
 - API: `GET /api/analytics/execution-quality`
 - Storage: `execution_quality_events` in `feedback.sqlite`
-- Filters: `pairKey`, `pair`, `sinceMs`, `window` (legacy fallback), `strategy`, `side`, `source`, `bucketMs`
-- Response keys: `summary`, `series`, `histograms`, `breakdowns`, `anomalies`, `filters`
+- Filters: `pairKey`, `pair`, `sinceMs`, `window` (legacy fallback), `strategy`, `side`, `source`, `bucketMs`, `includeNonExecutionEvidence`, `includeStrategies`, `excludeStrategies`
+- Response keys: `summary`, `series`, `histograms`, `breakdowns`, `anomalies`, `filters`, `totalEventsRaw`, `totalEventsAnalyzed`, `excludedCounts`
 
 ### Edge Attribution Dashboard
 
@@ -623,6 +623,31 @@ When filing an issue, include:
 curl "http://127.0.0.1:3000/api/analytics/execution-quality?pairKey=XRP/RLUSD&bucketMs=60000"
 curl "http://127.0.0.1:3000/api/analytics/edge-attribution?pairKey=XRP/RLUSD&bucketMs=60000"
 curl "http://127.0.0.1:3000/api/analytics/summary?pair=XRP/RLUSD"
+```
+
+## Appendix: Verify Execution Quality Filtering
+
+```bash
+BASE_URL="http://127.0.0.1:3000"
+PAIR="XRP/RLUSD"
+
+# 1) Show raw vs analyzed counts and excluded buckets (default safe filtering)
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}" \
+  | jq '{totalEventsRaw, totalEventsAnalyzed, excludedCounts}'
+
+# 2) Compare default vs includeNonExecutionEvidence=true
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}" \
+  | jq '{mode:"default", totalEventsRaw, totalEventsAnalyzed, excludedCounts}'
+
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}&includeNonExecutionEvidence=true" \
+  | jq '{mode:"includeNonExecutionEvidence", totalEventsRaw, totalEventsAnalyzed, excludedCounts}'
+
+# 3) Show missing-rate deltas on execution-focused slice vs broad inclusion
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}" \
+  | jq '{mode:"default", missingFillSnapshotRate:.summary.missingFillSnapshotRate, missingAckRate:.summary.missingAckRate, missingMarkoutRate:.summary.missingMarkoutRate}'
+
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}&includeNonExecutionEvidence=true&includeStrategies=scalper,amm-arb,path-arb,account-ingestion" \
+  | jq '{mode:"broad", missingFillSnapshotRate:.summary.missingFillSnapshotRate, missingAckRate:.summary.missingAckRate, missingMarkoutRate:.summary.missingMarkoutRate}'
 ```
 
 ## Appendix: Verify Execution Quality Buckets

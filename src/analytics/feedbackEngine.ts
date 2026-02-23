@@ -57,6 +57,12 @@ import {
     validatePnlIdentity,
 } from './edgeAttributionMetrics';
 import { tradeHistory, TradeTrace } from './tradeHistory';
+import {
+    applyStrategyFilters,
+    DEFAULT_EXECUTION_QUALITY_EXCLUDED_STRATEGIES,
+    isExecutionEvidenceEvent,
+    isPaperTradeEvent,
+} from './executionQualityEventFilters';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -195,6 +201,9 @@ export interface ExecutionQualityFilters {
     side?: 'buy' | 'sell';
     source?: 'bot' | 'manual' | 'unknown';
     bucketMs?: number;
+    includeNonExecutionEvidence?: boolean;
+    includeStrategies?: string[];
+    excludeStrategies?: string[];
 }
 
 export interface ExecutionQualitySummary {
@@ -293,6 +302,12 @@ export interface ExecutionQualityAnomalies {
     quoteBaseIntegrityViolations: number;
 }
 
+export interface ExecutionQualityExcludedCounts {
+    noExecutionEvidence: number;
+    excludedByStrategy: number;
+    paperTrades: number;
+}
+
 export interface ExecutionQualityAnalytics {
     summary: ExecutionQualitySummary;
     series: ExecutionQualityBucket[];
@@ -309,6 +324,9 @@ export interface ExecutionQualityAnalytics {
     };
     anomalies: ExecutionQualityAnomalies;
     slippageRealismDiagnostics: ExecutionQualityRealismDiagnostic[];
+    totalEventsRaw: number;
+    totalEventsAnalyzed: number;
+    excludedCounts: ExecutionQualityExcludedCounts;
 }
 
 export interface EdgeAttributionEventInput {
@@ -1673,7 +1691,51 @@ class FeedbackEngine {
             if (filters.side) queryFilters.side = filters.side;
             if (filters.source) queryFilters.source = filters.source;
 
-            const events = queryExecutionQualityEvents(queryFilters);
+            const rawEvents = queryExecutionQualityEvents(queryFilters);
+            const includeNonExecutionEvidence = filters.includeNonExecutionEvidence === true;
+
+            const nonPaperEvents: ExecutionQualityEventRecord[] = [];
+            let excludedPaperTrades = 0;
+            for (const event of rawEvents) {
+                if (isPaperTradeEvent(event)) {
+                    excludedPaperTrades += 1;
+                } else {
+                    nonPaperEvents.push(event);
+                }
+            }
+
+            const strategyFilterOptions: {
+                includeStrategies?: string[];
+                excludeStrategies?: string[];
+                defaultExcludedStrategies: readonly string[];
+            } = {
+                defaultExcludedStrategies: DEFAULT_EXECUTION_QUALITY_EXCLUDED_STRATEGIES,
+            };
+            if (filters.includeStrategies) {
+                strategyFilterOptions.includeStrategies = filters.includeStrategies;
+            }
+            if (filters.excludeStrategies) {
+                strategyFilterOptions.excludeStrategies = filters.excludeStrategies;
+            }
+            const strategyFiltered = applyStrategyFilters(nonPaperEvents, strategyFilterOptions);
+
+            const events: ExecutionQualityEventRecord[] = [];
+            let excludedNoExecutionEvidence = 0;
+            for (const event of strategyFiltered.included) {
+                if (includeNonExecutionEvidence || isExecutionEvidenceEvent(event)) {
+                    events.push(event);
+                } else {
+                    excludedNoExecutionEvidence += 1;
+                }
+            }
+
+            const excludedCounts: ExecutionQualityExcludedCounts = {
+                noExecutionEvidence: excludedNoExecutionEvidence,
+                excludedByStrategy: strategyFiltered.excludedCount,
+                paperTrades: excludedPaperTrades,
+            };
+            const totalEventsRaw = rawEvents.length;
+            const totalEventsAnalyzed = events.length;
 
             const fills = events.filter((e) => e.status === 'FILLED' || e.status === 'PARTIAL');
             const rejects = events.filter((e) => e.status === 'REJECTED');
@@ -1799,6 +1861,9 @@ class FeedbackEngine {
                 breakdowns,
                 anomalies,
                 slippageRealismDiagnostics,
+                totalEventsRaw,
+                totalEventsAnalyzed,
+                excludedCounts,
             };
         } catch (err) {
             logger.warn({ err, filters }, 'Failed to compute execution quality analytics');
@@ -1950,6 +2015,13 @@ class FeedbackEngine {
                 quoteBaseIntegrityViolations: 0,
             },
             slippageRealismDiagnostics: [],
+            totalEventsRaw: 0,
+            totalEventsAnalyzed: 0,
+            excludedCounts: {
+                noExecutionEvidence: 0,
+                excludedByStrategy: 0,
+                paperTrades: 0,
+            },
         };
     }
 
