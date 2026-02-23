@@ -29,7 +29,7 @@ export class OrderBookTracker extends EventEmitter {
         this.state = { bids: [], asks: [], spread: 0, lastUpdated: Date.now() };
     }
 
-    async refresh(): Promise<void> {
+    async refresh(): Promise<boolean> {
         try {
             const { bids: rawBids, asks: rawAsks } = await this.client.getOrderBook(this.pair);
             const bids: NormalizedOffer[] = [];
@@ -83,8 +83,10 @@ export class OrderBookTracker extends EventEmitter {
 
             logger.debug({ spread, bids: bids.length, asks: asks.length }, 'Order book updated');
             this.emitEvent('update', this.state);
+            return true;
         } catch (err) {
             logger.error({ err }, 'Order book refresh failed');
+            return false;
         }
     }
 

@@ -41,7 +41,8 @@ describe('OrderBook epsilon handling', () => {
         const bestBid = bestAsk + (BOOK_CROSS_EPS_ABS / 2);
         const tracker = new OrderBookTracker(makeClient(bestBid, bestAsk), TEST_PAIR);
 
-        await tracker.refresh();
+        const refreshed = await tracker.refresh();
+        expect(refreshed).toBe(true);
 
         const state = tracker.getState();
         expect(state.spread).toBe(0);
@@ -59,7 +60,8 @@ describe('OrderBook epsilon handling', () => {
         const bestAsk = 1;
         const tracker = new OrderBookTracker(makeClient(bestBid, bestAsk), TEST_PAIR);
 
-        await tracker.refresh();
+        const refreshed = await tracker.refresh();
+        expect(refreshed).toBe(true);
 
         const state = tracker.getState();
         expect(state.spread).toBeLessThan(0);
@@ -83,5 +85,28 @@ describe('OrderBook epsilon handling', () => {
 
         expect(bookSignal.score).toBe(0);
         expect(bookSignal.reasons).toContain('bid-not-less-than-ask');
+    });
+
+    it('returns false and preserves prior snapshot when refresh fails', async () => {
+        const client = makeClient(1.1, 1.2);
+        const tracker = new OrderBookTracker(client, TEST_PAIR);
+
+        const firstOk = await tracker.refresh();
+        expect(firstOk).toBe(true);
+        const prev = tracker.getState();
+
+        const failErr = new Error('book_offers failed');
+        (client.getOrderBook as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(failErr);
+
+        const updateSpy = vi.fn();
+        tracker.on('update', updateSpy);
+        const secondOk = await tracker.refresh();
+        expect(secondOk).toBe(false);
+        expect(updateSpy).not.toHaveBeenCalled();
+
+        const after = tracker.getState();
+        expect(after.lastUpdated).toBe(prev.lastUpdated);
+        expect(after.bids[0]?.price).toBeCloseTo(prev.bids[0]!.price, 12);
+        expect(after.asks[0]?.price).toBeCloseTo(prev.asks[0]!.price, 12);
     });
 });

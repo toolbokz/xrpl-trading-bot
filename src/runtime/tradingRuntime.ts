@@ -530,9 +530,6 @@ export class TradingRuntime {
                     this.lastLedgerCloseMs = Date.now();
                     this.lastLedgerAdvanceMs = Date.now();
                     this.previousLedgerIndex = this.xrpl?.getLedgerIndex() ?? 0;
-                    // Inform stall recovery that the book feed is alive
-                    // (ledger events prove the WS is active even if no trades)
-                    this.feedStallRecovery?.recordBookEvent();
                 };
 
                 this.onXrplTransaction = (tx: TransactionStream) => {
@@ -849,8 +846,13 @@ export class TradingRuntime {
             }
             this.perfTracer?.phaseEnd(1); // reserveCheck
 
-            await this.tracker.refresh();
-            this.lastBookUpdateMs = Date.now();
+            const bookRefreshOk = await this.tracker.refresh();
+            if (bookRefreshOk) {
+                this.lastBookUpdateMs = Date.now();
+                // Feed-stall recovery should only treat successful book_offers refreshes
+                // as book liveness, not generic websocket ledger traffic.
+                this.feedStallRecovery?.recordBookEvent(this.lastBookUpdateMs);
+            }
             this.perfTracer?.phaseEnd(2); // bookRefresh
 
             // Final null check before accessing state (may have been killed during refresh)
@@ -2324,7 +2326,12 @@ export class TradingRuntime {
             },
             refreshOrderBook: async () => {
                 if (!this.tracker) return false;
-                await this.tracker.refresh();
+                const refreshed = await this.tracker.refresh();
+                if (refreshed) {
+                    const now = Date.now();
+                    this.lastBookUpdateMs = now;
+                    this.feedStallRecovery?.recordBookEvent(now);
+                }
                 const state = this.tracker.getState();
                 return state.bids.length > 0 || state.asks.length > 0;
             },
