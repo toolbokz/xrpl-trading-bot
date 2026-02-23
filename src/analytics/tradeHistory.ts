@@ -92,6 +92,10 @@ export interface TradeDepthCheckSnapshot {
     ioc_min_fill_ratio: number | null;
     depth_check_levels: number | null;
     order_type: 'IOC' | 'FOK' | null;
+    ledger_index_mode?: 'validated' | 'current' | null;
+    request_taker_gets_currency?: string | null;
+    request_taker_pays_currency?: string | null;
+    error?: string | null;
 }
 
 export interface TradeFillSnapshot {
@@ -256,6 +260,12 @@ function toFiniteNumberOrNull(value: unknown): number | null {
     return value;
 }
 
+function toStringOrNull(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
 function parseSubmitResult(raw: unknown): TradeSubmitResult | null {
     if (!isObject(raw)) return null;
     return {
@@ -305,6 +315,9 @@ function parseDepthCheckSnapshot(raw: unknown): TradeDepthCheckSnapshot | null {
     if (!side) return null;
     const hasDepth = typeof raw.has_depth === 'boolean' ? raw.has_depth : null;
     const orderType = raw.order_type === 'IOC' || raw.order_type === 'FOK' ? raw.order_type : null;
+    const ledgerIndexMode = raw.ledger_index_mode === 'validated' || raw.ledger_index_mode === 'current'
+        ? raw.ledger_index_mode
+        : null;
     return {
         side,
         intended_price: toFiniteNumberOrNull(raw.intended_price),
@@ -315,6 +328,10 @@ function parseDepthCheckSnapshot(raw: unknown): TradeDepthCheckSnapshot | null {
         ioc_min_fill_ratio: toFiniteNumberOrNull(raw.ioc_min_fill_ratio),
         depth_check_levels: toFiniteNumberOrNull(raw.depth_check_levels),
         order_type: orderType,
+        ledger_index_mode: ledgerIndexMode,
+        request_taker_gets_currency: toStringOrNull(raw.request_taker_gets_currency),
+        request_taker_pays_currency: toStringOrNull(raw.request_taker_pays_currency),
+        error: toStringOrNull(raw.error),
     };
 }
 

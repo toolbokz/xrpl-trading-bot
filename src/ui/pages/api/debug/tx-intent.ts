@@ -3,6 +3,7 @@ import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { getApiXrplClient } from '../../../lib/apiXrplClient';
 import {
     tradeHistory,
+    TradeDepthCheckSnapshot,
     TradeOfferCreateIntent,
     TradeTrace,
     TradeTracePatch,
@@ -21,6 +22,7 @@ interface TxIntentResponse {
     pairKey: string | null;
     txType: string | null;
     offerCreateIntent: TradeOfferCreateIntent | null;
+    depth_check: TradeDepthCheckSnapshot | null;
     explain: OfferOutcomeExplanation | null;
     backfilled: boolean;
     backfillError: string | null;
@@ -138,6 +140,47 @@ function sanitizeOfferCreateIntent(intent: TradeOfferCreateIntent | null | undef
     };
 }
 
+function sanitizeDepthCheckSnapshot(snapshot: TradeDepthCheckSnapshot | null | undefined): TradeDepthCheckSnapshot | null {
+    if (!snapshot) return null;
+    return {
+        side: snapshot.side === 'SELL' ? 'SELL' : 'BUY',
+        intended_price: typeof snapshot.intended_price === 'number' && Number.isFinite(snapshot.intended_price)
+            ? snapshot.intended_price
+            : null,
+        required_base: typeof snapshot.required_base === 'number' && Number.isFinite(snapshot.required_base)
+            ? snapshot.required_base
+            : null,
+        min_required_base: typeof snapshot.min_required_base === 'number' && Number.isFinite(snapshot.min_required_base)
+            ? snapshot.min_required_base
+            : null,
+        fillable_base: typeof snapshot.fillable_base === 'number' && Number.isFinite(snapshot.fillable_base)
+            ? snapshot.fillable_base
+            : null,
+        has_depth: typeof snapshot.has_depth === 'boolean' ? snapshot.has_depth : null,
+        ioc_min_fill_ratio: typeof snapshot.ioc_min_fill_ratio === 'number' && Number.isFinite(snapshot.ioc_min_fill_ratio)
+            ? snapshot.ioc_min_fill_ratio
+            : null,
+        depth_check_levels: typeof snapshot.depth_check_levels === 'number' && Number.isFinite(snapshot.depth_check_levels)
+            ? snapshot.depth_check_levels
+            : null,
+        order_type: snapshot.order_type === 'IOC' || snapshot.order_type === 'FOK'
+            ? snapshot.order_type
+            : null,
+        ledger_index_mode: snapshot.ledger_index_mode === 'current' || snapshot.ledger_index_mode === 'validated'
+            ? snapshot.ledger_index_mode
+            : null,
+        request_taker_gets_currency: typeof snapshot.request_taker_gets_currency === 'string'
+            ? snapshot.request_taker_gets_currency
+            : null,
+        request_taker_pays_currency: typeof snapshot.request_taker_pays_currency === 'string'
+            ? snapshot.request_taker_pays_currency
+            : null,
+        error: typeof snapshot.error === 'string' && snapshot.error.length > 0
+            ? snapshot.error
+            : null,
+    };
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutLabel: string): Promise<T> {
     return await new Promise<T>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`${timeoutLabel}-timeout`)), timeoutMs);
@@ -157,6 +200,15 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutLab
 function extractTxJson(result: Record<string, unknown>): Record<string, unknown> | null {
     if (isObjectRecord(result.tx_json)) return result.tx_json;
     if (isObjectRecord(result.tx)) return result.tx;
+    const looksLikeTxJson =
+        typeof result.TransactionType === 'string'
+        || result.TakerGets !== undefined
+        || result.TakerPays !== undefined
+        || result.Flags !== undefined
+        || result.Fee !== undefined
+        || result.Sequence !== undefined
+        || result.LastLedgerSequence !== undefined;
+    if (looksLikeTxJson) return result;
     return null;
 }
 
@@ -287,6 +339,7 @@ async function handler(req: LocalRequest, res: NextApiResponse<TxIntentResponse 
         ? trade.trace.tx_type
         : null;
     const traceOfferCreateIntent = sanitizeOfferCreateIntent(trade.trace?.offer_create ?? null);
+    const traceDepthCheck = sanitizeDepthCheckSnapshot(trade.trace?.depth_check ?? null);
     let txType = traceTxType ?? (traceOfferCreateIntent ? 'OfferCreate' : null);
     let offerCreateIntent = traceOfferCreateIntent;
     let explainTrace: TradeTrace | null = trade.trace ?? null;
@@ -339,6 +392,7 @@ async function handler(req: LocalRequest, res: NextApiResponse<TxIntentResponse 
         pairKey: trade.pair ?? null,
         txType,
         offerCreateIntent,
+        depth_check: traceDepthCheck,
         explain,
         backfilled,
         backfillError,

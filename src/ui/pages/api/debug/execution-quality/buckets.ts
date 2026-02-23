@@ -80,6 +80,42 @@ function decodeExecutionFlags(trade: Trade): Set<FlagKey> {
     );
 }
 
+function hasTraceHash(trace: Trade['trace']): boolean {
+    if (!trace) return false;
+    return typeof trace.tx_hash === 'string' && trace.tx_hash.trim().length > 0;
+}
+
+function hasTraceSubmitTs(trace: Trade['trace']): boolean {
+    if (!trace) return false;
+    return typeof trace.submit_ts_ms === 'number' && Number.isFinite(trace.submit_ts_ms);
+}
+
+function hasTraceSubmitEngineResult(trace: Trade['trace']): boolean {
+    if (!trace) return false;
+    return typeof trace.submit_result?.engine_result === 'string' && trace.submit_result.engine_result.length > 0;
+}
+
+function isExecutionRelevantTrade(trade: Trade): boolean {
+    if (trade.paper) return false;
+    const trace = trade.trace;
+    if (!trace) return false;
+
+    const hasTxHash = hasTraceHash(trace);
+    const hasSubmitTs = hasTraceSubmitTs(trace);
+    const hasSubmitEngineResult = hasTraceSubmitEngineResult(trace);
+    const hasOfferType = trace.tx_type === 'OfferCreate';
+    const hasOfferIntent = trace.offer_create != null;
+
+    const hasExecutionEvidence = hasTxHash || hasSubmitTs || hasSubmitEngineResult || hasOfferType || hasOfferIntent;
+    if (!hasExecutionEvidence) return false;
+
+    if (trade.status === 'PENDING' && !hasTxHash && !hasSubmitTs) {
+        return false;
+    }
+
+    return true;
+}
+
 function handler(req: LocalRequest, res: NextApiResponse<BucketsResponse | ErrorResponse>): void {
     if (req.method !== 'GET') {
         res.status(405).json({
@@ -91,7 +127,9 @@ function handler(req: LocalRequest, res: NextApiResponse<BucketsResponse | Error
 
     try {
         const limit = parseLimit(firstQueryValue(req.query.limit as string | string[] | undefined));
-        const trades = tradeHistory.getRecentTrades(limit);
+        const trades = tradeHistory
+            .getRecentTrades(limit)
+            .filter(isExecutionRelevantTrade);
 
         const buckets: Record<string, number> = {};
         const flagsDecoded: Record<FlagKey, number> = {

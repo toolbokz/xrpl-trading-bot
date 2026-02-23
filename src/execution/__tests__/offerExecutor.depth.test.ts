@@ -12,6 +12,7 @@ describe('OfferExecutor depth preflight', () => {
     afterEach(() => {
         delete process.env.EXECUTION_DEPTH_LEVELS;
         delete process.env.EXECUTION_IOC_MIN_FILL_RATIO;
+        delete process.env.FEATURE_EXECUTION_DEPTH_LEDGER_CURRENT;
     });
 
     it('skips order when depth is insufficient at intended price', async () => {
@@ -81,5 +82,39 @@ describe('OfferExecutor depth preflight', () => {
         expect(depth.hasDepth).toBe(true);
         expect(depth.fillableBase).toBeCloseTo(0.2, 8);
         expect(depth.minRequiredBase).toBeCloseTo(0.15, 8); // 0.5 * 0.3
+    });
+
+    it('uses ledger_index=current when FEATURE_EXECUTION_DEPTH_LEDGER_CURRENT is enabled', async () => {
+        process.env.EXECUTION_DEPTH_LEVELS = '3';
+        process.env.FEATURE_EXECUTION_DEPTH_LEDGER_CURRENT = 'true';
+
+        const client = {
+            request: vi.fn().mockResolvedValue({
+                result: {
+                    offers: [],
+                },
+            }),
+            autofill: vi.fn(),
+            submitAndWait: vi.fn(),
+        } as any;
+
+        const wallet = {
+            classicAddress: 'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh',
+            sign: vi.fn(),
+        } as any;
+
+        const risk = {} as any;
+        const executor = new OfferExecutor(client, wallet, risk, false, pair, undefined);
+        const depth = await (executor as any).hasSufficientDepthAtPrice('BUY', 1.05, 0.5, { immediateOrCancel: true });
+
+        expect(client.request).toHaveBeenCalledWith(expect.objectContaining({
+            command: 'book_offers',
+            ledger_index: 'current',
+        }));
+        expect(depth.depthCheckSnapshot).toEqual(expect.objectContaining({
+            ledger_index_mode: 'current',
+            request_taker_gets_currency: 'XRP',
+            request_taker_pays_currency: 'RLUSD',
+        }));
     });
 });

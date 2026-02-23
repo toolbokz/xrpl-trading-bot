@@ -7,6 +7,7 @@ import {
 
 export type OfferOutcomeCategory =
     | 'INSUFFICIENT_LIQUIDITY_AT_PRICE'
+    | 'MISSING_DEPTH_EVIDENCE'
     | 'ROUNDING_OR_MINIMUM_AMOUNT'
     | 'MIN_ORDER_SANITY'
     | 'MISSING_INTENT_TRACE'
@@ -66,6 +67,11 @@ function normalizeSide(side: ComputeImpliedOfferPriceArgs['side']): 'buy' | 'sel
 
 function toFinitePositive(value: number | null): number | null {
     if (value == null || !Number.isFinite(value) || value <= 0) return null;
+    return value;
+}
+
+function toFiniteNonNegative(value: number | null): number | null {
+    if (value == null || !Number.isFinite(value) || value < 0) return null;
     return value;
 }
 
@@ -137,16 +143,27 @@ function inferTxResult(trace: TradeTrace): string | null {
 function hasInsufficientDepth(depth: TradeDepthCheckSnapshot | null): boolean {
     if (!depth) return false;
     if (depth.has_depth === false) return true;
-    const fillable = toFinitePositive(depth.fillable_base);
-    const minRequired = toFinitePositive(depth.min_required_base);
+    const fillable = toFiniteNonNegative(depth.fillable_base);
+    const minRequired = toFiniteNonNegative(depth.min_required_base);
     if (fillable == null || minRequired == null) return false;
     return fillable + 1e-12 < minRequired;
+}
+
+function hasDepthEvidence(depth: TradeDepthCheckSnapshot | null): boolean {
+    if (!depth) return false;
+    if (typeof depth.has_depth === 'boolean') return true;
+    if (toFiniteNonNegative(depth.required_base) != null) return true;
+    if (toFiniteNonNegative(depth.min_required_base) != null) return true;
+    if (toFiniteNonNegative(depth.fillable_base) != null) return true;
+    return false;
 }
 
 function mapRecommendedFix(category: OfferOutcomeCategory): string {
     switch (category) {
         case 'INSUFFICIENT_LIQUIDITY_AT_PRICE':
             return 'Reduce order size or relax the limit price to match available liquidity.';
+        case 'MISSING_DEPTH_EVIDENCE':
+            return 'Persist depth preflight snapshots for OfferCreate attempts before submit.';
         case 'ROUNDING_OR_MINIMUM_AMOUNT':
             return 'Round base/quote amounts to valid precision and avoid dust-sized offers.';
         case 'MIN_ORDER_SANITY':
@@ -209,6 +226,7 @@ export function explainOfferOutcome(input: {
     const diffVsExpectedBps = computeAbsoluteDiffBps(toFinitePositive(trace.expected_price), impliedLimitPrice);
     const diffVsIntendedBps = computeAbsoluteDiffBps(intendedPrice, impliedLimitPrice);
     const minUnitUnderflowShown = canShowMinUnitUnderflow(offerCreateIntent);
+    const hasDepthCheckEvidence = hasDepthEvidence(trace.depth_check);
     const largeImpliedPriceDeviation =
         impliedLimitPrice != null
         && (
@@ -232,12 +250,12 @@ export function explainOfferOutcome(input: {
         diffVsExpectedBps,
         diffVsIntendedBps,
         intendedPrice,
-        requiredBase: toFinitePositive(trace.depth_check?.required_base ?? null),
-        minRequiredBase: toFinitePositive(trace.depth_check?.min_required_base ?? null),
-        fillableBase: toFinitePositive(trace.depth_check?.fillable_base ?? null),
+        requiredBase: toFiniteNonNegative(trace.depth_check?.required_base ?? null),
+        minRequiredBase: toFiniteNonNegative(trace.depth_check?.min_required_base ?? null),
+        fillableBase: toFiniteNonNegative(trace.depth_check?.fillable_base ?? null),
         hasDepth: trace.depth_check?.has_depth ?? null,
-        iocMinFillRatio: toFinitePositive(trace.depth_check?.ioc_min_fill_ratio ?? null),
-        depthCheckLevels: toFinitePositive(trace.depth_check?.depth_check_levels ?? null),
+        iocMinFillRatio: toFiniteNonNegative(trace.depth_check?.ioc_min_fill_ratio ?? null),
+        depthCheckLevels: toFiniteNonNegative(trace.depth_check?.depth_check_levels ?? null),
         orderType: trace.depth_check?.order_type ?? null,
         offerCreateMissing: !hasOfferCreateIntent,
         takerAmountsMissing: !hasTakerAmounts,
@@ -256,12 +274,15 @@ export function explainOfferOutcome(input: {
         if (!hasOfferCreateIntent || !hasTakerAmounts) {
             outcomeCategory = 'MISSING_INTENT_TRACE';
             rootCause = 'MISSING_OFFER_CREATE_INTENT';
+        } else if (!hasDepthCheckEvidence) {
+            outcomeCategory = 'MISSING_DEPTH_EVIDENCE';
+            rootCause = 'MISSING_DEPTH_CHECK';
         } else if (hasInsufficientDepth(trace.depth_check)) {
             outcomeCategory = 'INSUFFICIENT_LIQUIDITY_AT_PRICE';
         } else if (roundingOrMinProof) {
             outcomeCategory = 'ROUNDING_OR_MINIMUM_AMOUNT';
         } else {
-            outcomeCategory = 'INSUFFICIENT_LIQUIDITY_AT_PRICE';
+            outcomeCategory = 'UNKNOWN';
         }
     } else if (
         txResultUpper === 'TECUNFUNDED_OFFER'

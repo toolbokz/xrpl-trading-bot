@@ -117,6 +117,30 @@ describe('offerOutcomeExplainer', () => {
         expect(explain?.evidence.offerCreateMissing).toBe(true);
     });
 
+    it('does not classify tecKILLED as insufficient liquidity when depth_check is missing', () => {
+        const trace = buildTrace({
+            depth_check: null,
+            offer_create: {
+                flags: 0,
+                flagsDecoded: ['IOC'],
+                takerGets: {
+                    currency: 'RLUSD',
+                    issuer: '[redacted]',
+                    value: '0.7000',
+                },
+                takerPays: '500000',
+                feeDrops: '12',
+                sequence: 100,
+                lastLedgerSequence: 200,
+            },
+        });
+
+        const explain = explainOfferOutcome({ trace, side: 'BUY' });
+        expect(explain?.outcomeCategory).toBe('MISSING_DEPTH_EVIDENCE');
+        expect(explain?.rootCause).toBe('MISSING_DEPTH_CHECK');
+        expect(explain?.outcomeCategory).not.toBe('INSUFFICIENT_LIQUIDITY_AT_PRICE');
+    });
+
     it('classifies tecKILLED with insufficient depth as liquidity-at-price', () => {
         const trace = buildTrace({
             depth_check: {

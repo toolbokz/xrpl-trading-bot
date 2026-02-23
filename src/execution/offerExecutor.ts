@@ -287,6 +287,10 @@ export class OfferExecutor {
         if (!Number.isFinite(parsed)) return 1;
         return Math.max(0.05, Math.min(1, parsed));
     })();
+    private readonly executionDepthLedgerCurrentEnabled: boolean = (() => {
+        const raw = (process.env.FEATURE_EXECUTION_DEPTH_LEDGER_CURRENT ?? '').trim().toLowerCase();
+        return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+    })();
     private readonly executionPriceSanityEnabled: boolean = (() => {
         const raw = (process.env.FEATURE_EXECUTION_PRICE_SANITY ?? '').trim().toLowerCase();
         return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
@@ -916,6 +920,7 @@ export class OfferExecutor {
         }
 
         const depth = await this.hasSufficientDepthAtPrice(normalizedIntent.side, normalizedIntent.price, normalizedIntent.amount, flags);
+        const depthCheckSnapshot: TradeDepthCheckSnapshot = depth.depthCheckSnapshot;
         if (!depth.hasDepth) {
             logger.warn({
                 side: normalizedIntent.side,
@@ -927,21 +932,71 @@ export class OfferExecutor {
                 fillableBase: depth.fillableBase,
                 minRequiredBase: depth.minRequiredBase,
                 iocMinFillRatio: this.iocMinFillRatio,
+                depthCheckError: depthCheckSnapshot.error ?? null,
+                ledgerIndexMode: depthCheckSnapshot.ledger_index_mode ?? null,
             }, 'Skipped order: insufficient depth at price');
+
+            const rejectedTrade = tradeHistory.recordTrade({
+                pair: pairSymbol,
+                side: normalizedIntent.side as 'BUY' | 'SELL',
+                price: normalizedIntent.price,
+                priceQuotePerBase: normalizedIntent.price,
+                amount: normalizedIntent.amount,
+                amountBase: normalizedIntent.amount,
+                filled: 0,
+                filledBase: 0,
+                filledQuote: 0,
+                fee: 0,
+                pnl: 0,
+                paper: false,
+                status: 'REJECTED',
+                source: 'bot',
+            });
+            tradeHistory.upsertTradeTrace({
+                tradeId: rejectedTrade.id,
+                patch: {
+                    decision_ts_ms: baselineDecisionTs,
+                    baseline_ts_ms: expectedBaseline.baselineTsMs,
+                    baseline_best_bid: expectedBaseline.baselineBestBid ?? null,
+                    baseline_best_ask: expectedBaseline.baselineBestAsk ?? null,
+                    baseline_mid: expectedBaseline.baselineMid ?? null,
+                    baseline_spread_bps: expectedBaseline.baselineSpreadBps ?? null,
+                    baseline_source: expectedBaseline.baselineSource,
+                    expected_price: expectedBaseline.expectedPrice ?? null,
+                    expected_rule: expectedBaseline.expectedRule,
+                    price_convention: expectedBaseline.priceConvention,
+                    baseline_book_age_ms: expectedBaseline.baselineBookAgeMs ?? null,
+                    tx_type: 'OfferCreate',
+                    offer_create: null,
+                    depth_check: depthCheckSnapshot,
+                    submit_result: {
+                        engine_result: null,
+                        engine_result_code: null,
+                        engine_result_message: 'insufficient-depth-at-price',
+                    },
+                    ack_status: 'rejected',
+                    outcome: 'rejected',
+                    outcome_reason: 'insufficient-depth-at-price',
+                },
+            });
+
+            try {
+                feedbackEngine.recordTradeEvent({
+                    pairKey: pairSymbol,
+                    strategy: this.currentStrategy,
+                    action: 'reject',
+                    side: normalizedIntent.side.toLowerCase() as 'buy' | 'sell',
+                    intentPrice: normalizedIntent.price,
+                    intentSizeBase: normalizedIntent.amount,
+                    error: 'insufficient-depth-at-price',
+                    resultCode: 'insufficient-depth-at-price',
+                    midPriceAtDecision: this.currentMidPrice ?? undefined,
+                    isBotTrade: true,
+                });
+            } catch { /* feedback should never crash trading */ }
+
             return { accepted: false, reason: 'insufficient-depth-at-price' };
         }
-
-        const depthCheckSnapshot: TradeDepthCheckSnapshot = {
-            side: normalizedIntent.side,
-            intended_price: normalizedIntent.price,
-            required_base: normalizedIntent.amount,
-            min_required_base: depth.minRequiredBase,
-            fillable_base: depth.fillableBase,
-            has_depth: depth.hasDepth,
-            ioc_min_fill_ratio: this.iocMinFillRatio,
-            depth_check_levels: this.depthCheckLevels,
-            order_type: depth.orderType,
-        };
 
         const normalized = normalizeIntent(normalizedIntent);
         const txCore = buildOfferCreate(normalized);
@@ -1321,11 +1376,36 @@ export class OfferExecutor {
         requiredBaseAmount: number;
         minRequiredBase: number;
         orderType: 'IOC' | 'FOK';
+        depthCheckSnapshot: TradeDepthCheckSnapshot;
     }> {
         const orderType: 'IOC' | 'FOK' = flags?.fillOrKill ? 'FOK' : 'IOC';
         const minRequiredBase = orderType === 'FOK'
             ? requiredBaseAmount
             : requiredBaseAmount * this.iocMinFillRatio;
+        const ledgerIndexMode: 'validated' | 'current' = this.executionDepthLedgerCurrentEnabled
+            ? 'current'
+            : 'validated';
+        const baseCurrency = decodeXrplCurrencyCode(this.pair.baseCurrency).toUpperCase();
+        const quoteCurrency = decodeXrplCurrencyCode(this.pair.quoteCurrency).toUpperCase();
+        const requestTakerGetsCurrency = side === 'BUY' ? baseCurrency : quoteCurrency;
+        const requestTakerPaysCurrency = side === 'BUY' ? quoteCurrency : baseCurrency;
+
+        const buildDepthCheckSnapshot = (overrides?: Partial<TradeDepthCheckSnapshot>): TradeDepthCheckSnapshot => ({
+            side,
+            intended_price: Number.isFinite(intendedPrice) ? intendedPrice : null,
+            required_base: Number.isFinite(requiredBaseAmount) ? requiredBaseAmount : null,
+            min_required_base: Number.isFinite(minRequiredBase) ? minRequiredBase : null,
+            fillable_base: 0,
+            has_depth: false,
+            ioc_min_fill_ratio: this.iocMinFillRatio,
+            depth_check_levels: this.depthCheckLevels,
+            order_type: orderType,
+            ledger_index_mode: ledgerIndexMode,
+            request_taker_gets_currency: requestTakerGetsCurrency,
+            request_taker_pays_currency: requestTakerPaysCurrency,
+            error: null,
+            ...(overrides ?? {}),
+        });
 
         if (!Number.isFinite(intendedPrice) || intendedPrice <= 0 || !Number.isFinite(requiredBaseAmount) || requiredBaseAmount <= 0) {
             return {
@@ -1334,6 +1414,9 @@ export class OfferExecutor {
                 requiredBaseAmount,
                 minRequiredBase,
                 orderType,
+                depthCheckSnapshot: buildDepthCheckSnapshot({
+                    error: 'invalid-depth-input',
+                }),
             };
         }
 
@@ -1346,7 +1429,7 @@ export class OfferExecutor {
             const req = side === 'BUY'
                 ? {
                     command: 'book_offers' as const,
-                    ledger_index: 'validated' as const,
+                    ledger_index: ledgerIndexMode,
                     limit: this.depthCheckLevels,
                     // consume asks (makers sell base)
                     taker_gets: base,
@@ -1354,7 +1437,7 @@ export class OfferExecutor {
                 }
                 : {
                     command: 'book_offers' as const,
-                    ledger_index: 'validated' as const,
+                    ledger_index: ledgerIndexMode,
                     limit: this.depthCheckLevels,
                     // consume bids (makers buy base)
                     taker_gets: quote,
@@ -1389,6 +1472,10 @@ export class OfferExecutor {
                         requiredBaseAmount,
                         minRequiredBase,
                         orderType,
+                        depthCheckSnapshot: buildDepthCheckSnapshot({
+                            fillable_base: fillableBase,
+                            has_depth: true,
+                        }),
                     };
                 }
             }
@@ -1399,8 +1486,13 @@ export class OfferExecutor {
                 requiredBaseAmount,
                 minRequiredBase,
                 orderType,
+                depthCheckSnapshot: buildDepthCheckSnapshot({
+                    fillable_base: fillableBase,
+                    has_depth: false,
+                }),
             };
         } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'depth-preflight-failed';
             logger.warn({ err, side, intendedPrice, requiredBaseAmount }, 'Depth preflight failed');
             return {
                 hasDepth: false,
@@ -1408,6 +1500,11 @@ export class OfferExecutor {
                 requiredBaseAmount,
                 minRequiredBase,
                 orderType,
+                depthCheckSnapshot: buildDepthCheckSnapshot({
+                    fillable_base: 0,
+                    has_depth: false,
+                    error: errorMessage,
+                }),
             };
         }
     }
@@ -2068,6 +2165,10 @@ export class OfferExecutor {
         let feeDrops: string | null = null;
         let sequence: number | null = null;
         let txType: string | null = this.resolveTransactionType(tx as Record<string, unknown>);
+        const isOfferCreateAttempt = intent != null;
+        if (isOfferCreateAttempt && txType == null) {
+            txType = 'OfferCreate';
+        }
         let baselineContext: ExpectedBaselineContext | null = expectedBaseline
             ? {
                 ...expectedBaseline,
@@ -2096,12 +2197,22 @@ export class OfferExecutor {
             const preparedRecord = prepared as Record<string, unknown>;
             const originalTxRecord = tx as Record<string, unknown>;
             txType = this.resolveTransactionType(preparedRecord, originalTxRecord);
+            if (isOfferCreateAttempt && txType == null) {
+                txType = 'OfferCreate';
+            }
             const safePrepared = {
                 ...prepared,
                 TakerGets: this.redactAmount(prepared.TakerGets),
                 TakerPays: this.redactAmount(prepared.TakerPays),
             };
             offerCreateIntent = this.buildOfferCreateIntentSnapshot(preparedRecord, originalTxRecord, flags);
+            if (isOfferCreateAttempt && offerCreateIntent == null) {
+                offerCreateIntent = this.buildOfferCreateIntentSnapshot(
+                    { ...preparedRecord, TransactionType: 'OfferCreate' },
+                    { ...originalTxRecord, TransactionType: 'OfferCreate' },
+                    flags,
+                );
+            }
             const traceOfferPatch = {
                 tx_type: txType,
                 offer_create: offerCreateIntent,

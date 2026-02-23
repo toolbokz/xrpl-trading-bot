@@ -104,6 +104,21 @@ describe('GET /api/debug/tx-intent backfill', () => {
                 tx_hash: 'HASH_LOOKUP_001',
                 tx_type: null,
                 offer_create: null,
+                depth_check: {
+                    side: 'BUY',
+                    intended_price: 1.4,
+                    required_base: 0.5,
+                    min_required_base: 0.5,
+                    fillable_base: 0.25,
+                    has_depth: false,
+                    ioc_min_fill_ratio: 1,
+                    depth_check_levels: 12,
+                    order_type: 'IOC',
+                    ledger_index_mode: 'validated',
+                    request_taker_gets_currency: 'XRP',
+                    request_taker_pays_currency: 'RLUSD',
+                    error: null,
+                },
                 expected_price: 1.4,
                 submit_result: {
                     engine_result: 'tecKILLED',
@@ -134,6 +149,71 @@ describe('GET /api/debug/tx-intent backfill', () => {
             feeDrops: '12',
             sequence: 101,
             lastLedgerSequence: 500000,
+        }));
+        expect(res.body.depth_check).toEqual(expect.objectContaining({
+            side: 'BUY',
+            intended_price: 1.4,
+            required_base: 0.5,
+            min_required_base: 0.5,
+            fillable_base: 0.25,
+            has_depth: false,
+            order_type: 'IOC',
+            ledger_index_mode: 'validated',
+        }));
+        expect(res.body.backfilled).toBe(true);
+        expect(res.body.backfillError).toBeNull();
+    });
+
+    it('backfills when xrpl tx payload is returned at result root without tx_json wrapper', async () => {
+        const request = vi.fn().mockResolvedValue({
+            result: {
+                validated: true,
+                TransactionType: 'OfferCreate',
+                Flags: 0x00020000,
+                TakerGets: {
+                    currency: 'RLUSD',
+                    issuer: 'rROOT_ISSUER',
+                    value: '1.5',
+                },
+                TakerPays: '1000000',
+                Fee: '12',
+                Sequence: 111,
+                LastLedgerSequence: 500111,
+            },
+        });
+        mockGetApiXrplClient.mockResolvedValue({ request });
+        mockGetTradeByHash.mockReturnValue({
+            id: 'trade-lookup-001b',
+            pair: 'XRP/RLUSD',
+            side: 'BUY',
+            hash: 'HASH_LOOKUP_001B',
+            trace: {
+                tx_hash: 'HASH_LOOKUP_001B',
+                tx_type: null,
+                offer_create: null,
+                submit_result: {
+                    engine_result: 'tecKILLED',
+                },
+                outcome_reason: 'tecKILLED',
+            },
+        });
+
+        const req = createMockReq({ hash: 'HASH_LOOKUP_001B' });
+        const res = createMockRes();
+        await handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body.txType).toBe('OfferCreate');
+        expect(res.body.offerCreateIntent).toEqual(expect.objectContaining({
+            flags: 0x00020000,
+            flagsDecoded: expect.arrayContaining(['IOC']),
+            takerGets: expect.objectContaining({
+                issuer: '[redacted]',
+            }),
+            takerPays: '1000000',
+            feeDrops: '12',
+            sequence: 111,
+            lastLedgerSequence: 500111,
         }));
         expect(res.body.backfilled).toBe(true);
         expect(res.body.backfillError).toBeNull();

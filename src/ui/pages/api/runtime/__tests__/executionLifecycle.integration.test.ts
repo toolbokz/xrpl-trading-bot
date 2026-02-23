@@ -477,6 +477,13 @@ describe.sequential('Execution lifecycle API integration', () => {
             sequence: 1001,
             lastLedgerSequence: 900100,
         }));
+        expect(res.body.depth_check).toEqual(expect.objectContaining({
+            side: 'BUY',
+            order_type: 'IOC',
+            ledger_index_mode: 'validated',
+            request_taker_gets_currency: 'XRP',
+            request_taker_pays_currency: 'RLUSD',
+        }));
         expect(res.body.offerCreateIntent.takerGets.issuer).toBe('[redacted]');
         expect(res.body.explain).toEqual(expect.objectContaining({
             outcomeCategory: expect.any(String),
@@ -568,6 +575,13 @@ describe.sequential('Execution lifecycle API integration', () => {
             feeDrops: '12',
             sequence: 1001,
             lastLedgerSequence: 900100,
+        }));
+        expect(res.body.depth_check).toEqual(expect.objectContaining({
+            side: 'SELL',
+            order_type: 'IOC',
+            ledger_index_mode: 'validated',
+            request_taker_gets_currency: 'RLUSD',
+            request_taker_pays_currency: 'XRP',
         }));
         expect(res.body.offerCreateIntent.takerPays.issuer).toBe('[redacted]');
         expect(res.body.explain).toEqual(expect.objectContaining({

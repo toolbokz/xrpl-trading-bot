@@ -37,11 +37,25 @@
       "validated_ledger_index": 102427466,
       "validated_ledger_time": 1771799131000,
       "tx_hash": "FA19ADA5D3CBE2FB6904E2B8C52AB1735382EF92E1FD8CF68C8F835978B25A3A",
-      "tx_type": null,
+      "tx_type": "OfferCreate",
       "node_endpoint": "wss://s1.ripple.com",
       "fee_drops": "12",
       "sequence": 102014479,
-      "offer_create": null,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.352112676056338"
+        },
+        "takerPays": "250000",
+        "feeDrops": "12",
+        "sequence": 102014479,
+        "lastLedgerSequence": 102427469
+      },
       "depth_check": null,
       "submit_result": {
         "engine_result": "tecKILLED",
@@ -149,11 +163,25 @@
       "validated_ledger_index": 102427471,
       "validated_ledger_time": 1771799151000,
       "tx_hash": "84688F9CD5C05184F9B23D38EFC848CE5FE8824896AC7EE317A7868FB65AE6AA",
-      "tx_type": null,
+      "tx_type": "OfferCreate",
       "node_endpoint": "wss://s1.ripple.com",
       "fee_drops": "12",
       "sequence": 102014481,
-      "offer_create": null,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.351925983146067"
+        },
+        "takerPays": "250000",
+        "feeDrops": "12",
+        "sequence": 102014481,
+        "lastLedgerSequence": 102427474
+      },
       "depth_check": null,
       "submit_result": {
         "engine_result": "tecKILLED",
@@ -205,11 +233,25 @@
       "validated_ledger_index": 102427475,
       "validated_ledger_time": 1771799170000,
       "tx_hash": "EE8A40208E3AD5EE296075BB3C5034DDE2976B0E997E59E09A9F7AD04ECFAE2A",
-      "tx_type": null,
+      "tx_type": "OfferCreate",
       "node_endpoint": "wss://s1.ripple.com",
       "fee_drops": "12",
       "sequence": 102014482,
-      "offer_create": null,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.351925983146067"
+        },
+        "takerPays": "250000",
+        "feeDrops": "12",
+        "sequence": 102014482,
+        "lastLedgerSequence": 102427477
+      },
       "depth_check": null,
       "submit_result": {
         "engine_result": "tecKILLED",
@@ -261,11 +303,25 @@
       "validated_ledger_index": 102427485,
       "validated_ledger_time": 1771799210000,
       "tx_hash": "D5A092B27C3E2B5BD73ABC038407F4E857E0456138635CE22930378989F7DB49",
-      "tx_type": null,
+      "tx_type": "OfferCreate",
       "node_endpoint": "wss://s1.ripple.com",
       "fee_drops": "12",
       "sequence": 102014483,
-      "offer_create": null,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.351925983146067"
+        },
+        "takerPays": "250000",
+        "feeDrops": "12",
+        "sequence": 102014483,
+        "lastLedgerSequence": 102427488
+      },
       "depth_check": null,
       "submit_result": {
         "engine_result": "tecKILLED",
@@ -407,11 +463,25 @@
       "validated_ledger_index": 102427629,
       "validated_ledger_time": 1771799762000,
       "tx_hash": "1A17C30CD4C2E8B3E5AEE05E8ABF0D1AE277AA4DCD205D2998E6D3C63EB46234",
-      "tx_type": null,
+      "tx_type": "OfferCreate",
       "node_endpoint": "wss://s1.ripple.com",
       "fee_drops": "12",
       "sequence": 102014485,
-      "offer_create": null,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "250000",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.350125"
+        },
+        "feeDrops": "12",
+        "sequence": 102014485,
+        "lastLedgerSequence": 102427632
+      },
       "depth_check": null,
       "submit_result": {
         "engine_result": "tecKILLED",
@@ -643,11 +713,25 @@
       "validated_ledger_index": 102427731,
       "validated_ledger_time": 1771800161000,
       "tx_hash": "FABD1133CF650221532DC12CD2C032DEDA0B93883A4D2ADD221817C63413F7A2",
-      "tx_type": null,
+      "tx_type": "OfferCreate",
       "node_endpoint": "wss://s1.ripple.com",
       "fee_drops": "12",
       "sequence": 102014488,
-      "offer_create": null,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "250000",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.350625"
+        },
+        "feeDrops": "12",
+        "sequence": 102014488,
+        "lastLedgerSequence": 102427733
+      },
       "depth_check": null,
       "submit_result": {
         "engine_result": "tecKILLED",
@@ -699,11 +783,25 @@
       "validated_ledger_index": 102427734,
       "validated_ledger_time": 1771800171000,
       "tx_hash": "67EAB1B538700278888E2FC9F2E70BAB47322FC01C6AFA908B30ED6040A6A6BB",
-      "tx_type": null,
+      "tx_type": "OfferCreate",
       "node_endpoint": "wss://s1.ripple.com",
       "fee_drops": "12",
       "sequence": 102014489,
-      "offer_create": null,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "250000",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.350625"
+        },
+        "feeDrops": "12",
+        "sequence": 102014489,
+        "lastLedgerSequence": 102427737
+      },
       "depth_check": null,
       "submit_result": {
         "engine_result": "tecKILLED",
@@ -755,11 +853,25 @@
       "validated_ledger_index": 102427737,
       "validated_ledger_time": 1771800182000,
       "tx_hash": "0D172C721FB71D33AB406392C8363A8C6E74DFA2FDD5A9CB7F85EE731292D7D9",
-      "tx_type": null,
+      "tx_type": "OfferCreate",
       "node_endpoint": "wss://s1.ripple.com",
       "fee_drops": "12",
       "sequence": 102014490,
-      "offer_create": null,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "500000",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.70125"
+        },
+        "feeDrops": "12",
+        "sequence": 102014490,
+        "lastLedgerSequence": 102427740
+      },
       "depth_check": null,
       "submit_result": {
         "engine_result": "tecKILLED",
@@ -811,11 +923,25 @@
       "validated_ledger_index": 102427745,
       "validated_ledger_time": 1771800220000,
       "tx_hash": "8498241659F4DD6CE62CE22840841C36E4A57C377F6A417083F9F3EC14FC38CE",
-      "tx_type": null,
+      "tx_type": "OfferCreate",
       "node_endpoint": "wss://s1.ripple.com",
       "fee_drops": "12",
       "sequence": 102014491,
-      "offer_create": null,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "500000",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.70125"
+        },
+        "feeDrops": "12",
+        "sequence": 102014491,
+        "lastLedgerSequence": 102427748
+      },
       "depth_check": null,
       "submit_result": {
         "engine_result": "tecKILLED",
@@ -1137,11 +1263,25 @@
       "validated_ledger_index": 102428286,
       "validated_ledger_time": 1771802321000,
       "tx_hash": "BE15D63953866C688111CB7A08A46F97770EC3BD43ECC2CA73B700240BE07E49",
-      "tx_type": null,
+      "tx_type": "OfferCreate",
       "node_endpoint": "wss://s1.ripple.com",
       "fee_drops": "12",
       "sequence": 102014495,
-      "offer_create": null,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.349508510170264"
+        },
+        "takerPays": "250000",
+        "feeDrops": "12",
+        "sequence": 102014495,
+        "lastLedgerSequence": 102428290
+      },
       "depth_check": null,
       "submit_result": {
         "engine_result": "tecKILLED",
@@ -1283,11 +1423,25 @@
       "validated_ledger_index": 102429416,
       "validated_ledger_time": 1771806720000,
       "tx_hash": "4B6BD6A5C6E0E7C28D99481DB41A6872E306520E81BBA6EB738F001772166EF8",
-      "tx_type": null,
+      "tx_type": "OfferCreate",
       "node_endpoint": "wss://s1.ripple.com",
       "fee_drops": "12",
       "sequence": 102014497,
-      "offer_create": null,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "500000",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.6925"
+        },
+        "feeDrops": "12",
+        "sequence": 102014497,
+        "lastLedgerSequence": 102429419
+      },
       "depth_check": null,
       "submit_result": {
         "engine_result": "tecKILLED",
@@ -1471,7 +1625,11 @@
         "has_depth": true,
         "ioc_min_fill_ratio": 1,
         "depth_check_levels": 12,
-        "order_type": "IOC"
+        "order_type": "IOC",
+        "ledger_index_mode": null,
+        "request_taker_gets_currency": null,
+        "request_taker_pays_currency": null,
+        "error": null
       },
       "submit_result": {
         "engine_result": "tesSUCCESS",
@@ -1734,5 +1892,297 @@
     "source": "bot",
     "id": "1771811244128-g509tz5",
     "timestamp": 1771811244128
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3359000000000003,
+    "priceQuotePerBase": 1.3359000000000003,
+    "amount": 0.5,
+    "amountBase": 0.5,
+    "filled": 0.5,
+    "filledBase": 0.5,
+    "filledQuote": 0.6679500000000002,
+    "fee": 0,
+    "pnl": 0,
+    "paper": true,
+    "status": "FILLED",
+    "source": "bot",
+    "id": "1771811408129-c6w0cwp",
+    "timestamp": 1771811408129
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "BUY",
+    "price": 1.3376699999044281,
+    "priceQuotePerBase": 1.3376699999044281,
+    "amount": 0.5,
+    "amountBase": 0.5,
+    "filled": 0.5,
+    "filledBase": 0.5,
+    "filledQuote": 0.6688349999522141,
+    "fee": 0,
+    "pnl": 0,
+    "paper": true,
+    "status": "FILLED",
+    "source": "bot",
+    "id": "1771811411981-n3dwu1u",
+    "timestamp": 1771811411981
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "BUY",
+    "price": 1.3389500000048429,
+    "priceQuotePerBase": 1.3389500000048429,
+    "amount": 0.25,
+    "amountBase": 0.25,
+    "filled": 0.25,
+    "filledBase": 0.25,
+    "filledQuote": 0.3347375000012107,
+    "fee": 0.000012,
+    "pnl": 0,
+    "hash": "48D18663213FB548D4B07BAE9371C4A4788D7EC0CAFE729576C848B6FE47BBAE",
+    "paper": false,
+    "status": "FILLED",
+    "source": "bot",
+    "id": "1771811805964-2kzznnh",
+    "timestamp": 1771811805964,
+    "trace": {
+      "trade_id": "1771811805964-2kzznnh",
+      "decision_ts_ms": 1771811805507,
+      "baseline_ts_ms": 1771811805507,
+      "baseline_best_bid": 1.33834,
+      "baseline_best_ask": 1.3393899938062037,
+      "baseline_mid": 1.338864996903102,
+      "baseline_spread_bps": 7.839343365704987,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3393899938062037,
+      "expected_rule": "BUY->best_ask",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": 1771811805969,
+      "submit_response_ts_ms": 1771811806443,
+      "ack_ts_ms": 1771811806443,
+      "validated_ts_ms": 1771811813156,
+      "validated_ledger_index": 102430719,
+      "validated_ledger_time": 1771811810000,
+      "tx_hash": "48D18663213FB548D4B07BAE9371C4A4788D7EC0CAFE729576C848B6FE47BBAE",
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014500,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.334847498451551"
+        },
+        "takerPays": "250000",
+        "feeDrops": "12",
+        "sequence": 102014500,
+        "lastLedgerSequence": 102430722
+      },
+      "depth_check": {
+        "side": "BUY",
+        "intended_price": 1.3393899938062037,
+        "required_base": 0.25,
+        "min_required_base": 0.25,
+        "fillable_base": 700.95944,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 1,
+        "depth_check_levels": 12,
+        "order_type": "IOC",
+        "ledger_index_mode": null,
+        "request_taker_gets_currency": null,
+        "request_taker_pays_currency": null,
+        "error": null
+      },
+      "submit_result": {
+        "engine_result": "tesSUCCESS",
+        "engine_result_code": 0,
+        "engine_result_message": "The transaction was applied. Only final in a validated ledger."
+      },
+      "ack_status": "accepted",
+      "outcome": "filled",
+      "outcome_reason": null,
+      "fill_snapshot": {
+        "fill_ts_ms": 1771811810000,
+        "filled_base": 0.25,
+        "filled_quote": 0.3347375000012107,
+        "avg_price": 1.3389500000048429,
+        "fee": 0.000012,
+        "partial": false,
+        "transaction_result": "tesSUCCESS"
+      },
+      "markouts": [
+        {
+          "horizon_s": 60,
+          "due_ts_ms": 1771811870000,
+          "mark_ts_ms": 1771811870001,
+          "mark_price": 1.3374304501694274,
+          "markout_bps": -11.35,
+          "source": "market_snapshots",
+          "status": "recorded",
+          "missing_reason": null,
+          "attempts": 1,
+          "last_error": null
+        },
+        {
+          "horizon_s": 300,
+          "due_ts_ms": 1771812110000,
+          "mark_ts_ms": 1771812110000,
+          "mark_price": 1.3342364125,
+          "markout_bps": -35.2,
+          "source": "market_snapshots",
+          "status": "recorded",
+          "missing_reason": null,
+          "attempts": 1,
+          "last_error": null
+        }
+      ]
+    },
+    "slippageBps": -3
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "BUY",
+    "price": 1,
+    "priceQuotePerBase": 1,
+    "amount": 0.5,
+    "amountBase": 0.5,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771813857170-o8vbonu",
+    "timestamp": 1771813857170,
+    "trace": {
+      "trade_id": "1771813857170-o8vbonu",
+      "decision_ts_ms": 1771813857163,
+      "baseline_ts_ms": 1771813857163,
+      "baseline_best_bid": null,
+      "baseline_best_ask": null,
+      "baseline_mid": null,
+      "baseline_spread_bps": null,
+      "baseline_source": "intent_fallback",
+      "expected_price": 1,
+      "expected_rule": "BUY->intent_price",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": null,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": null,
+      "fee_drops": null,
+      "sequence": null,
+      "offer_create": null,
+      "depth_check": {
+        "side": "BUY",
+        "intended_price": 1,
+        "required_base": 0.5,
+        "min_required_base": 0.5,
+        "fillable_base": 0,
+        "has_depth": false,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 3,
+        "order_type": "FOK",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "XRP",
+        "request_taker_pays_currency": "RLUSD",
+        "error": null
+      },
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "insufficient-depth-at-price"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "insufficient-depth-at-price",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "BUY",
+    "price": 1,
+    "priceQuotePerBase": 1,
+    "amount": 0.5,
+    "amountBase": 0.5,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771813883309-7werbpq",
+    "timestamp": 1771813883309,
+    "trace": {
+      "trade_id": "1771813883309-7werbpq",
+      "decision_ts_ms": 1771813883302,
+      "baseline_ts_ms": 1771813883302,
+      "baseline_best_bid": null,
+      "baseline_best_ask": null,
+      "baseline_mid": null,
+      "baseline_spread_bps": null,
+      "baseline_source": "intent_fallback",
+      "expected_price": 1,
+      "expected_rule": "BUY->intent_price",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": null,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": null,
+      "fee_drops": null,
+      "sequence": null,
+      "offer_create": null,
+      "depth_check": {
+        "side": "BUY",
+        "intended_price": 1,
+        "required_base": 0.5,
+        "min_required_base": 0.5,
+        "fillable_base": 0,
+        "has_depth": false,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 3,
+        "order_type": "FOK",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "XRP",
+        "request_taker_pays_currency": "RLUSD",
+        "error": null
+      },
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "insufficient-depth-at-price"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "insufficient-depth-at-price",
+      "fill_snapshot": null,
+      "markouts": []
+    }
   }
 ]

@@ -56,6 +56,10 @@ export interface TradeDepthCheckSnapshot {
     ioc_min_fill_ratio: number | null;
     depth_check_levels: number | null;
     order_type: 'IOC' | 'FOK' | null;
+    ledger_index_mode?: 'validated' | 'current' | null;
+    request_taker_gets_currency?: string | null;
+    request_taker_pays_currency?: string | null;
+    error?: string | null;
 }
 
 export interface TradeFillSnapshot {

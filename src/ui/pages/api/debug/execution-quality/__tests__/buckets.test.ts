@@ -104,11 +104,10 @@ describe('GET /api/debug/execution-quality/buckets', () => {
         expect(res.statusCode).toBe(200);
         expect(mockGetRecentTrades).toHaveBeenCalledWith(500);
         expect(res.body.limit).toBe(500);
-        expect(res.body.totalTradesAnalyzed).toBe(4);
+        expect(res.body.totalTradesAnalyzed).toBe(3);
         expect(res.body.buckets).toEqual({
             'tecKILLED:INSUFFICIENT_LIQUIDITY_AT_PRICE': 1,
             'tefMAX_LEDGER:EXPIRED_LAST_LEDGER': 2,
-            'NONE:NONE': 1,
         });
         expect(res.body.flagsDecoded).toEqual({
             IOC: 1,
@@ -118,20 +117,30 @@ describe('GET /api/debug/execution-quality/buckets', () => {
         expect(res.body.sideByBucket).toEqual({
             'tecKILLED:INSUFFICIENT_LIQUIDITY_AT_PRICE': { BUY: 1, SELL: 0 },
             'tefMAX_LEDGER:EXPIRED_LAST_LEDGER': { BUY: 1, SELL: 1 },
-            'NONE:NONE': { BUY: 0, SELL: 1 },
         });
         expect(res.body.examplesByBucket).toEqual({
             'tecKILLED:INSUFFICIENT_LIQUIDITY_AT_PRICE': ['trade-1'],
             'tefMAX_LEDGER:EXPIRED_LAST_LEDGER': ['trade-2', 'trade-4'],
-            'NONE:NONE': ['trade-3'],
         });
         expect(JSON.stringify(res.body)).not.toContain(secretIssuer);
     });
 
     it('uses the requested limit query value', () => {
         mockGetRecentTrades.mockReturnValue([
-            { id: 'trade-a', side: 'BUY', trace: null },
-            { id: 'trade-b', side: 'SELL', trace: null },
+            {
+                id: 'trade-a',
+                side: 'BUY',
+                trace: {
+                    submit_result: { engine_result: 'tesSUCCESS' },
+                },
+            },
+            {
+                id: 'trade-b',
+                side: 'SELL',
+                trace: {
+                    submit_result: { engine_result: 'tecKILLED' },
+                },
+            },
         ]);
 
         const req = createMockReq('GET', { limit: '2' });
@@ -142,6 +151,70 @@ describe('GET /api/debug/execution-quality/buckets', () => {
         expect(mockGetRecentTrades).toHaveBeenCalledWith(2);
         expect(res.body.limit).toBe(2);
         expect(res.body.totalTradesAnalyzed).toBe(2);
+    });
+
+    it('excludes non-execution trades and reduces NONE:NONE noise', () => {
+        mockGetRecentTrades.mockReturnValue([
+            {
+                id: 'trade-exec',
+                side: 'BUY',
+                paper: false,
+                status: 'REJECTED',
+                trace: {
+                    tx_type: 'OfferCreate',
+                    offer_create: {
+                        flagsDecoded: ['IOC'],
+                    },
+                    submit_result: {
+                        engine_result: 'tecKILLED',
+                    },
+                    outcome_reason: 'tecKILLED',
+                },
+            },
+            {
+                id: 'trade-no-trace',
+                side: 'SELL',
+                paper: false,
+                status: 'REJECTED',
+                trace: null,
+            },
+            {
+                id: 'trade-pending-no-submit',
+                side: 'BUY',
+                paper: false,
+                status: 'PENDING',
+                trace: {
+                    tx_type: 'OfferCreate',
+                    offer_create: {
+                        flagsDecoded: ['IOC'],
+                    },
+                    submit_ts_ms: null,
+                    tx_hash: null,
+                },
+            },
+            {
+                id: 'trade-paper',
+                side: 'BUY',
+                paper: true,
+                status: 'FILLED',
+                trace: {
+                    submit_result: {
+                        engine_result: 'tesSUCCESS',
+                    },
+                },
+            },
+        ]);
+
+        const req = createMockReq('GET');
+        const res = createMockRes();
+        handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body.totalTradesAnalyzed).toBe(1);
+        expect(res.body.buckets).toEqual({
+            'tecKILLED:MISSING_INTENT_TRACE': 1,
+        });
+        expect(res.body.buckets['NONE:NONE']).toBeUndefined();
     });
 
     it('buckets tecKILLED trades with missing offer_create as MISSING_INTENT_TRACE', () => {
@@ -171,6 +244,47 @@ describe('GET /api/debug/execution-quality/buckets', () => {
         });
         expect(res.body.examplesByBucket).toEqual({
             'tecKILLED:MISSING_INTENT_TRACE': ['trade-missing-intent'],
+        });
+    });
+
+    it('buckets tecKILLED trades with missing depth evidence as MISSING_DEPTH_EVIDENCE', () => {
+        mockGetRecentTrades.mockReturnValue([
+            {
+                id: 'trade-missing-depth',
+                side: 'BUY',
+                paper: false,
+                status: 'REJECTED',
+                trace: {
+                    expected_price: 1.4,
+                    submit_result: {
+                        engine_result: 'tecKILLED',
+                    },
+                    outcome_reason: 'tecKILLED',
+                    tx_type: 'OfferCreate',
+                    offer_create: {
+                        flagsDecoded: ['IOC'],
+                        takerGets: {
+                            currency: 'RLUSD',
+                            issuer: '[redacted]',
+                            value: '0.7',
+                        },
+                        takerPays: '500000',
+                    },
+                    depth_check: null,
+                },
+            },
+        ]);
+
+        const req = createMockReq('GET');
+        const res = createMockRes();
+        handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body.buckets).toEqual({
+            'tecKILLED:MISSING_DEPTH_EVIDENCE': 1,
+        });
+        expect(res.body.examplesByBucket).toEqual({
+            'tecKILLED:MISSING_DEPTH_EVIDENCE': ['trade-missing-depth'],
         });
     });
 
