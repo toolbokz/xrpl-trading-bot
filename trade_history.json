@@ -12074,6 +12074,18 @@
           "missing_reason": null,
           "attempts": 1,
           "last_error": null
+        },
+        {
+          "horizon_s": 300,
+          "due_ts_ms": 1771818871000,
+          "mark_ts_ms": 1771818875974,
+          "mark_price": 1.345753028882525,
+          "markout_bps": -4.01,
+          "source": "market_snapshots",
+          "status": "recorded",
+          "missing_reason": null,
+          "attempts": 1,
+          "last_error": null
         }
       ]
     },
