@@ -34,6 +34,30 @@ export interface TradeSubmitResult {
     engine_result_message: string | null;
 }
 
+export type TradeIntentAmount = string | Record<string, unknown>;
+
+export interface TradeOfferCreateIntent {
+    flags: number;
+    flagsDecoded: string[];
+    takerGets: TradeIntentAmount | null;
+    takerPays: TradeIntentAmount | null;
+    feeDrops: string | null;
+    sequence: number | null;
+    lastLedgerSequence: number | null;
+}
+
+export interface TradeDepthCheckSnapshot {
+    side: 'BUY' | 'SELL';
+    intended_price: number | null;
+    required_base: number | null;
+    min_required_base: number | null;
+    fillable_base: number | null;
+    has_depth: boolean | null;
+    ioc_min_fill_ratio: number | null;
+    depth_check_levels: number | null;
+    order_type: 'IOC' | 'FOK' | null;
+}
+
 export interface TradeFillSnapshot {
     fill_ts_ms: number | null;
     filled_base: number | null;
@@ -77,9 +101,12 @@ export interface TradeTrace {
     validated_ledger_index: number | null;
     validated_ledger_time: number | null;
     tx_hash: string | null;
+    tx_type: string | null;
     node_endpoint: string | null;
     fee_drops: string | null;
     sequence: number | null;
+    offer_create: TradeOfferCreateIntent | null;
+    depth_check: TradeDepthCheckSnapshot | null;
     submit_result: TradeSubmitResult | null;
     ack_status: TradeAckStatus;
     outcome: TradeOutcome;

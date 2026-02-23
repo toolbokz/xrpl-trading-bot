@@ -56,22 +56,35 @@ async function waitForCondition(
 class SimulatedXrplNode {
     readonly txHash: string;
     private txLookupCount = 0;
+    private readonly options: {
+        omitTransactionTypeInAutofill: boolean;
+    };
 
     constructor(
         private readonly engineResult: string,
         private readonly txResult: string,
         txHash?: string,
+        options?: {
+            omitTransactionTypeInAutofill?: boolean;
+        },
     ) {
         this.txHash = txHash ?? 'SIMULATED_TX_HASH_001';
+        this.options = {
+            omitTransactionTypeInAutofill: options?.omitTransactionTypeInAutofill ?? false,
+        };
     }
 
     async autofill(tx: Record<string, unknown>): Promise<Record<string, unknown>> {
-        return {
+        const filled: Record<string, unknown> = {
             ...tx,
             Fee: '12',
             Sequence: 1001,
             LastLedgerSequence: 900100,
         };
+        if (this.options.omitTransactionTypeInAutofill) {
+            delete filled.TransactionType;
+        }
+        return filled;
     }
 
     async submit(_txBlob: string): Promise<{ result: Record<string, unknown> }> {
@@ -93,18 +106,34 @@ class SimulatedXrplNode {
     async request(req: Record<string, unknown>): Promise<{ result: Record<string, unknown> }> {
         const command = req.command;
         if (command === 'book_offers') {
+            const takerGets = req.taker_gets as Record<string, unknown> | undefined;
+            const takerPays = req.taker_pays as Record<string, unknown> | undefined;
+            const takerGetsCurrency = typeof takerGets?.currency === 'string' ? takerGets.currency.toUpperCase() : null;
+            const takerPaysCurrency = typeof takerPays?.currency === 'string' ? takerPays.currency.toUpperCase() : null;
+            const isSellDepthRequest = takerPaysCurrency === 'XRP' && takerGetsCurrency !== 'XRP';
             return {
                 result: {
-                    offers: [
-                        {
-                            TakerGets: '1000000',
-                            TakerPays: {
-                                currency: 'RLUSD',
-                                issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De',
-                                value: '1.3900',
+                    offers: isSellDepthRequest
+                        ? [
+                            {
+                                TakerGets: {
+                                    currency: 'RLUSD',
+                                    issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De',
+                                    value: '1.3900',
+                                },
+                                TakerPays: '1000000',
                             },
-                        },
-                    ],
+                        ]
+                        : [
+                            {
+                                TakerGets: '1000000',
+                                TakerPays: {
+                                    currency: 'RLUSD',
+                                    issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De',
+                                    value: '1.3900',
+                                },
+                            },
+                        ],
                 },
             };
         }
@@ -380,6 +409,174 @@ describe.sequential('Execution lifecycle API integration', () => {
             filled_base: expect.any(Number),
             filled_quote: expect.any(Number),
             avg_price: expect.any(Number),
+        }));
+        expect(trade.trace.offer_create).toEqual(expect.objectContaining({
+            flags: expect.any(Number),
+            takerGets: expect.anything(),
+            takerPays: expect.anything(),
+            sequence: 1001,
+            lastLedgerSequence: 900100,
+        }));
+        expect((trade.trace.offer_create?.takerGets as Record<string, unknown>).issuer).toBe('[redacted]');
+        expect(trade.trace.offer_create?.flags).toBe(0);
+    });
+
+    it('returns offer create intent from /api/debug/tx-intent queried by hash', async () => {
+        vi.doMock('../../../../lib/localApi', () => ({
+            withLocalApi: (handler: Function) => handler,
+            logSensitiveAction: vi.fn(),
+        }));
+
+        const { OfferExecutor } = await import('../../../../../execution/offerExecutor');
+        const node = new SimulatedXrplNode('tesSUCCESS', 'tesSUCCESS', 'SIMULATED_TX_HASH_005');
+        const pair = {
+            baseCurrency: 'XRP',
+            quoteCurrency: 'RLUSD',
+            quoteIssuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De',
+            baseIssuer: '',
+            issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De',
+        };
+        const wallet = {
+            classicAddress: 'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh',
+            sign: vi.fn().mockReturnValue({
+                tx_blob: 'DEADBEEF',
+                hash: node.txHash,
+            }),
+        };
+        const risk = {
+            registerFailure: vi.fn(),
+            resetFailures: vi.fn(),
+        };
+
+        const executor = new OfferExecutor(node as any, wallet as any, risk as any, false, pair as any, undefined);
+        executor.setCurrentStrategy('integration-scalper');
+        await executor.placeOffer({
+            side: 'buy',
+            price: 1.41,
+            amount: 0.5,
+            expectedPrice: 1.41,
+            strategy: 'integration-scalper',
+        });
+
+        const debugHandler = (await import('../../debug/tx-intent')).default;
+        const req = createMockReq({ hash: node.txHash }) as any;
+        const res = createMockRes() as any;
+        debugHandler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toEqual(expect.objectContaining({
+            tradeId: expect.any(String),
+            hash: node.txHash,
+            pairKey: 'XRP/RLUSD',
+            txType: 'OfferCreate',
+        }));
+        expect(res.body.offerCreateIntent).toEqual(expect.objectContaining({
+            flags: expect.any(Number),
+            takerGets: expect.anything(),
+            takerPays: expect.anything(),
+            sequence: 1001,
+            lastLedgerSequence: 900100,
+        }));
+        expect(res.body.offerCreateIntent.takerGets.issuer).toBe('[redacted]');
+        expect(res.body.explain).toEqual(expect.objectContaining({
+            outcomeCategory: expect.any(String),
+            evidence: expect.any(Object),
+            recommendedFix: expect.any(String),
+        }));
+        expect(res.body.explain.evidence.txType).toBe('OfferCreate');
+    });
+
+    it('persists offer create intent for SELL rejected trades and returns it from /api/debug/tx-intent by tradeId', async () => {
+        vi.doMock('../../../../lib/localApi', () => ({
+            withLocalApi: (handler: Function) => handler,
+            logSensitiveAction: vi.fn(),
+        }));
+
+        const { OfferExecutor } = await import('../../../../../execution/offerExecutor');
+        const { tradeHistory } = await import('../../../../../analytics/tradeHistory');
+        const node = new SimulatedXrplNode('tecKILLED', 'tecKILLED', 'SIMULATED_TX_HASH_SELL_REJECTED', {
+            omitTransactionTypeInAutofill: true,
+        });
+        const pair = {
+            baseCurrency: 'XRP',
+            quoteCurrency: 'RLUSD',
+            quoteIssuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De',
+            baseIssuer: '',
+            issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De',
+        };
+        const wallet = {
+            classicAddress: 'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh',
+            sign: vi.fn().mockReturnValue({
+                tx_blob: 'DEADBEEF',
+                hash: node.txHash,
+            }),
+        };
+        const risk = {
+            registerFailure: vi.fn(),
+            resetFailures: vi.fn(),
+        };
+
+        const executor = new OfferExecutor(node as any, wallet as any, risk as any, false, pair as any, undefined);
+        executor.setCurrentStrategy('integration-scalper');
+        executor.setCurrentMarketContext({
+            midPrice: 1.39,
+            bestBid: 1.389,
+            bestAsk: 1.391,
+            spreadBps: 14.39,
+            bookAgeMs: 75,
+            flowCombined: 0.03,
+            flowStrength: 0.06,
+            flowRegime: 'quiet',
+        });
+
+        const result = await executor.placeOffer({
+            side: 'sell',
+            price: 1.39,
+            amount: 0.5,
+            expectedPrice: 1.39,
+            strategy: 'integration-scalper',
+        });
+
+        expect(result.accepted).toBe(false);
+        expect(result.reason).toBe('tecKILLED');
+        expect(result.hash).toBe(node.txHash);
+
+        const persisted = tradeHistory.getTradeByHash(node.txHash);
+        expect(persisted).toBeTruthy();
+        expect(persisted?.side).toBe('SELL');
+        expect(persisted?.status).toBe('REJECTED');
+        expect(persisted?.trace?.tx_type).toBe('OfferCreate');
+        expect(persisted?.trace?.offer_create).toEqual(expect.objectContaining({
+            takerGets: expect.anything(),
+            takerPays: expect.anything(),
+            feeDrops: '12',
+            sequence: 1001,
+            lastLedgerSequence: 900100,
+        }));
+        expect((persisted?.trace?.offer_create?.takerPays as Record<string, unknown>).issuer).toBe('[redacted]');
+
+        const debugHandler = (await import('../../debug/tx-intent')).default;
+        const req = createMockReq({ tradeId: persisted?.id ?? '' }) as any;
+        const res = createMockRes() as any;
+        debugHandler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body.txType).toBe('OfferCreate');
+        expect(res.body.offerCreateIntent).toEqual(expect.objectContaining({
+            takerGets: expect.anything(),
+            takerPays: expect.anything(),
+            feeDrops: '12',
+            sequence: 1001,
+            lastLedgerSequence: 900100,
+        }));
+        expect(res.body.offerCreateIntent.takerPays.issuer).toBe('[redacted]');
+        expect(res.body.explain).toEqual(expect.objectContaining({
+            outcomeCategory: expect.any(String),
+            evidence: expect.objectContaining({
+                txType: 'OfferCreate',
+                txResult: 'tecKILLED',
+            }),
+            recommendedFix: expect.any(String),
         }));
     });
 

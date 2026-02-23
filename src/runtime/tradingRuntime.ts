@@ -1710,6 +1710,7 @@ export class TradingRuntime {
                 node_endpoint: event.nodeEndpoint ?? null,
                 fee_drops: event.feeDrops ?? null,
                 sequence: event.sequence ?? null,
+                offer_create: event.offerCreateIntent ?? null,
                 engine_result: event.submitResult?.engine_result ?? null,
                 submit_result: event.submitResult ?? null,
                 ack_status: event.ackStatus ?? null,

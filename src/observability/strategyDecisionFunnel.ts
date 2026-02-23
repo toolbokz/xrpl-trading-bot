@@ -33,6 +33,16 @@ export interface StrategyFunnelRecorder {
 
 export type StrategyDecisionFunnelMap = Record<string, StrategyDecisionFunnel>;
 
+export interface SubmitOfferCreateIntent {
+    flags: number;
+    flagsDecoded: string[];
+    takerGets: string | Record<string, unknown> | null;
+    takerPays: string | Record<string, unknown> | null;
+    feeDrops: string | null;
+    sequence: number | null;
+    lastLedgerSequence: number | null;
+}
+
 export interface StrategySubmitTelemetryEvent {
     strategy: string;
     pairKey: string;
@@ -58,6 +68,7 @@ export interface StrategySubmitTelemetryEvent {
     nodeEndpoint?: string | null;
     feeDrops?: string | null;
     sequence?: number | null;
+    offerCreateIntent?: SubmitOfferCreateIntent | null;
     submitResult?: {
         engine_result?: string | null;
         engine_result_code?: number | null;

@@ -37,7 +37,7 @@ import { useRiskStress } from '../lib/hooks/useRiskStress';
 import { useSpreadModel } from '../lib/hooks/useSpreadModel';
 
 type BotStatus = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
-type ToolTab = 'orderbook' | 'tape' | 'radar' | 'diagnostics';
+type ToolTab = 'tape' | 'radar' | 'diagnostics';
 type DrawerTab = 'orders' | 'logs';
 type DiagnosticsTab = 'execution' | 'risk' | 'policy' | 'latency';
 
@@ -101,7 +101,7 @@ function DashboardPageContent() {
     const [selectedPairKey, setSelectedPairKey] = useState<string>('');
     const [connected, setConnected] = useState<boolean>(false);
 
-    const [activeToolTab, setActiveToolTab] = useState<ToolTab>('orderbook');
+    const [activeToolTab, setActiveToolTab] = useState<ToolTab>('tape');
     const [drawerTab, setDrawerTab] = useState<DrawerTab>('orders');
     const [activeDiagnosticsTab, setActiveDiagnosticsTab] = useState<DiagnosticsTab>('execution');
     const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
@@ -164,7 +164,7 @@ function DashboardPageContent() {
 
     useEffect(() => {
         const savedToolTab = window.localStorage.getItem('xrpl.toolTab') as ToolTab | null;
-        if (savedToolTab && ['orderbook', 'tape', 'radar', 'diagnostics'].includes(savedToolTab)) {
+        if (savedToolTab && ['tape', 'radar', 'diagnostics'].includes(savedToolTab)) {
             setActiveToolTab(savedToolTab);
         }
         const savedDrawerTab = window.localStorage.getItem('xrpl.drawerTab') as DrawerTab | null;
@@ -468,7 +468,6 @@ function DashboardPageContent() {
     }, [runtimeCache.data?.snapshot?.pairKey, bgView?.markets]);
 
     const toolTabs: Array<{ id: ToolTab; label: string }> = [
-        { id: 'orderbook', label: 'Order Book' },
         { id: 'tape', label: 'Tape' },
         { id: 'radar', label: 'Scanner' },
         { id: 'diagnostics', label: 'Diagnostics' },
@@ -740,15 +739,31 @@ function DashboardPageContent() {
                         drawerOpen ? 'grid-cols-[minmax(0,1fr)_360px]' : 'grid-cols-[minmax(0,1fr)_56px]'
                     )}
                 >
-                    <div className="space-y-4 min-w-0">
-                        {/* Z2 PRIMARY DECISION PANEL */}
-                        <section className="card h-[716px] min-h-[716px] p-4">
+                    <div className="grid h-[716px] min-h-[716px] min-w-0 grid-rows-2 gap-4">
+                        {/* Z2 PRIMARY DECISION PANEL (top half) */}
+                        <section className="card min-h-0 p-4">
                             <div className="mb-3 flex items-center justify-between">
                                 <h2 className="text-lg font-semibold text-slate-100">Flow Sentiment</h2>
                                 <span className="text-xs text-slate-400">Primary Decision Panel</span>
                             </div>
                             <div className="h-[calc(100%-2rem)] min-h-0">
                                 <FlowMetricsPanel pollInterval={2000} />
+                            </div>
+                        </section>
+
+                        {/* Order book directly below flow in full layout */}
+                        <section className="card min-h-0 overflow-hidden">
+                            <div className="h-full min-h-0">
+                                <OrderBookPanel
+                                    bids={orderBookBids}
+                                    asks={orderBookAsks}
+                                    midPrice={midPrice}
+                                    spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                                    loading={orderBookLoading}
+                                    error={orderBookError}
+                                    lastUpdated={orderBookData.lastUpdated}
+                                    maxRows={7}
+                                />
                             </div>
                         </section>
                     </div>
@@ -790,13 +805,28 @@ function DashboardPageContent() {
             ) : (
                 <>
                     {/* Z2 PRIMARY DECISION PANEL */}
-                    <section className="card p-4 min-h-[420px]">
+                    <section className="card p-4 min-h-[210px]">
                         <div className="mb-3 flex items-center justify-between">
                             <h2 className="text-lg font-semibold text-slate-100">Flow Sentiment</h2>
                             <span className="text-xs text-slate-400">Primary Decision Panel</span>
                         </div>
                         <div className="h-[calc(100%-2rem)] min-h-0">
                             <FlowMetricsPanel pollInterval={2000} />
+                        </div>
+                    </section>
+
+                    <section className="card min-h-[320px] overflow-hidden">
+                        <div className="h-full min-h-0">
+                            <OrderBookPanel
+                                bids={orderBookBids}
+                                asks={orderBookAsks}
+                                midPrice={midPrice}
+                                spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                                loading={orderBookLoading}
+                                error={orderBookError}
+                                lastUpdated={orderBookData.lastUpdated}
+                                maxRows={7}
+                            />
                         </div>
                     </section>
 
@@ -827,20 +857,6 @@ function DashboardPageContent() {
                 </div>
 
                 <div className="min-h-[340px]">
-                    {activeToolTab === 'orderbook' && (
-                        <div id="tool-panel-orderbook" role="tabpanel">
-                            <OrderBookPanel
-                                bids={orderBookBids}
-                                asks={orderBookAsks}
-                                midPrice={midPrice}
-                                spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
-                                loading={orderBookLoading}
-                                error={orderBookError}
-                                lastUpdated={orderBookData.lastUpdated}
-                            />
-                        </div>
-                    )}
-
                     {activeToolTab === 'tape' && (
                         <div id="tool-panel-tape" role="tabpanel">
                             <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={120} />

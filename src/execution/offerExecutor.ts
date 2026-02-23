@@ -5,9 +5,12 @@ import { StrategyConfig, TradingPair } from '../config';
 import { executionLog as logger } from '../analytics/logger';
 import {
     tradeHistory,
+    TradeDepthCheckSnapshot,
     TradeBaselineSource,
     TradeExpectedRule,
     TradePriceConvention,
+    TradeOfferCreateIntent,
+    TradeIntentAmount,
 } from '../analytics/tradeHistory';
 import { feedbackEngine } from '../analytics/feedbackEngine';
 import { tradeMarkoutScheduler } from '../analytics/tradeMarkoutScheduler';
@@ -69,6 +72,151 @@ interface ExpectedBaselineContext {
     priceConvention: TradePriceConvention;
     baselineBookAgeMs: number | null;
     orderingValid: boolean;
+}
+
+interface OfferCreateFlagDefinition {
+    mask: number;
+    label: string;
+}
+
+interface ExecutionPriceSanityResult {
+    enabled: boolean;
+    reject: boolean;
+    impliedPrice: number | null;
+    diffVsExpectedBps: number | null;
+    diffVsIntentBps: number | null;
+}
+
+type MinOrderSanityReasonCode =
+    | 'missing-taker-amount'
+    | 'missing-side'
+    | 'non-positive-amount'
+    | 'xrp-drops-underflow'
+    | 'iou-precision-underflow'
+    | 'base-below-min'
+    | 'quote-below-min';
+
+interface ExecutionMinOrderSanityResult {
+    enabled: boolean;
+    reject: boolean;
+    reasonCode: MinOrderSanityReasonCode | null;
+    impliedPrice: number | null;
+    baseAmount: number | null;
+    quoteAmount: number | null;
+}
+
+const OFFER_CREATE_FLAG_DEFINITIONS: OfferCreateFlagDefinition[] = [
+    { mask: 0x00010000, label: 'PASSIVE' },
+    { mask: 0x00020000, label: 'IOC' },
+    { mask: 0x00040000, label: 'FOK' },
+    { mask: 0x00080000, label: 'SELL' },
+];
+
+const OFFER_CREATE_KNOWN_FLAG_MASK = OFFER_CREATE_FLAG_DEFINITIONS.reduce(
+    (acc, entry) => acc | entry.mask,
+    0,
+);
+
+const DROPS_PER_XRP = 1_000_000;
+const IOU_DECIMAL_SCALE = 1_000_000_000_000_000; // 1e15
+const MAX_IOU_DECIMALS = 15;
+
+function normalizeSideForAmountMapping(
+    side: TradeSide | 'buy' | 'sell' | null | undefined,
+): 'BUY' | 'SELL' | null {
+    if (side === 'BUY' || side === 'buy') return 'BUY';
+    if (side === 'SELL' || side === 'sell') return 'SELL';
+    return null;
+}
+
+function parseNumberish(value: unknown): number | null {
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function parseIssuedAmountValue(amount: Record<string, unknown>): number | null {
+    return parseNumberish(amount.value);
+}
+
+function parseXrpDropsToXrp(dropsRaw: string): number | null {
+    const drops = parseNumberish(dropsRaw);
+    if (drops == null) return null;
+    return drops / DROPS_PER_XRP;
+}
+
+function countSignificantIouDecimals(rawValue: string): number {
+    const trimmed = rawValue.trim();
+    if (!trimmed) return 0;
+    const normalized = trimmed.replace(/^[+-]/, '');
+    if (!/[eE]/.test(normalized)) {
+        const dotIndex = normalized.indexOf('.');
+        if (dotIndex < 0) return 0;
+        return normalized.slice(dotIndex + 1).replace(/0+$/, '').length;
+    }
+    // Scientific notation precision/underflow is handled separately.
+    return 0;
+}
+
+function isIssuedCurrencyAmount(amount: TradeIntentAmount | null): amount is Record<string, unknown> {
+    return typeof amount === 'object' && amount !== null;
+}
+
+function isXrpDropsAmount(amount: TradeIntentAmount | null): amount is string {
+    return typeof amount === 'string';
+}
+
+function iouWouldUnderflowAtSerializationScale(amount: TradeIntentAmount | null): boolean {
+    if (!isIssuedCurrencyAmount(amount)) return false;
+    const parsed = parseIssuedAmountValue(amount);
+    if (parsed == null || parsed <= 0) return true;
+    const quantized = Math.floor(parsed * IOU_DECIMAL_SCALE) / IOU_DECIMAL_SCALE;
+    return !Number.isFinite(quantized) || quantized <= 0;
+}
+
+function iouHasTooManyDecimals(amount: TradeIntentAmount | null): boolean {
+    if (!isIssuedCurrencyAmount(amount)) return false;
+    const rawValue = amount.value;
+    const raw = typeof rawValue === 'number' ? rawValue.toString() : (typeof rawValue === 'string' ? rawValue : '');
+    if (!raw) return true;
+    return countSignificantIouDecimals(raw) > MAX_IOU_DECIMALS;
+}
+
+export function parseXrplAmountToNumber(
+    amount: TradeIntentAmount | null | undefined,
+): number | null {
+    if (amount == null) return null;
+    if (isXrpDropsAmount(amount)) {
+        return parseXrpDropsToXrp(amount);
+    }
+    return parseIssuedAmountValue(amount);
+}
+
+export function computeImpliedLimitPrice(input: {
+    offerCreateIntent: TradeOfferCreateIntent | null;
+    side: TradeSide | 'buy' | 'sell' | null | undefined;
+}): number | null {
+    const normalizedSide = normalizeSideForAmountMapping(input.side);
+    if (!input.offerCreateIntent || !normalizedSide) return null;
+
+    const takerGets = parseXrplAmountToNumber(input.offerCreateIntent.takerGets);
+    const takerPays = parseXrplAmountToNumber(input.offerCreateIntent.takerPays);
+    if (takerGets == null || takerPays == null || takerGets <= 0 || takerPays <= 0) {
+        return null;
+    }
+
+    const baseAmount = normalizedSide === 'BUY' ? takerPays : takerGets;
+    const quoteAmount = normalizedSide === 'BUY' ? takerGets : takerPays;
+    if (baseAmount <= 0 || quoteAmount <= 0) return null;
+
+    const implied = quoteAmount / baseAmount;
+    if (!Number.isFinite(implied) || implied <= 0) return null;
+    return implied;
 }
 
 export function schedulePostFillSnapshots(opts: {
@@ -138,6 +286,33 @@ export class OfferExecutor {
         const parsed = Number(process.env.EXECUTION_IOC_MIN_FILL_RATIO ?? '1');
         if (!Number.isFinite(parsed)) return 1;
         return Math.max(0.05, Math.min(1, parsed));
+    })();
+    private readonly executionPriceSanityEnabled: boolean = (() => {
+        const raw = (process.env.FEATURE_EXECUTION_PRICE_SANITY ?? '').trim().toLowerCase();
+        return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+    })();
+    private readonly executionMinOrderSanityEnabled: boolean = (() => {
+        const raw = (process.env.FEATURE_EXECUTION_MIN_ORDER_SANITY ?? '').trim().toLowerCase();
+        return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+    })();
+    private readonly executionMinBase: number = (() => {
+        const parsed = Number(process.env.EXECUTION_MIN_BASE ?? '0.25');
+        if (!Number.isFinite(parsed) || parsed < 0) return 0.25;
+        return parsed;
+    })();
+    private readonly executionMinQuote: number = (() => {
+        const parsed = Number(process.env.EXECUTION_MIN_QUOTE ?? '0.1');
+        if (!Number.isFinite(parsed) || parsed < 0) return 0.1;
+        return parsed;
+    })();
+    private readonly executionLastLedgerSlackEnabled: boolean = (() => {
+        const raw = (process.env.FEATURE_EXECUTION_LLS_SLACK ?? '').trim().toLowerCase();
+        return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+    })();
+    private readonly executionLastLedgerSlack: number = (() => {
+        const parsed = Number(process.env.EXECUTION_LAST_LEDGER_SLACK ?? '8');
+        if (!Number.isFinite(parsed)) return 8;
+        return Math.max(4, Math.min(12, Math.floor(parsed)));
     })();
 
     /**
@@ -756,6 +931,18 @@ export class OfferExecutor {
             return { accepted: false, reason: 'insufficient-depth-at-price' };
         }
 
+        const depthCheckSnapshot: TradeDepthCheckSnapshot = {
+            side: normalizedIntent.side,
+            intended_price: normalizedIntent.price,
+            required_base: normalizedIntent.amount,
+            min_required_base: depth.minRequiredBase,
+            fillable_base: depth.fillableBase,
+            has_depth: depth.hasDepth,
+            ioc_min_fill_ratio: this.iocMinFillRatio,
+            depth_check_levels: this.depthCheckLevels,
+            order_type: depth.orderType,
+        };
+
         const normalized = normalizeIntent(normalizedIntent);
         const txCore = buildOfferCreate(normalized);
 
@@ -766,7 +953,7 @@ export class OfferExecutor {
             Flags: this.mapFlags(flags),
             LastLedgerSequence: await this.computeLastLedgerSequence(),
         };
-        return this.submitWithGuards(tx, normalized.pair.symbol, normalizedIntent, flags);
+        return this.submitWithGuards(tx, normalized.pair.symbol, normalizedIntent, flags, depthCheckSnapshot);
     }
 
     async executeIntents(intents: TradeIntent[]): Promise<ExecutionResult[]> {
@@ -834,6 +1021,283 @@ export class OfferExecutor {
         if (flags?.fillOrKill) values.push('FOK');
         if (flags?.passive) values.push('PASSIVE');
         return values;
+    }
+
+    private decodeOfferCreateFlags(rawFlags: number, flags?: OfferParams['flags']): string[] {
+        const decoded = new Set<string>(this.buildExecutionFlags(flags));
+        for (const entry of OFFER_CREATE_FLAG_DEFINITIONS) {
+            if ((rawFlags & entry.mask) !== 0) {
+                decoded.add(entry.label);
+            }
+        }
+        const unknownMask = rawFlags & ~OFFER_CREATE_KNOWN_FLAG_MASK;
+        if (unknownMask !== 0) {
+            decoded.add(`RAW_0x${unknownMask.toString(16).toUpperCase()}`);
+        }
+        return Array.from(decoded);
+    }
+
+    private resolveTransactionType(
+        prepared: Record<string, unknown>,
+        originalTx?: Record<string, unknown>,
+    ): string | null {
+        const preparedType = typeof prepared.TransactionType === 'string'
+            ? prepared.TransactionType
+            : null;
+        if (preparedType) return preparedType;
+        const originalType = typeof originalTx?.TransactionType === 'string'
+            ? originalTx.TransactionType
+            : null;
+        return originalType ?? null;
+    }
+
+    private buildOfferCreateIntentSnapshot(
+        prepared: Record<string, unknown>,
+        originalTx: Record<string, unknown>,
+        flags?: OfferParams['flags'],
+    ): TradeOfferCreateIntent | null {
+        const txType = this.resolveTransactionType(prepared, originalTx);
+        if (txType !== 'OfferCreate') {
+            return null;
+        }
+
+        const rawFlags = typeof prepared.Flags === 'number' && Number.isFinite(prepared.Flags)
+            ? Math.max(0, Math.floor(prepared.Flags))
+            : (
+                typeof originalTx.Flags === 'number' && Number.isFinite(originalTx.Flags)
+                    ? Math.max(0, Math.floor(originalTx.Flags))
+                    : 0
+            );
+        const redactedGets = this.redactAmount(prepared.TakerGets ?? originalTx.TakerGets);
+        const redactedPays = this.redactAmount(prepared.TakerPays ?? originalTx.TakerPays);
+
+        return {
+            flags: rawFlags,
+            flagsDecoded: this.decodeOfferCreateFlags(rawFlags, flags),
+            takerGets: redactedGets ?? null,
+            takerPays: redactedPays ?? null,
+            feeDrops: typeof prepared.Fee === 'string'
+                ? prepared.Fee
+                : (typeof originalTx.Fee === 'string' ? originalTx.Fee : null),
+            sequence: typeof prepared.Sequence === 'number' && Number.isFinite(prepared.Sequence)
+                ? prepared.Sequence
+                : (
+                    typeof originalTx.Sequence === 'number' && Number.isFinite(originalTx.Sequence)
+                        ? originalTx.Sequence
+                        : null
+                ),
+            lastLedgerSequence: typeof prepared.LastLedgerSequence === 'number' && Number.isFinite(prepared.LastLedgerSequence)
+                ? prepared.LastLedgerSequence
+                : (
+                    typeof originalTx.LastLedgerSequence === 'number' && Number.isFinite(originalTx.LastLedgerSequence)
+                        ? originalTx.LastLedgerSequence
+                        : null
+                ),
+        };
+    }
+
+    private computeAbsoluteDiffBps(reference: number | null, observed: number | null): number | null {
+        if (
+            reference == null
+            || observed == null
+            || !Number.isFinite(reference)
+            || !Number.isFinite(observed)
+            || reference <= 0
+        ) {
+            return null;
+        }
+        return Math.abs(((observed - reference) / reference) * 10_000);
+    }
+
+    private evaluateExecutionPriceSanity(input: {
+        offerCreateIntent: TradeOfferCreateIntent | null;
+        side: TradeSide | null;
+        expectedPrice: number | null;
+        intendedPrice: number | null;
+    }): ExecutionPriceSanityResult {
+        if (!this.executionPriceSanityEnabled) {
+            return {
+                enabled: false,
+                reject: false,
+                impliedPrice: null,
+                diffVsExpectedBps: null,
+                diffVsIntentBps: null,
+            };
+        }
+
+        const impliedPrice = computeImpliedLimitPrice({
+            offerCreateIntent: input.offerCreateIntent,
+            side: input.side,
+        });
+        const diffVsExpectedBps = this.computeAbsoluteDiffBps(input.expectedPrice, impliedPrice);
+        const diffVsIntentBps = this.computeAbsoluteDiffBps(input.intendedPrice, impliedPrice);
+        const reject = impliedPrice == null
+            || (diffVsExpectedBps != null && diffVsExpectedBps > 2)
+            || (diffVsIntentBps != null && diffVsIntentBps > 2);
+
+        return {
+            enabled: true,
+            reject,
+            impliedPrice,
+            diffVsExpectedBps,
+            diffVsIntentBps,
+        };
+    }
+
+    private evaluateExecutionMinOrderSanity(input: {
+        offerCreateIntent: TradeOfferCreateIntent | null;
+        side: TradeSide | null;
+    }): ExecutionMinOrderSanityResult {
+        if (!this.executionMinOrderSanityEnabled) {
+            return {
+                enabled: false,
+                reject: false,
+                reasonCode: null,
+                impliedPrice: null,
+                baseAmount: null,
+                quoteAmount: null,
+            };
+        }
+
+        if (!input.offerCreateIntent) {
+            return {
+                enabled: true,
+                reject: true,
+                reasonCode: 'missing-taker-amount',
+                impliedPrice: null,
+                baseAmount: null,
+                quoteAmount: null,
+            };
+        }
+
+        const side = normalizeSideForAmountMapping(input.side);
+        if (!side) {
+            return {
+                enabled: true,
+                reject: true,
+                reasonCode: 'missing-side',
+                impliedPrice: null,
+                baseAmount: null,
+                quoteAmount: null,
+            };
+        }
+
+        const takerGetsRaw = input.offerCreateIntent.takerGets;
+        const takerPaysRaw = input.offerCreateIntent.takerPays;
+        if (takerGetsRaw == null || takerPaysRaw == null) {
+            return {
+                enabled: true,
+                reject: true,
+                reasonCode: 'missing-taker-amount',
+                impliedPrice: null,
+                baseAmount: null,
+                quoteAmount: null,
+            };
+        }
+
+        const takerGets = parseXrplAmountToNumber(takerGetsRaw);
+        const takerPays = parseXrplAmountToNumber(takerPaysRaw);
+        if (takerGets == null || takerPays == null || takerGets <= 0 || takerPays <= 0) {
+            return {
+                enabled: true,
+                reject: true,
+                reasonCode: 'non-positive-amount',
+                impliedPrice: null,
+                baseAmount: null,
+                quoteAmount: null,
+            };
+        }
+
+        const baseAmount = side === 'BUY' ? takerPays : takerGets;
+        const quoteAmount = side === 'BUY' ? takerGets : takerPays;
+        const impliedPrice = computeImpliedLimitPrice({
+            offerCreateIntent: input.offerCreateIntent,
+            side,
+        });
+
+        if (isXrpDropsAmount(takerGetsRaw)) {
+            const drops = parseNumberish(takerGetsRaw);
+            if (drops == null || drops < 1) {
+                return {
+                    enabled: true,
+                    reject: true,
+                    reasonCode: 'xrp-drops-underflow',
+                    impliedPrice,
+                    baseAmount,
+                    quoteAmount,
+                };
+            }
+        }
+        if (isXrpDropsAmount(takerPaysRaw)) {
+            const drops = parseNumberish(takerPaysRaw);
+            if (drops == null || drops < 1) {
+                return {
+                    enabled: true,
+                    reject: true,
+                    reasonCode: 'xrp-drops-underflow',
+                    impliedPrice,
+                    baseAmount,
+                    quoteAmount,
+                };
+            }
+        }
+
+        if (
+            iouWouldUnderflowAtSerializationScale(takerGetsRaw)
+            || iouWouldUnderflowAtSerializationScale(takerPaysRaw)
+            || iouHasTooManyDecimals(takerGetsRaw)
+            || iouHasTooManyDecimals(takerPaysRaw)
+        ) {
+            return {
+                enabled: true,
+                reject: true,
+                reasonCode: 'iou-precision-underflow',
+                impliedPrice,
+                baseAmount,
+                quoteAmount,
+            };
+        }
+
+        if (!Number.isFinite(baseAmount) || !Number.isFinite(quoteAmount) || baseAmount <= 0 || quoteAmount <= 0) {
+            return {
+                enabled: true,
+                reject: true,
+                reasonCode: 'non-positive-amount',
+                impliedPrice,
+                baseAmount: null,
+                quoteAmount: null,
+            };
+        }
+
+        if (baseAmount < this.executionMinBase) {
+            return {
+                enabled: true,
+                reject: true,
+                reasonCode: 'base-below-min',
+                impliedPrice,
+                baseAmount,
+                quoteAmount,
+            };
+        }
+        if (quoteAmount < this.executionMinQuote) {
+            return {
+                enabled: true,
+                reject: true,
+                reasonCode: 'quote-below-min',
+                impliedPrice,
+                baseAmount,
+                quoteAmount,
+            };
+        }
+
+        return {
+            enabled: true,
+            reject: false,
+            reasonCode: null,
+            impliedPrice,
+            baseAmount,
+            quoteAmount,
+        };
     }
 
     private toBookCurrency(currency: string, issuer?: string): { currency: 'XRP' } | { currency: string; issuer: string } {
@@ -960,7 +1424,12 @@ export class OfferExecutor {
         try {
             const res = await this.client.request({ command: 'ledger_current' });
             const current = res.result?.ledger_current_index;
-            if (typeof current === 'number') return current + 4;
+            if (typeof current === 'number') {
+                const slack = this.executionLastLedgerSlackEnabled
+                    ? this.executionLastLedgerSlack
+                    : 4;
+                return current + slack;
+            }
         } catch (err) {
             logger.warn({ err }, 'Unable to fetch ledger_current for LastLedgerSequence');
         }
@@ -1552,7 +2021,13 @@ export class OfferExecutor {
     }
 
     // Unified submit path with logging, validation, and error handling to avoid rippled parameter errors.
-    private async submitWithGuards(tx: any, pairSymbol?: string, intent?: TradeIntent, flags?: { passive?: boolean }): Promise<ExecutionResult> {
+    private async submitWithGuards(
+        tx: any,
+        pairSymbol?: string,
+        intent?: TradeIntent,
+        flags?: OfferParams['flags'],
+        depthCheckSnapshot?: TradeDepthCheckSnapshot | null,
+    ): Promise<ExecutionResult> {
         const canonicalPair = canonicalizePairKey(
             pairSymbol ?? (intent ? `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}` : `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`)
         );
@@ -1592,6 +2067,7 @@ export class OfferExecutor {
         let nodeEndpoint: string | null = this.inferNodeEndpoint();
         let feeDrops: string | null = null;
         let sequence: number | null = null;
+        let txType: string | null = this.resolveTransactionType(tx as Record<string, unknown>);
         let baselineContext: ExpectedBaselineContext | null = expectedBaseline
             ? {
                 ...expectedBaseline,
@@ -1599,6 +2075,7 @@ export class OfferExecutor {
             }
             : null;
         let expectedPriceForRealism: number | null = baselineContext?.expectedPrice ?? selectedExpectedPrice ?? null;
+        let offerCreateIntent: TradeOfferCreateIntent | null = null;
 
         try {
             if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
@@ -1616,11 +2093,290 @@ export class OfferExecutor {
 
             logger.info({ tx: safeTx, pair: pairSymbol }, 'Preparing XRPL transaction');
             const prepared = await this.client.autofill(tx);
+            const preparedRecord = prepared as Record<string, unknown>;
+            const originalTxRecord = tx as Record<string, unknown>;
+            txType = this.resolveTransactionType(preparedRecord, originalTxRecord);
             const safePrepared = {
                 ...prepared,
                 TakerGets: this.redactAmount(prepared.TakerGets),
                 TakerPays: this.redactAmount(prepared.TakerPays),
             };
+            offerCreateIntent = this.buildOfferCreateIntentSnapshot(preparedRecord, originalTxRecord, flags);
+            const traceOfferPatch = {
+                tx_type: txType,
+                offer_create: offerCreateIntent,
+                depth_check: depthCheckSnapshot ?? null,
+            } as const;
+
+            const minOrderSanity = this.evaluateExecutionMinOrderSanity({
+                offerCreateIntent,
+                side: intent?.side ?? null,
+            });
+            if (
+                minOrderSanity.enabled
+                && minOrderSanity.reject
+                && txType === 'OfferCreate'
+                && intent
+                && executionSide
+            ) {
+                const reasonCode = minOrderSanity.reasonCode ?? 'unknown';
+                logger.warn({
+                    pair: canonicalPair,
+                    strategy: this.currentStrategy,
+                    side: intent.side,
+                    impliedPrice: minOrderSanity.impliedPrice,
+                    baseAmount: minOrderSanity.baseAmount,
+                    quoteAmount: minOrderSanity.quoteAmount,
+                    reasonCode,
+                    minBase: this.executionMinBase,
+                    minQuote: this.executionMinQuote,
+                }, 'Rejected order by execution min-order sanity guard');
+
+                const rejectedTrade = tradeHistory.recordTrade({
+                    pair: canonicalPair,
+                    side: intent.side as 'BUY' | 'SELL',
+                    price: intentBaselinePrice ?? intent.price,
+                    priceQuotePerBase: intentBaselinePrice ?? intent.price,
+                    amount: intent.amount,
+                    amountBase: intent.amount,
+                    filled: 0,
+                    filledBase: 0,
+                    filledQuote: 0,
+                    fee: 0,
+                    pnl: 0,
+                    paper: false,
+                    status: 'REJECTED',
+                    source: 'bot',
+                });
+                tradeId = rejectedTrade.id;
+                feeDrops = typeof prepared.Fee === 'string' ? prepared.Fee : null;
+                sequence = typeof prepared.Sequence === 'number' && Number.isFinite(prepared.Sequence)
+                    ? prepared.Sequence
+                    : null;
+
+                tradeHistory.upsertTradeTrace({
+                    tradeId,
+                    patch: {
+                        decision_ts_ms: decisionTs ?? rejectedTrade.timestamp,
+                        baseline_ts_ms: baselineContext?.baselineTsMs ?? null,
+                        baseline_best_bid: baselineContext?.baselineBestBid ?? null,
+                        baseline_best_ask: baselineContext?.baselineBestAsk ?? null,
+                        baseline_mid: baselineContext?.baselineMid ?? null,
+                        baseline_spread_bps: baselineContext?.baselineSpreadBps ?? null,
+                        baseline_source: baselineContext?.baselineSource ?? null,
+                        expected_price: baselineContext?.expectedPrice ?? null,
+                        expected_rule: baselineContext?.expectedRule ?? null,
+                        price_convention: baselineContext?.priceConvention ?? null,
+                        baseline_book_age_ms: baselineContext?.baselineBookAgeMs ?? null,
+                        tx_hash: null,
+                        node_endpoint: nodeEndpoint,
+                        fee_drops: feeDrops,
+                        sequence,
+                        ...traceOfferPatch,
+                        submit_result: {
+                            engine_result: null,
+                            engine_result_code: null,
+                            engine_result_message: `execution-min-order-sanity:${reasonCode}`,
+                        },
+                        ack_status: 'rejected',
+                        outcome: 'rejected',
+                        outcome_reason: 'execution-min-order-sanity',
+                    },
+                });
+
+                try {
+                    feedbackEngine.recordTradeEvent({
+                        pairKey: canonicalPair,
+                        strategy: this.currentStrategy,
+                        action: 'reject',
+                        side: executionSide,
+                        intentPrice: intentBaselinePrice ?? intent.price,
+                        intentSizeBase: minOrderSanity.baseAmount ?? intent.amount,
+                        ...(typeof minOrderSanity.quoteAmount === 'number'
+                            ? { intentSizeQuote: minOrderSanity.quoteAmount }
+                            : {}),
+                        ...(typeof minOrderSanity.impliedPrice === 'number'
+                            ? { fillPrice: minOrderSanity.impliedPrice }
+                            : {}),
+                        error: `execution-min-order-sanity:${reasonCode}`,
+                        resultCode: 'execution-min-order-sanity',
+                        midPriceAtDecision: this.currentMidPrice ?? undefined,
+                        isBotTrade: true,
+                    });
+                } catch { /* feedback should never crash trading */ }
+
+                this.emitSubmitTelemetry({
+                    strategy: this.currentStrategy,
+                    pairKey: canonicalPair,
+                    stage: 'fail',
+                    tradeId,
+                    nodeEndpoint,
+                    feeDrops,
+                    sequence,
+                    offerCreateIntent,
+                    txHash: null,
+                    submitResult: {
+                        engine_result: null,
+                        engine_result_code: null,
+                        engine_result_message: `execution-min-order-sanity:${reasonCode}`,
+                    },
+                    ackStatus: 'rejected',
+                    errorCode: 'execution-min-order-sanity',
+                    baselineTsMs: baselineContext?.baselineTsMs ?? null,
+                    baselineBestBid: baselineContext?.baselineBestBid ?? null,
+                    baselineBestAsk: baselineContext?.baselineBestAsk ?? null,
+                    baselineMid: baselineContext?.baselineMid ?? null,
+                    baselineSpreadBps: baselineContext?.baselineSpreadBps ?? null,
+                    baselineSource: baselineContext?.baselineSource ?? null,
+                    expectedPrice: baselineContext?.expectedPrice ?? null,
+                    expectedRule: baselineContext?.expectedRule ?? null,
+                    priceConvention: baselineContext?.priceConvention ?? null,
+                    baselineBookAgeMs: baselineContext?.baselineBookAgeMs ?? null,
+                    ...(executionSide ? { side: executionSide } : {}),
+                    ...(typeof intent.amount === 'number' ? { amountBase: intent.amount } : {}),
+                    ...(() => {
+                        const intentPrice = intentBaselinePrice ?? intent.price;
+                        return typeof intentPrice === 'number' ? { intentPrice } : {};
+                    })(),
+                });
+
+                return { accepted: false, reason: 'execution-min-order-sanity' };
+            }
+
+            const sanityCheck = this.evaluateExecutionPriceSanity({
+                offerCreateIntent,
+                side: intent?.side ?? null,
+                expectedPrice: this.normalizeQuotePerBase(baselineContext?.expectedPrice ?? selectedExpectedPrice),
+                intendedPrice: this.normalizeQuotePerBase(intent?.price),
+            });
+            if (
+                sanityCheck.enabled
+                && sanityCheck.reject
+                && txType === 'OfferCreate'
+                && intent
+                && executionSide
+            ) {
+                logger.warn({
+                    pair: canonicalPair,
+                    strategy: this.currentStrategy,
+                    side: intent.side,
+                    impliedPrice: sanityCheck.impliedPrice,
+                    diffVsExpectedBps: sanityCheck.diffVsExpectedBps,
+                    diffVsIntentBps: sanityCheck.diffVsIntentBps,
+                    expectedPrice: baselineContext?.expectedPrice ?? selectedExpectedPrice ?? null,
+                    intendedPrice: intent.price,
+                }, 'Rejected order by execution price sanity guard');
+
+                const rejectedTrade = tradeHistory.recordTrade({
+                    pair: canonicalPair,
+                    side: intent.side as 'BUY' | 'SELL',
+                    price: intentBaselinePrice ?? intent.price,
+                    priceQuotePerBase: intentBaselinePrice ?? intent.price,
+                    amount: intent.amount,
+                    amountBase: intent.amount,
+                    filled: 0,
+                    filledBase: 0,
+                    filledQuote: 0,
+                    fee: 0,
+                    pnl: 0,
+                    paper: false,
+                    status: 'REJECTED',
+                    source: 'bot',
+                });
+                tradeId = rejectedTrade.id;
+                feeDrops = typeof prepared.Fee === 'string' ? prepared.Fee : null;
+                sequence = typeof prepared.Sequence === 'number' && Number.isFinite(prepared.Sequence)
+                    ? prepared.Sequence
+                    : null;
+
+                tradeHistory.upsertTradeTrace({
+                    tradeId,
+                    patch: {
+                        decision_ts_ms: decisionTs ?? rejectedTrade.timestamp,
+                        baseline_ts_ms: baselineContext?.baselineTsMs ?? null,
+                        baseline_best_bid: baselineContext?.baselineBestBid ?? null,
+                        baseline_best_ask: baselineContext?.baselineBestAsk ?? null,
+                        baseline_mid: baselineContext?.baselineMid ?? null,
+                        baseline_spread_bps: baselineContext?.baselineSpreadBps ?? null,
+                        baseline_source: baselineContext?.baselineSource ?? null,
+                        expected_price: baselineContext?.expectedPrice ?? null,
+                        expected_rule: baselineContext?.expectedRule ?? null,
+                        price_convention: baselineContext?.priceConvention ?? null,
+                        baseline_book_age_ms: baselineContext?.baselineBookAgeMs ?? null,
+                        tx_hash: null,
+                        node_endpoint: nodeEndpoint,
+                        fee_drops: feeDrops,
+                        sequence,
+                        ...traceOfferPatch,
+                        submit_result: {
+                            engine_result: null,
+                            engine_result_code: null,
+                            engine_result_message: 'execution-price-sanity',
+                        },
+                        ack_status: 'rejected',
+                        outcome: 'rejected',
+                        outcome_reason: 'execution-price-sanity',
+                    },
+                });
+
+                try {
+                    feedbackEngine.recordTradeEvent({
+                        pairKey: canonicalPair,
+                        strategy: this.currentStrategy,
+                        action: 'reject',
+                        side: executionSide,
+                        intentPrice: intentBaselinePrice ?? intent.price,
+                        intentSizeBase: intent.amount,
+                        ...(typeof sanityCheck.impliedPrice === 'number'
+                            ? { fillPrice: sanityCheck.impliedPrice }
+                            : {}),
+                        slippageBpsVsIntent: sanityCheck.diffVsExpectedBps,
+                        slippageBpsVsMid: sanityCheck.diffVsIntentBps,
+                        error: 'execution-price-sanity',
+                        resultCode: 'execution-price-sanity',
+                        midPriceAtDecision: this.currentMidPrice ?? undefined,
+                        isBotTrade: true,
+                    });
+                } catch { /* feedback should never crash trading */ }
+
+                this.emitSubmitTelemetry({
+                    strategy: this.currentStrategy,
+                    pairKey: canonicalPair,
+                    stage: 'fail',
+                    tradeId,
+                    nodeEndpoint,
+                    feeDrops,
+                    sequence,
+                    offerCreateIntent,
+                    txHash: null,
+                    submitResult: {
+                        engine_result: null,
+                        engine_result_code: null,
+                        engine_result_message: 'execution-price-sanity',
+                    },
+                    ackStatus: 'rejected',
+                    errorCode: 'execution-price-sanity',
+                    baselineTsMs: baselineContext?.baselineTsMs ?? null,
+                    baselineBestBid: baselineContext?.baselineBestBid ?? null,
+                    baselineBestAsk: baselineContext?.baselineBestAsk ?? null,
+                    baselineMid: baselineContext?.baselineMid ?? null,
+                    baselineSpreadBps: baselineContext?.baselineSpreadBps ?? null,
+                    baselineSource: baselineContext?.baselineSource ?? null,
+                    expectedPrice: baselineContext?.expectedPrice ?? null,
+                    expectedRule: baselineContext?.expectedRule ?? null,
+                    priceConvention: baselineContext?.priceConvention ?? null,
+                    baselineBookAgeMs: baselineContext?.baselineBookAgeMs ?? null,
+                    ...(executionSide ? { side: executionSide } : {}),
+                    ...(typeof intent.amount === 'number' ? { amountBase: intent.amount } : {}),
+                    ...(() => {
+                        const intentPrice = intentBaselinePrice ?? intent.price;
+                        return typeof intentPrice === 'number' ? { intentPrice } : {};
+                    })(),
+                });
+
+                return { accepted: false, reason: 'execution-price-sanity' };
+            }
+
             logger.info({ tx: safePrepared, pair: pairSymbol }, 'Autofilled XRPL transaction');
             const signed = this.wallet.sign(prepared);
             txHash = signed.hash;
@@ -1665,9 +2421,12 @@ export class OfferExecutor {
                         price_convention: baselineContext?.priceConvention ?? null,
                         baseline_book_age_ms: baselineContext?.baselineBookAgeMs ?? null,
                         tx_hash: signed.hash,
+                        tx_type: txType,
                         node_endpoint: nodeEndpoint,
                         fee_drops: feeDrops,
                         sequence,
+                        offer_create: offerCreateIntent,
+                        depth_check: depthCheckSnapshot ?? null,
                         ack_status: 'unknown',
                         outcome: 'abandoned',
                         outcome_reason: null,
@@ -1710,6 +2469,9 @@ export class OfferExecutor {
                     patch: {
                         submit_ts_ms: eqSubmitTimeMs,
                         baseline_source: baselineContext?.baselineSource ?? null,
+                        tx_type: txType,
+                        offer_create: offerCreateIntent,
+                        depth_check: depthCheckSnapshot ?? null,
                     },
                 });
             }
@@ -1723,6 +2485,7 @@ export class OfferExecutor {
                 nodeEndpoint,
                 feeDrops,
                 sequence,
+                offerCreateIntent,
                 txHash: signed.hash,
                 baselineTsMs: baselineContext?.baselineTsMs ?? null,
                 baselineBestBid: baselineContext?.baselineBestBid ?? null,
@@ -1835,6 +2598,9 @@ export class OfferExecutor {
                             submit_ts_ms: eqSubmitTimeMs,
                             submit_response_ts_ms: submitResponseTsMs,
                             ack_ts_ms: timeoutAckTsMs,
+                            tx_type: txType,
+                            offer_create: offerCreateIntent,
+                            depth_check: depthCheckSnapshot ?? null,
                             submit_result: {
                                 engine_result: null,
                                 engine_result_code: null,
@@ -1922,6 +2688,9 @@ export class OfferExecutor {
                     tradeId,
                     patch: {
                         tx_hash: responseTxHash,
+                        tx_type: txType,
+                        offer_create: offerCreateIntent,
+                        depth_check: depthCheckSnapshot ?? null,
                         submit_ts_ms: eqSubmitTimeMs,
                         submit_response_ts_ms: submitResponseTsMs,
                         ack_ts_ms: ackTsMs,
@@ -2005,6 +2774,9 @@ export class OfferExecutor {
                     tradeId,
                     patch: {
                         tx_hash: responseTxHash,
+                        tx_type: txType,
+                        offer_create: offerCreateIntent,
+                        depth_check: depthCheckSnapshot ?? null,
                         ...(validatedTs != null ? { validated_ts_ms: validatedTs } : {}),
                         ...(validatedLedgerIndex != null ? { validated_ledger_index: validatedLedgerIndex } : {}),
                         ...(validatedLedgerTime != null ? { validated_ledger_time: validatedLedgerTime } : {}),
@@ -2222,6 +2994,9 @@ export class OfferExecutor {
                         tradeId,
                         patch: {
                             tx_hash: responseTxHash,
+                            tx_type: txType,
+                            offer_create: offerCreateIntent,
+                            depth_check: depthCheckSnapshot ?? null,
                             validated_ledger_index: validatedLedgerIndex,
                             validated_ledger_time: validatedLedgerTime,
                             outcome: status === 'FILLED' ? 'filled' : 'partial',
@@ -2252,6 +3027,9 @@ export class OfferExecutor {
                         hash: responseTxHash,
                         tradeId,
                         patch: {
+                            tx_type: txType,
+                            offer_create: offerCreateIntent,
+                            depth_check: depthCheckSnapshot ?? null,
                             outcome: 'abandoned',
                             outcome_reason: 'integrity-quarantine',
                             fill_snapshot: {
@@ -2639,6 +3417,9 @@ export class OfferExecutor {
                         submit_ts_ms: eqSubmitTimeMs,
                         submit_response_ts_ms: submitResponseTsMs,
                         ack_ts_ms: failureAckTsMs,
+                        tx_type: txType,
+                        offer_create: offerCreateIntent,
+                        depth_check: depthCheckSnapshot ?? null,
                         submit_result: {
                             engine_result: null,
                             engine_result_code: null,

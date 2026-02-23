@@ -70,6 +70,30 @@ export interface TradeSubmitResult {
     engine_result_message: string | null;
 }
 
+export type TradeIntentAmount = string | Record<string, unknown>;
+
+export interface TradeOfferCreateIntent {
+    flags: number;
+    flagsDecoded: string[];
+    takerGets: TradeIntentAmount | null;
+    takerPays: TradeIntentAmount | null;
+    feeDrops: string | null;
+    sequence: number | null;
+    lastLedgerSequence: number | null;
+}
+
+export interface TradeDepthCheckSnapshot {
+    side: 'BUY' | 'SELL';
+    intended_price: number | null;
+    required_base: number | null;
+    min_required_base: number | null;
+    fillable_base: number | null;
+    has_depth: boolean | null;
+    ioc_min_fill_ratio: number | null;
+    depth_check_levels: number | null;
+    order_type: 'IOC' | 'FOK' | null;
+}
+
 export interface TradeFillSnapshot {
     fill_ts_ms: number | null;
     filled_base: number | null;
@@ -113,9 +137,12 @@ export interface TradeTrace {
     validated_ledger_index: number | null;
     validated_ledger_time: number | null;
     tx_hash: string | null;
+    tx_type: string | null;
     node_endpoint: string | null;
     fee_drops: string | null;
     sequence: number | null;
+    offer_create: TradeOfferCreateIntent | null;
+    depth_check: TradeDepthCheckSnapshot | null;
     submit_result: TradeSubmitResult | null;
     ack_status: TradeAckStatus;
     outcome: TradeOutcome;
@@ -240,6 +267,57 @@ function parseSubmitResult(raw: unknown): TradeSubmitResult | null {
     };
 }
 
+function parseIntentAmount(raw: unknown): TradeIntentAmount | null {
+    if (typeof raw === 'string') return raw;
+    if (!isObject(raw)) return null;
+    const copy: Record<string, unknown> = { ...raw };
+    if (typeof copy.issuer === 'string') {
+        copy.issuer = '[redacted]';
+    }
+    return copy;
+}
+
+function parseOfferCreateIntent(raw: unknown): TradeOfferCreateIntent | null {
+    if (!isObject(raw)) return null;
+    const flagsDecodedRaw = Array.isArray(raw.flagsDecoded) ? raw.flagsDecoded : [];
+    const flagsDecoded = Array.from(new Set(
+        flagsDecodedRaw
+            .filter((entry): entry is string => typeof entry === 'string')
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0),
+    ));
+    return {
+        flags: typeof raw.flags === 'number' && Number.isFinite(raw.flags)
+            ? Math.max(0, Math.floor(raw.flags))
+            : 0,
+        flagsDecoded,
+        takerGets: parseIntentAmount(raw.takerGets),
+        takerPays: parseIntentAmount(raw.takerPays),
+        feeDrops: typeof raw.feeDrops === 'string' ? raw.feeDrops : null,
+        sequence: toFiniteNumberOrNull(raw.sequence),
+        lastLedgerSequence: toFiniteNumberOrNull(raw.lastLedgerSequence),
+    };
+}
+
+function parseDepthCheckSnapshot(raw: unknown): TradeDepthCheckSnapshot | null {
+    if (!isObject(raw)) return null;
+    const side = raw.side === 'BUY' || raw.side === 'SELL' ? raw.side : null;
+    if (!side) return null;
+    const hasDepth = typeof raw.has_depth === 'boolean' ? raw.has_depth : null;
+    const orderType = raw.order_type === 'IOC' || raw.order_type === 'FOK' ? raw.order_type : null;
+    return {
+        side,
+        intended_price: toFiniteNumberOrNull(raw.intended_price),
+        required_base: toFiniteNumberOrNull(raw.required_base),
+        min_required_base: toFiniteNumberOrNull(raw.min_required_base),
+        fillable_base: toFiniteNumberOrNull(raw.fillable_base),
+        has_depth: hasDepth,
+        ioc_min_fill_ratio: toFiniteNumberOrNull(raw.ioc_min_fill_ratio),
+        depth_check_levels: toFiniteNumberOrNull(raw.depth_check_levels),
+        order_type: orderType,
+    };
+}
+
 function parseFillSnapshot(raw: unknown): TradeFillSnapshot | null {
     if (!isObject(raw)) return null;
     return {
@@ -321,9 +399,12 @@ function defaultTrace(trade: TraceFallback): TradeTrace {
         validated_ledger_index: null,
         validated_ledger_time: null,
         tx_hash: trade.hash ?? null,
+        tx_type: null,
         node_endpoint: null,
         fee_drops: null,
         sequence: null,
+        offer_create: null,
+        depth_check: null,
         submit_result: null,
         ack_status: 'unknown',
         outcome: outcomeFromStatus(trade.status),
@@ -379,9 +460,12 @@ function parseTrace(raw: unknown, fallback: TraceFallback): TradeTrace | undefin
         validated_ledger_index: toFiniteNumberOrNull(raw.validated_ledger_index),
         validated_ledger_time: toFiniteNumberOrNull(raw.validated_ledger_time),
         tx_hash: typeof raw.tx_hash === 'string' ? raw.tx_hash : (fallback.hash ?? null),
+        tx_type: typeof raw.tx_type === 'string' && raw.tx_type.trim().length > 0 ? raw.tx_type : null,
         node_endpoint: typeof raw.node_endpoint === 'string' ? raw.node_endpoint : null,
         fee_drops: typeof raw.fee_drops === 'string' ? raw.fee_drops : null,
         sequence: toFiniteNumberOrNull(raw.sequence),
+        offer_create: parseOfferCreateIntent(raw.offer_create),
+        depth_check: parseDepthCheckSnapshot(raw.depth_check),
         submit_result: parseSubmitResult(raw.submit_result),
         ack_status: raw.ack_status === 'accepted'
             || raw.ack_status === 'queued'

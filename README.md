@@ -625,6 +625,31 @@ curl "http://127.0.0.1:3000/api/analytics/edge-attribution?pairKey=XRP/RLUSD&buc
 curl "http://127.0.0.1:3000/api/analytics/summary?pair=XRP/RLUSD"
 ```
 
+## Appendix: Verify Execution Quality Buckets
+
+```bash
+# 1) Call the buckets endpoint (last 500 trades by default)
+curl "http://127.0.0.1:3000/api/debug/execution-quality/buckets?limit=500" | jq
+
+# 2) Identify the most common bucket
+curl "http://127.0.0.1:3000/api/debug/execution-quality/buckets?limit=500" \
+  | jq -r '.buckets | to_entries | sort_by(.value) | reverse | .[0]'
+
+# 3) Baseline EXPIRED_LAST_LEDGER total across engine-result buckets
+BEFORE_EXPIRED=$(curl "http://127.0.0.1:3000/api/debug/execution-quality/buckets?limit=500" \
+  | jq '[.buckets | to_entries[] | select(.key | endswith(":EXPIRED_LAST_LEDGER")) | .value] | add // 0')
+echo "before EXPIRED_LAST_LEDGER=${BEFORE_EXPIRED}"
+
+# 4) Enable LLS slack and restart bot/runtime
+export FEATURE_EXECUTION_LLS_SLACK=true
+export EXECUTION_LAST_LEDGER_SLACK=8
+
+# 5) Re-check and compare (expect reduction when EXPIRED_LAST_LEDGER is present)
+AFTER_EXPIRED=$(curl "http://127.0.0.1:3000/api/debug/execution-quality/buckets?limit=500" \
+  | jq '[.buckets | to_entries[] | select(.key | endswith(":EXPIRED_LAST_LEDGER")) | .value] | add // 0')
+echo "after EXPIRED_LAST_LEDGER=${AFTER_EXPIRED}"
+```
+
 ## Appendix: Build / Verification
 
 ```bash
