@@ -306,4 +306,62 @@ describe('GET /api/debug/tx-intent backfill', () => {
             }),
         }));
     });
+
+    it('returns depth_reprice snapshot when present on the trade trace', async () => {
+        mockGetTradeByHash.mockReturnValue({
+            id: 'trade-lookup-004',
+            pair: 'XRP/RLUSD',
+            side: 'SELL',
+            hash: 'HASH_LOOKUP_004',
+            trace: {
+                tx_hash: 'HASH_LOOKUP_004',
+                tx_type: 'OfferCreate',
+                offer_create: {
+                    flags: 0x00020000,
+                    flagsDecoded: ['IOC'],
+                    takerGets: '500000',
+                    takerPays: {
+                        currency: 'RLUSD',
+                        issuer: '[redacted]',
+                        value: '0.7',
+                    },
+                    feeDrops: '12',
+                    sequence: 101,
+                    lastLedgerSequence: 500000,
+                },
+                depth_reprice: {
+                    enabled: true,
+                    intended_price: 1.4,
+                    repriced_price: 1.4002,
+                    required_reprice_bps: 1.43,
+                    min_required_base: 0.5,
+                    fillable_base_at_intended: 0.2,
+                    fillable_base_at_repriced: 0.6,
+                    decision: 'applied',
+                    max_reprice_bps: 3,
+                },
+                submit_result: {
+                    engine_result: 'tesSUCCESS',
+                },
+                outcome_reason: null,
+            },
+        });
+
+        const req = createMockReq({ hash: 'HASH_LOOKUP_004' });
+        const res = createMockRes();
+        await handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body.depth_reprice).toEqual({
+            enabled: true,
+            intended_price: 1.4,
+            repriced_price: 1.4002,
+            required_reprice_bps: 1.43,
+            min_required_base: 0.5,
+            fillable_base_at_intended: 0.2,
+            fillable_base_at_repriced: 0.6,
+            decision: 'applied',
+            max_reprice_bps: 3,
+        });
+    });
 });

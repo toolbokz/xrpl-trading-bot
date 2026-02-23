@@ -98,6 +98,18 @@ export interface TradeDepthCheckSnapshot {
     error?: string | null;
 }
 
+export interface TradeDepthRepriceSnapshot {
+    enabled: boolean;
+    intended_price: number | null;
+    repriced_price: number | null;
+    required_reprice_bps: number | null;
+    min_required_base: number | null;
+    fillable_base_at_intended: number | null;
+    fillable_base_at_repriced: number | null;
+    decision: 'applied' | 'skipped_over_budget' | 'skipped_no_candidate' | 'not_needed' | null;
+    max_reprice_bps: number | null;
+}
+
 export interface TradeFillSnapshot {
     fill_ts_ms: number | null;
     filled_base: number | null;
@@ -147,6 +159,7 @@ export interface TradeTrace {
     sequence: number | null;
     offer_create: TradeOfferCreateIntent | null;
     depth_check: TradeDepthCheckSnapshot | null;
+    depth_reprice: TradeDepthRepriceSnapshot | null;
     submit_result: TradeSubmitResult | null;
     ack_status: TradeAckStatus;
     outcome: TradeOutcome;
@@ -335,6 +348,27 @@ function parseDepthCheckSnapshot(raw: unknown): TradeDepthCheckSnapshot | null {
     };
 }
 
+function parseDepthRepriceSnapshot(raw: unknown): TradeDepthRepriceSnapshot | null {
+    if (!isObject(raw)) return null;
+    const decision = raw.decision === 'applied'
+        || raw.decision === 'skipped_over_budget'
+        || raw.decision === 'skipped_no_candidate'
+        || raw.decision === 'not_needed'
+        ? raw.decision
+        : null;
+    return {
+        enabled: raw.enabled === true,
+        intended_price: toFiniteNumberOrNull(raw.intended_price),
+        repriced_price: toFiniteNumberOrNull(raw.repriced_price),
+        required_reprice_bps: toFiniteNumberOrNull(raw.required_reprice_bps),
+        min_required_base: toFiniteNumberOrNull(raw.min_required_base),
+        fillable_base_at_intended: toFiniteNumberOrNull(raw.fillable_base_at_intended),
+        fillable_base_at_repriced: toFiniteNumberOrNull(raw.fillable_base_at_repriced),
+        decision,
+        max_reprice_bps: toFiniteNumberOrNull(raw.max_reprice_bps),
+    };
+}
+
 function parseFillSnapshot(raw: unknown): TradeFillSnapshot | null {
     if (!isObject(raw)) return null;
     return {
@@ -422,6 +456,7 @@ function defaultTrace(trade: TraceFallback): TradeTrace {
         sequence: null,
         offer_create: null,
         depth_check: null,
+        depth_reprice: null,
         submit_result: null,
         ack_status: 'unknown',
         outcome: outcomeFromStatus(trade.status),
@@ -483,6 +518,7 @@ function parseTrace(raw: unknown, fallback: TraceFallback): TradeTrace | undefin
         sequence: toFiniteNumberOrNull(raw.sequence),
         offer_create: parseOfferCreateIntent(raw.offer_create),
         depth_check: parseDepthCheckSnapshot(raw.depth_check),
+        depth_reprice: parseDepthRepriceSnapshot(raw.depth_reprice),
         submit_result: parseSubmitResult(raw.submit_result),
         ack_status: raw.ack_status === 'accepted'
             || raw.ack_status === 'queued'

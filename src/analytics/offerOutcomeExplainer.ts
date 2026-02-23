@@ -6,6 +6,7 @@ import {
 } from './tradeHistory';
 
 export type OfferOutcomeCategory =
+    | 'DEPTH_REPRICE_APPLIED'
     | 'INSUFFICIENT_LIQUIDITY_AT_PRICE'
     | 'MISSING_DEPTH_EVIDENCE'
     | 'ROUNDING_OR_MINIMUM_AMOUNT'
@@ -41,6 +42,9 @@ export interface OfferOutcomeEvidence {
     offerCreateMissing: boolean;
     takerAmountsMissing: boolean;
     minUnitUnderflowShown: boolean;
+    depthRepriceDecision: 'applied' | 'skipped_over_budget' | 'skipped_no_candidate' | 'not_needed' | null;
+    depthRepricedPrice: number | null;
+    depthRequiredRepriceBps: number | null;
 }
 
 export interface OfferOutcomeExplanation {
@@ -160,6 +164,8 @@ function hasDepthEvidence(depth: TradeDepthCheckSnapshot | null): boolean {
 
 function mapRecommendedFix(category: OfferOutcomeCategory): string {
     switch (category) {
+        case 'DEPTH_REPRICE_APPLIED':
+            return 'No action required; depth-aware repricing improved executable liquidity access.';
         case 'INSUFFICIENT_LIQUIDITY_AT_PRICE':
             return 'Reduce order size or relax the limit price to match available liquidity.';
         case 'MISSING_DEPTH_EVIDENCE':
@@ -227,6 +233,14 @@ export function explainOfferOutcome(input: {
     const diffVsIntendedBps = computeAbsoluteDiffBps(intendedPrice, impliedLimitPrice);
     const minUnitUnderflowShown = canShowMinUnitUnderflow(offerCreateIntent);
     const hasDepthCheckEvidence = hasDepthEvidence(trace.depth_check);
+    const depthRepriceDecision = trace.depth_reprice?.decision === 'applied'
+        || trace.depth_reprice?.decision === 'skipped_over_budget'
+        || trace.depth_reprice?.decision === 'skipped_no_candidate'
+        || trace.depth_reprice?.decision === 'not_needed'
+        ? trace.depth_reprice.decision
+        : null;
+    const depthRepricedPrice = toFinitePositive(trace.depth_reprice?.repriced_price ?? null);
+    const depthRequiredRepriceBps = toFiniteNonNegative(trace.depth_reprice?.required_reprice_bps ?? null);
     const largeImpliedPriceDeviation =
         impliedLimitPrice != null
         && (
@@ -260,12 +274,23 @@ export function explainOfferOutcome(input: {
         offerCreateMissing: !hasOfferCreateIntent,
         takerAmountsMissing: !hasTakerAmounts,
         minUnitUnderflowShown,
+        depthRepriceDecision,
+        depthRepricedPrice,
+        depthRequiredRepriceBps,
     };
 
     let outcomeCategory: OfferOutcomeCategory = 'UNKNOWN';
     let rootCause: string | null = null;
 
-    if (txResultLower === 'execution-min-order-sanity') {
+    if (trace.outcome_reason === 'depth-reprice-over-budget' || txResultLower === 'depth-reprice-over-budget') {
+        outcomeCategory = 'INSUFFICIENT_LIQUIDITY_AT_PRICE';
+        rootCause = 'DEPTH_REPRICE_OVER_BUDGET';
+    } else if (
+        depthRepriceDecision === 'applied'
+        && (trace.outcome === 'filled' || trace.outcome === 'partial' || txResultUpper === 'TESSUCCESS')
+    ) {
+        outcomeCategory = 'DEPTH_REPRICE_APPLIED';
+    } else if (txResultLower === 'execution-min-order-sanity') {
         outcomeCategory = 'MIN_ORDER_SANITY';
         rootCause = 'EXECUTION_MIN_ORDER_SANITY';
     } else if (trace.outcome === 'partial' || trace.fill_snapshot?.partial === true) {

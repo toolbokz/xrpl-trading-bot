@@ -61,6 +61,7 @@ const defaultAnalytics = {
         avgDecisionToSubmitMs: 30,
         avgSubmitToValidatedMs: 200,
         avgDecisionToValidatedMs: 230,
+        repriceAppliedRate: 0,
     },
     series: [],
     histograms: {

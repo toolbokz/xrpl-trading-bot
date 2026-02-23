@@ -109,6 +109,7 @@ describe('GET /api/debug/execution-quality/buckets', () => {
             'tecKILLED:INSUFFICIENT_LIQUIDITY_AT_PRICE': 1,
             'tefMAX_LEDGER:EXPIRED_LAST_LEDGER': 2,
         });
+        expect(res.body.repriceAppliedByBucket).toEqual({});
         expect(res.body.flagsDecoded).toEqual({
             IOC: 1,
             FOK: 1,
@@ -151,6 +152,60 @@ describe('GET /api/debug/execution-quality/buckets', () => {
         expect(mockGetRecentTrades).toHaveBeenCalledWith(2);
         expect(res.body.limit).toBe(2);
         expect(res.body.totalTradesAnalyzed).toBe(2);
+    });
+
+    it('tracks repriceAppliedByBucket when depth_reprice decision is applied', () => {
+        mockGetRecentTrades.mockReturnValue([
+            {
+                id: 'trade-reprice-1',
+                side: 'BUY',
+                paper: false,
+                status: 'FILLED',
+                trace: {
+                    tx_type: 'OfferCreate',
+                    offer_create: {
+                        flagsDecoded: ['IOC'],
+                    },
+                    submit_result: {
+                        engine_result: 'tesSUCCESS',
+                    },
+                    depth_reprice: {
+                        decision: 'applied',
+                    },
+                },
+            },
+            {
+                id: 'trade-reprice-2',
+                side: 'BUY',
+                paper: false,
+                status: 'FILLED',
+                trace: {
+                    tx_type: 'OfferCreate',
+                    offer_create: {
+                        flagsDecoded: ['IOC'],
+                    },
+                    submit_result: {
+                        engine_result: 'tesSUCCESS',
+                    },
+                    depth_reprice: {
+                        decision: 'not_needed',
+                    },
+                },
+            },
+        ]);
+
+        const req = createMockReq('GET');
+        const res = createMockRes();
+        handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body.buckets).toEqual({
+            'tesSUCCESS:DEPTH_REPRICE_APPLIED': 1,
+            'tesSUCCESS:UNKNOWN': 1,
+        });
+        expect(res.body.repriceAppliedByBucket).toEqual({
+            'tesSUCCESS:DEPTH_REPRICE_APPLIED': 1,
+        });
     });
 
     it('excludes non-execution trades and reduces NONE:NONE noise', () => {

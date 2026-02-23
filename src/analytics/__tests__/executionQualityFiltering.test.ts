@@ -187,4 +187,45 @@ describe('execution quality analytics filtering', () => {
         expect(includeWins.totalEventsAnalyzed).toBe(2);
         expect(includeWins.excludedCounts.excludedByStrategy).toBe(1);
     });
+
+    it('computes repriceAppliedRate in summary and bySide breakdowns', async () => {
+        const { feedbackEngine } = await import('../feedbackEngine');
+
+        feedbackEngine.recordExecutionQualityEvent({
+            txHash: 'EQ_REPRICE_TRUE',
+            pairKey: 'XRP/RLUSD',
+            side: 'buy',
+            strategy: 'scalper',
+            source: 'bot',
+            status: 'FILLED',
+            fillPrice: 1.34,
+            amountBase: 1,
+            filledBase: 1,
+            filledQuote: 1.34,
+            submitTs: 1_000,
+            submitResultEngine: 'tesSUCCESS',
+            repriceApplied: true,
+        });
+
+        feedbackEngine.recordExecutionQualityEvent({
+            txHash: 'EQ_REPRICE_FALSE',
+            pairKey: 'XRP/RLUSD',
+            side: 'buy',
+            strategy: 'scalper',
+            source: 'bot',
+            status: 'FILLED',
+            fillPrice: 1.341,
+            amountBase: 1,
+            filledBase: 1,
+            filledQuote: 1.341,
+            submitTs: 2_000,
+            submitResultEngine: 'tesSUCCESS',
+            repriceApplied: false,
+        });
+
+        const analytics = feedbackEngine.getExecutionQualityAnalytics({ pairKey: 'XRP/RLUSD' });
+        expect(analytics.summary.repriceAppliedRate).toBeCloseTo(0.5, 8);
+        const buyBreakdown = analytics.breakdowns.bySide.find((row) => row.key === 'buy');
+        expect(buyBreakdown?.repriceAppliedRate).toBeCloseTo(0.5, 8);
+    });
 });

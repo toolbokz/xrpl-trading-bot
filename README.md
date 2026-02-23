@@ -144,6 +144,13 @@ Configuration is loaded in `src/config/index.ts` from `.env` in project root/CWD
 | `FLOW_ENABLE_REGIME_FILTER` | `true` | Strategy gating by regime. |
 | `FLOW_ENABLE_ADVERSE_SELECTION` | `true` | Adverse-selection protection. |
 
+### Execution Repricing (Feature-Flagged)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `FEATURE_EXECUTION_DEPTH_REPRICE` | `false` | Enables depth-aware repricing before `OfferCreate` submit. |
+| `EXECUTION_REPRICE_MAX_BPS` | `3` | Max allowed reprice distance from intended price (bps). |
+
 ### Volatility-Adaptive Stops (Optional)
 
 When `VOL_STOP_ENABLED=true`, scalper stop-loss bps are derived from EWMA mid-price volatility:
@@ -673,6 +680,61 @@ export EXECUTION_LAST_LEDGER_SLACK=8
 AFTER_EXPIRED=$(curl "http://127.0.0.1:3000/api/debug/execution-quality/buckets?limit=500" \
   | jq '[.buckets | to_entries[] | select(.key | endswith(":EXPIRED_LAST_LEDGER")) | .value] | add // 0')
 echo "after EXPIRED_LAST_LEDGER=${AFTER_EXPIRED}"
+```
+
+## Appendix: Verify Depth-Aware Repricing
+
+```bash
+BASE_URL="http://127.0.0.1:3000"
+PAIR="XRP/RLUSD"
+LIMIT=1000
+
+# 1) Baseline run (repricing OFF, default-safe behavior)
+export FEATURE_EXECUTION_DEPTH_REPRICE=false
+export EXECUTION_REPRICE_MAX_BPS=3
+# Restart bot/runtime after changing env vars before collecting samples.
+
+BASELINE=$(curl "${BASE_URL}/api/debug/execution-quality/buckets?limit=${LIMIT}" \
+  | jq '{
+      tecKilled: ([.buckets | to_entries[] | select(.key | startswith("tecKILLED:")) | .value] | add // 0),
+      tesSuccess: ([.buckets | to_entries[] | select(.key | startswith("tesSUCCESS:")) | .value] | add // 0),
+      repriceAppliedTotal: (.repriceAppliedByBucket | to_entries | map(.value) | add // 0)
+    }')
+echo "baseline=${BASELINE}"
+
+# 2) Enable repricing, run bot for a comparable sample window, then re-check buckets
+export FEATURE_EXECUTION_DEPTH_REPRICE=true
+# Keep EXECUTION_REPRICE_MAX_BPS=3 (or your chosen strict cap)
+# Restart bot/runtime after env change.
+
+WITH_REPRICE=$(curl "${BASE_URL}/api/debug/execution-quality/buckets?limit=${LIMIT}" \
+  | jq '{
+      tecKilled: ([.buckets | to_entries[] | select(.key | startswith("tecKILLED:")) | .value] | add // 0),
+      tesSuccess: ([.buckets | to_entries[] | select(.key | startswith("tesSUCCESS:")) | .value] | add // 0),
+      repriceAppliedTotal: (.repriceAppliedByBucket | to_entries | map(.value) | add // 0)
+    }')
+echo "with_reprice=${WITH_REPRICE}"
+
+# Optional: direct delta view (expect tecKilled to drop, tesSuccess to rise when repricing helps)
+jq -n --argjson a "${BASELINE}" --argjson b "${WITH_REPRICE}" '{
+  tecKilledDelta: ($b.tecKilled - $a.tecKilled),
+  tesSuccessDelta: ($b.tesSuccess - $a.tesSuccess),
+  repriceAppliedDelta: ($b.repriceAppliedTotal - $a.repriceAppliedTotal)
+}'
+
+# 3) Find trades where repricing was actually applied
+curl "${BASE_URL}/api/bot/trades?pair=${PAIR}&limit=${LIMIT}" \
+  | jq '.trades[]
+    | select(.trace.depth_reprice.decision == "applied")
+    | {id, side, status, intended:.trace.depth_reprice.intended_price, repriced:.trace.depth_reprice.repriced_price, repriceBps:.trace.depth_reprice.required_reprice_bps}'
+
+# 4) Inspect tx-intent explainability (replace TRADE_ID from output above)
+curl "${BASE_URL}/api/debug/tx-intent?tradeId=TRADE_ID" \
+  | jq '{tradeId, hash, txType, depth_check, depth_reprice, explain}'
+
+# 5) Analytics view: repriceAppliedRate summary + by-side rates
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}" \
+  | jq '{events:.summary.events, repriceAppliedRate:.summary.repriceAppliedRate, bySide:.breakdowns.bySide}'
 ```
 
 ## Appendix: Build / Verification

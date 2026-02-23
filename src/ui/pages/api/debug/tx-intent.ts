@@ -4,6 +4,7 @@ import { getApiXrplClient } from '../../../lib/apiXrplClient';
 import {
     tradeHistory,
     TradeDepthCheckSnapshot,
+    TradeDepthRepriceSnapshot,
     TradeOfferCreateIntent,
     TradeTrace,
     TradeTracePatch,
@@ -23,6 +24,7 @@ interface TxIntentResponse {
     txType: string | null;
     offerCreateIntent: TradeOfferCreateIntent | null;
     depth_check: TradeDepthCheckSnapshot | null;
+    depth_reprice: TradeDepthRepriceSnapshot | null;
     explain: OfferOutcomeExplanation | null;
     backfilled: boolean;
     backfillError: string | null;
@@ -177,6 +179,41 @@ function sanitizeDepthCheckSnapshot(snapshot: TradeDepthCheckSnapshot | null | u
             : null,
         error: typeof snapshot.error === 'string' && snapshot.error.length > 0
             ? snapshot.error
+            : null,
+    };
+}
+
+function sanitizeDepthRepriceSnapshot(snapshot: TradeDepthRepriceSnapshot | null | undefined): TradeDepthRepriceSnapshot | null {
+    if (!snapshot) return null;
+    const decision = snapshot.decision === 'applied'
+        || snapshot.decision === 'skipped_over_budget'
+        || snapshot.decision === 'skipped_no_candidate'
+        || snapshot.decision === 'not_needed'
+        ? snapshot.decision
+        : null;
+    return {
+        enabled: snapshot.enabled === true,
+        intended_price: typeof snapshot.intended_price === 'number' && Number.isFinite(snapshot.intended_price)
+            ? snapshot.intended_price
+            : null,
+        repriced_price: typeof snapshot.repriced_price === 'number' && Number.isFinite(snapshot.repriced_price)
+            ? snapshot.repriced_price
+            : null,
+        required_reprice_bps: typeof snapshot.required_reprice_bps === 'number' && Number.isFinite(snapshot.required_reprice_bps)
+            ? snapshot.required_reprice_bps
+            : null,
+        min_required_base: typeof snapshot.min_required_base === 'number' && Number.isFinite(snapshot.min_required_base)
+            ? snapshot.min_required_base
+            : null,
+        fillable_base_at_intended: typeof snapshot.fillable_base_at_intended === 'number' && Number.isFinite(snapshot.fillable_base_at_intended)
+            ? snapshot.fillable_base_at_intended
+            : null,
+        fillable_base_at_repriced: typeof snapshot.fillable_base_at_repriced === 'number' && Number.isFinite(snapshot.fillable_base_at_repriced)
+            ? snapshot.fillable_base_at_repriced
+            : null,
+        decision,
+        max_reprice_bps: typeof snapshot.max_reprice_bps === 'number' && Number.isFinite(snapshot.max_reprice_bps)
+            ? snapshot.max_reprice_bps
             : null,
     };
 }
@@ -340,6 +377,7 @@ async function handler(req: LocalRequest, res: NextApiResponse<TxIntentResponse 
         : null;
     const traceOfferCreateIntent = sanitizeOfferCreateIntent(trade.trace?.offer_create ?? null);
     const traceDepthCheck = sanitizeDepthCheckSnapshot(trade.trace?.depth_check ?? null);
+    const traceDepthReprice = sanitizeDepthRepriceSnapshot(trade.trace?.depth_reprice ?? null);
     let txType = traceTxType ?? (traceOfferCreateIntent ? 'OfferCreate' : null);
     let offerCreateIntent = traceOfferCreateIntent;
     let explainTrace: TradeTrace | null = trade.trace ?? null;
@@ -393,6 +431,7 @@ async function handler(req: LocalRequest, res: NextApiResponse<TxIntentResponse 
         txType,
         offerCreateIntent,
         depth_check: traceDepthCheck,
+        depth_reprice: traceDepthReprice,
         explain,
         backfilled,
         backfillError,

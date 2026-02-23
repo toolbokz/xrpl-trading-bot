@@ -62,6 +62,18 @@ export interface TradeDepthCheckSnapshot {
     error?: string | null;
 }
 
+export interface TradeDepthRepriceSnapshot {
+    enabled: boolean;
+    intended_price: number | null;
+    repriced_price: number | null;
+    required_reprice_bps: number | null;
+    min_required_base: number | null;
+    fillable_base_at_intended: number | null;
+    fillable_base_at_repriced: number | null;
+    decision: 'applied' | 'skipped_over_budget' | 'skipped_no_candidate' | 'not_needed' | null;
+    max_reprice_bps: number | null;
+}
+
 export interface TradeFillSnapshot {
     fill_ts_ms: number | null;
     filled_base: number | null;
@@ -111,6 +123,7 @@ export interface TradeTrace {
     sequence: number | null;
     offer_create: TradeOfferCreateIntent | null;
     depth_check: TradeDepthCheckSnapshot | null;
+    depth_reprice: TradeDepthRepriceSnapshot | null;
     submit_result: TradeSubmitResult | null;
     ack_status: TradeAckStatus;
     outcome: TradeOutcome;

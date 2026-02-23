@@ -51,6 +51,7 @@ function buildTrace(overrides: Partial<TradeTrace>): TradeTrace {
             depth_check_levels: 5,
             order_type: 'IOC',
         },
+        depth_reprice: null,
         submit_result: {
             engine_result: 'tecKILLED',
             engine_result_code: 150,
@@ -204,6 +205,59 @@ describe('offerOutcomeExplainer', () => {
 
         const explain = explainOfferOutcome({ trace, side: 'SELL' });
         expect(explain?.outcomeCategory).toBe('BALANCE_OR_TRUSTLINE');
+    });
+
+    it('classifies successful repriced fills as DEPTH_REPRICE_APPLIED', () => {
+        const trace = buildTrace({
+            submit_result: {
+                engine_result: 'tesSUCCESS',
+                engine_result_code: 0,
+                engine_result_message: 'The transaction was applied.',
+            },
+            outcome: 'filled',
+            outcome_reason: null,
+            depth_reprice: {
+                enabled: true,
+                intended_price: 1.4,
+                repriced_price: 1.4002,
+                required_reprice_bps: 1.43,
+                min_required_base: 0.5,
+                fillable_base_at_intended: 0.2,
+                fillable_base_at_repriced: 0.6,
+                decision: 'applied',
+                max_reprice_bps: 3,
+            },
+        });
+
+        const explain = explainOfferOutcome({ trace, side: 'BUY' });
+        expect(explain?.outcomeCategory).toBe('DEPTH_REPRICE_APPLIED');
+        expect(explain?.rootCause).toBeNull();
+    });
+
+    it('tags depth reprice over-budget rejects with explicit root cause', () => {
+        const trace = buildTrace({
+            submit_result: {
+                engine_result: null,
+                engine_result_code: null,
+                engine_result_message: 'depth-reprice-over-budget',
+            },
+            outcome_reason: 'depth-reprice-over-budget',
+            depth_reprice: {
+                enabled: true,
+                intended_price: 1.4,
+                repriced_price: null,
+                required_reprice_bps: 4.5,
+                min_required_base: 0.5,
+                fillable_base_at_intended: 0.2,
+                fillable_base_at_repriced: 0.7,
+                decision: 'skipped_over_budget',
+                max_reprice_bps: 3,
+            },
+        });
+
+        const explain = explainOfferOutcome({ trace, side: 'BUY' });
+        expect(explain?.outcomeCategory).toBe('INSUFFICIENT_LIQUIDITY_AT_PRICE');
+        expect(explain?.rootCause).toBe('DEPTH_REPRICE_OVER_BUDGET');
     });
 
     it('computes implied quote-per-base price for both sides', () => {

@@ -46,6 +46,7 @@ describe('execution quality persistence', () => {
             filledBase: 0.25,
             filledQuote: 0.34275,
             status: 'FILLED',
+            repriceApplied: true,
         });
 
         expect(id).toBeTruthy();
@@ -60,6 +61,7 @@ describe('execution quality persistence', () => {
         expect(rows[0]?.baselineTs).toBe(1770000000000);
         expect(rows[0]?.expectedRule).toBe('SELL->best_bid');
         expect(rows[0]?.priceConvention).toBe('quote_per_base');
+        expect(rows[0]?.repriceApplied).toBe(1);
     });
 
     it('supports pair-key alias filtering for execution quality events', async () => {

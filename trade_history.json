@@ -57,6 +57,7 @@
         "lastLedgerSequence": 102427469
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -113,6 +114,7 @@
       "sequence": 102014480,
       "offer_create": null,
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -183,6 +185,7 @@
         "lastLedgerSequence": 102427474
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -253,6 +256,7 @@
         "lastLedgerSequence": 102427477
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -323,6 +327,7 @@
         "lastLedgerSequence": 102427488
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -379,6 +384,7 @@
       "sequence": 102014484,
       "offer_create": null,
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -483,6 +489,7 @@
         "lastLedgerSequence": 102427632
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -539,6 +546,7 @@
       "sequence": 102014486,
       "offer_create": null,
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -629,6 +637,7 @@
       "sequence": 102014487,
       "offer_create": null,
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -733,6 +742,7 @@
         "lastLedgerSequence": 102427733
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -803,6 +813,7 @@
         "lastLedgerSequence": 102427737
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -873,6 +884,7 @@
         "lastLedgerSequence": 102427740
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -943,6 +955,7 @@
         "lastLedgerSequence": 102427748
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -999,6 +1012,7 @@
       "sequence": 102014492,
       "offer_create": null,
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -1089,6 +1103,7 @@
       "sequence": 102014493,
       "offer_create": null,
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -1179,6 +1194,7 @@
       "sequence": 102014494,
       "offer_create": null,
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -1283,6 +1299,7 @@
         "lastLedgerSequence": 102428290
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -1339,6 +1356,7 @@
       "sequence": 102014496,
       "offer_create": null,
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -1443,6 +1461,7 @@
         "lastLedgerSequence": 102429419
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -1513,6 +1532,7 @@
         "lastLedgerSequence": 102429471
       },
       "depth_check": null,
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -1631,6 +1651,7 @@
         "request_taker_pays_currency": null,
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -2001,6 +2022,7 @@
         "request_taker_pays_currency": null,
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -2104,6 +2126,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -2173,6 +2196,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -2257,6 +2281,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -2375,6 +2400,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -2493,6 +2519,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -2596,6 +2623,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -2680,6 +2708,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tecKILLED",
         "engine_result_code": 150,
@@ -2749,6 +2778,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -2818,6 +2848,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -2887,6 +2918,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -2956,6 +2988,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3025,6 +3058,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3094,6 +3128,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3163,6 +3198,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3232,6 +3268,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3301,6 +3338,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3370,6 +3408,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3439,6 +3478,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3508,6 +3548,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3577,6 +3618,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3646,6 +3688,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3715,6 +3758,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3784,6 +3828,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3853,6 +3898,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3922,6 +3968,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -3991,6 +4038,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4060,6 +4108,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4129,6 +4178,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4198,6 +4248,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4267,6 +4318,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4336,6 +4388,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4405,6 +4458,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4474,6 +4528,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4543,6 +4598,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4612,6 +4668,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4681,6 +4738,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4750,6 +4808,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4819,6 +4878,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4888,6 +4948,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -4957,6 +5018,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5026,6 +5088,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5095,6 +5158,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5164,6 +5228,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5233,6 +5298,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5302,6 +5368,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5371,6 +5438,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5440,6 +5508,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5509,6 +5578,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5578,6 +5648,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5647,6 +5718,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5716,6 +5788,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5785,6 +5858,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5854,6 +5928,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5923,6 +5998,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -5992,6 +6068,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6061,6 +6138,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6130,6 +6208,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6199,6 +6278,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6268,6 +6348,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6337,6 +6418,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6406,6 +6488,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6475,6 +6558,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6544,6 +6628,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6613,6 +6698,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6682,6 +6768,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6751,6 +6838,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6820,6 +6908,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6889,6 +6978,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -6958,6 +7048,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7027,6 +7118,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7096,6 +7188,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7165,6 +7258,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7234,6 +7328,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7303,6 +7398,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7372,6 +7468,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7441,6 +7538,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7510,6 +7608,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7579,6 +7678,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7648,6 +7748,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7717,6 +7818,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7786,6 +7888,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7855,6 +7958,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -7939,6 +8043,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -8056,6 +8161,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -8139,6 +8245,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -8222,6 +8329,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -8305,6 +8413,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -8388,6 +8497,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -8471,6 +8581,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -8555,6 +8666,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -8579,6 +8691,18 @@
           "mark_ts_ms": 1771816031001,
           "mark_price": 1.3513800025379248,
           "markout_bps": 9.18,
+          "source": "market_snapshots",
+          "status": "recorded",
+          "missing_reason": null,
+          "attempts": 1,
+          "last_error": null
+        },
+        {
+          "horizon_s": 300,
+          "due_ts_ms": 1771816271000,
+          "mark_ts_ms": 1771816271001,
+          "mark_price": 1.3490894106419447,
+          "markout_bps": -7.78,
           "source": "market_snapshots",
           "status": "recorded",
           "missing_reason": null,
@@ -8646,6 +8770,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -8730,6 +8855,7 @@
         "request_taker_pays_currency": "XRP",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -8754,6 +8880,18 @@
           "mark_ts_ms": 1771816089047,
           "mark_price": 1.3517350000000001,
           "markout_bps": -1.89,
+          "source": "market_snapshots",
+          "status": "recorded",
+          "missing_reason": null,
+          "attempts": 1,
+          "last_error": null
+        },
+        {
+          "horizon_s": 300,
+          "due_ts_ms": 1771816329046,
+          "mark_ts_ms": 1771816329047,
+          "mark_price": 1.3477591853917859,
+          "markout_bps": 27.53,
           "source": "market_snapshots",
           "status": "recorded",
           "missing_reason": null,
@@ -8821,6 +8959,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": null,
         "engine_result_code": null,
@@ -8905,6 +9044,7 @@
         "request_taker_pays_currency": "RLUSD",
         "error": null
       },
+      "depth_reprice": null,
       "submit_result": {
         "engine_result": "tesSUCCESS",
         "engine_result_code": 0,
@@ -8922,8 +9062,2270 @@
         "partial": false,
         "transaction_result": "tesSUCCESS"
       },
-      "markouts": []
+      "markouts": [
+        {
+          "horizon_s": 60,
+          "due_ts_ms": 1771816161000,
+          "mark_ts_ms": 1771816161000,
+          "mark_price": 1.3507299531528638,
+          "markout_bps": -2.81,
+          "source": "market_snapshots",
+          "status": "recorded",
+          "missing_reason": null,
+          "attempts": 1,
+          "last_error": null
+        },
+        {
+          "horizon_s": 300,
+          "due_ts_ms": 1771816401000,
+          "mark_ts_ms": 1771816401000,
+          "mark_price": 1.3470731979621542,
+          "markout_bps": -29.88,
+          "source": "market_snapshots",
+          "status": "recorded",
+          "missing_reason": null,
+          "attempts": 1,
+          "last_error": null
+        }
+      ]
     },
     "slippageBps": -6
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.35300000017101,
+    "priceQuotePerBase": 1.35300000017101,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816193937-3yed0xl",
+    "timestamp": 1771816193937,
+    "trace": {
+      "trade_id": "1771816193937-3yed0xl",
+      "decision_ts_ms": 1771816193605,
+      "baseline_ts_ms": 1771816193605,
+      "baseline_best_bid": 1.35300000017101,
+      "baseline_best_ask": 1.3531139387539597,
+      "baseline_mid": 1.353056969462485,
+      "baseline_spread_bps": 0.8420472192795205,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.35300000017101,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": null,
+      "fee_drops": null,
+      "sequence": null,
+      "offer_create": null,
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.35300000017101,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 0,
+        "has_depth": false,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "insufficient-depth-at-price"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "insufficient-depth-at-price",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.344651498397441,
+    "priceQuotePerBase": 1.344651498397441,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816698587-edz9zd8",
+    "timestamp": 1771816698587,
+    "trace": {
+      "trade_id": "1771816698587-edz9zd8",
+      "decision_ts_ms": 1771816698036,
+      "baseline_ts_ms": 1771816698036,
+      "baseline_best_bid": 1.344651498397441,
+      "baseline_best_ask": 1.3451600000000001,
+      "baseline_mid": 1.3449057491987206,
+      "baseline_spread_bps": 3.780231366969128,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.344651498397441,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014509,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319354730869392"
+        },
+        "feeDrops": "12",
+        "sequence": 102014509,
+        "lastLedgerSequence": 102431979
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.344651498397441,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 72.235708,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3440000000000003,
+    "priceQuotePerBase": 1.3440000000000003,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816879175-yu9intu",
+    "timestamp": 1771816879175,
+    "trace": {
+      "trade_id": "1771816879175-yu9intu",
+      "decision_ts_ms": 1771816878794,
+      "baseline_ts_ms": 1771816878794,
+      "baseline_best_bid": 1.3440000000000003,
+      "baseline_best_ask": 1.345159990716545,
+      "baseline_mid": 1.3445799953582727,
+      "baseline_spread_bps": 8.623440516743319,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3440000000000003,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014509,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.3192"
+        },
+        "feeDrops": "12",
+        "sequence": 102014509,
+        "lastLedgerSequence": 102432026
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3440000000000003,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 2912.363731,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3440000003296295,
+    "priceQuotePerBase": 1.3440000003296295,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816882763-qpkkli8",
+    "timestamp": 1771816882763,
+    "trace": {
+      "trade_id": "1771816882763-qpkkli8",
+      "decision_ts_ms": 1771816882344,
+      "baseline_ts_ms": 1771816882344,
+      "baseline_best_bid": 1.3440000003296295,
+      "baseline_best_ask": 1.345159990716545,
+      "baseline_mid": 1.3445799955230873,
+      "baseline_spread_bps": 8.623438066259993,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3440000003296295,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014509,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319200000078287"
+        },
+        "feeDrops": "12",
+        "sequence": 102014509,
+        "lastLedgerSequence": 102432027
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3440000003296295,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 2912.363731,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3440000003296295,
+    "priceQuotePerBase": 1.3440000003296295,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816887461-w1ktpyh",
+    "timestamp": 1771816887461,
+    "trace": {
+      "trade_id": "1771816887461-w1ktpyh",
+      "decision_ts_ms": 1771816886397,
+      "baseline_ts_ms": 1771816886397,
+      "baseline_best_bid": 1.3440000003296295,
+      "baseline_best_ask": 1.345159990716545,
+      "baseline_mid": 1.3445799955230873,
+      "baseline_spread_bps": 8.623438066259993,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3440000003296295,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014509,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319200000078287"
+        },
+        "feeDrops": "12",
+        "sequence": 102014509,
+        "lastLedgerSequence": 102432028
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3440000003296295,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 2912.363731,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3440000003296295,
+    "priceQuotePerBase": 1.3440000003296295,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816890612-q3jc11z",
+    "timestamp": 1771816890612,
+    "trace": {
+      "trade_id": "1771816890612-q3jc11z",
+      "decision_ts_ms": 1771816890038,
+      "baseline_ts_ms": 1771816890038,
+      "baseline_best_bid": 1.3440000003296295,
+      "baseline_best_ask": 1.3441400000000001,
+      "baseline_mid": 1.3440700001648147,
+      "baseline_spread_bps": 1.041555718679558,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3440000003296295,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014509,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319200000078287"
+        },
+        "feeDrops": "12",
+        "sequence": 102014509,
+        "lastLedgerSequence": 102432029
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3440000003296295,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 2211.000224,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3440000010348263,
+    "priceQuotePerBase": 1.3440000010348263,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816895013-937naz2",
+    "timestamp": 1771816895013,
+    "trace": {
+      "trade_id": "1771816895013-937naz2",
+      "decision_ts_ms": 1771816894635,
+      "baseline_ts_ms": 1771816894635,
+      "baseline_best_bid": 1.3440000010348263,
+      "baseline_best_ask": 1.3441400000000001,
+      "baseline_mid": 1.344070000517413,
+      "baseline_spread_bps": 1.041550472226139,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3440000010348263,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014509,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319200000245771"
+        },
+        "feeDrops": "12",
+        "sequence": 102014509,
+        "lastLedgerSequence": 102432030
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3440000010348263,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 2211.000224,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3440000010348263,
+    "priceQuotePerBase": 1.3440000010348263,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816898246-um98doo",
+    "timestamp": 1771816898246,
+    "trace": {
+      "trade_id": "1771816898246-um98doo",
+      "decision_ts_ms": 1771816897879,
+      "baseline_ts_ms": 1771816897879,
+      "baseline_best_bid": 1.3440000010348263,
+      "baseline_best_ask": 1.3441400000000001,
+      "baseline_mid": 1.344070000517413,
+      "baseline_spread_bps": 1.041550472226139,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3440000010348263,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 1,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014509,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319200000245771"
+        },
+        "feeDrops": "12",
+        "sequence": 102014509,
+        "lastLedgerSequence": 102432031
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3440000010348263,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 2211.000224,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3440000010348263,
+    "priceQuotePerBase": 1.3440000010348263,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816902156-x005xbt",
+    "timestamp": 1771816902156,
+    "trace": {
+      "trade_id": "1771816902156-x005xbt",
+      "decision_ts_ms": 1771816901901,
+      "baseline_ts_ms": 1771816901901,
+      "baseline_best_bid": 1.3440000010348263,
+      "baseline_best_ask": 1.34413,
+      "baseline_mid": 1.3440650005174133,
+      "baseline_spread_bps": 0.9671606553959718,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3440000010348263,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014509,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319200000245771"
+        },
+        "feeDrops": "12",
+        "sequence": 102014509,
+        "lastLedgerSequence": 102432032
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3440000010348263,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 2211.000224,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3440000010348263,
+    "priceQuotePerBase": 1.3440000010348263,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816907250-aj30a47",
+    "timestamp": 1771816907250,
+    "trace": {
+      "trade_id": "1771816907250-aj30a47",
+      "decision_ts_ms": 1771816907036,
+      "baseline_ts_ms": 1771816907036,
+      "baseline_best_bid": 1.3440000010348263,
+      "baseline_best_ask": 1.34413,
+      "baseline_mid": 1.3440650005174133,
+      "baseline_spread_bps": 0.9671606553959718,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3440000010348263,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014509,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319200000245771"
+        },
+        "feeDrops": "12",
+        "sequence": 102014509,
+        "lastLedgerSequence": 102432033
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3440000010348263,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 2211.000224,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3440000010348263,
+    "priceQuotePerBase": 1.3440000010348263,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816910335-qvkqopt",
+    "timestamp": 1771816910335,
+    "trace": {
+      "trade_id": "1771816910335-qvkqopt",
+      "decision_ts_ms": 1771816910108,
+      "baseline_ts_ms": 1771816910108,
+      "baseline_best_bid": 1.3440000010348263,
+      "baseline_best_ask": 1.34413,
+      "baseline_mid": 1.3440650005174133,
+      "baseline_spread_bps": 0.9671606553959718,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3440000010348263,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014509,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319200000245771"
+        },
+        "feeDrops": "12",
+        "sequence": 102014509,
+        "lastLedgerSequence": 102432034
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3440000010348263,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 2211.000224,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000272808,
+    "priceQuotePerBase": 1.3450000000272808,
+    "amount": 0.47500000000000003,
+    "amountBase": 0.47500000000000003,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "hash": "D1D6E3A9A4854B1DEA3AC4441C3F5B2AC31D0C16744209E0E37F62E7E26D48CB",
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816942885-75uon03",
+    "timestamp": 1771816942885,
+    "trace": {
+      "trade_id": "1771816942885-75uon03",
+      "decision_ts_ms": 1771816942474,
+      "baseline_ts_ms": 1771816942474,
+      "baseline_best_bid": 1.3450000000272808,
+      "baseline_best_ask": 1.3456999991454515,
+      "baseline_mid": 1.3453499995863663,
+      "baseline_spread_bps": 5.201747184477679,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000272808,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": 1771816942896,
+      "submit_response_ts_ms": 1771816943102,
+      "ack_ts_ms": 1771816943102,
+      "validated_ts_ms": 1771816948474,
+      "validated_ledger_index": 102432039,
+      "validated_ledger_time": 1771816942000,
+      "tx_hash": "D1D6E3A9A4854B1DEA3AC4441C3F5B2AC31D0C16744209E0E37F62E7E26D48CB",
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014509,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "475000",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.638875000012958"
+        },
+        "feeDrops": "12",
+        "sequence": 102014509,
+        "lastLedgerSequence": 102432043
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000272808,
+        "required_base": 0.47500000000000003,
+        "min_required_base": 0.23750000000000002,
+        "fillable_base": 47455.04989,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": "tecKILLED",
+        "engine_result_code": 150,
+        "engine_result_message": "No funds transferred and no offer created."
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "tecKILLED",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000272821,
+    "priceQuotePerBase": 1.3450000000272821,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816955463-aaqnfp8",
+    "timestamp": 1771816955463,
+    "trace": {
+      "trade_id": "1771816955463-aaqnfp8",
+      "decision_ts_ms": 1771816954984,
+      "baseline_ts_ms": 1771816954984,
+      "baseline_best_bid": 1.3450000000272821,
+      "baseline_best_ask": 1.34514,
+      "baseline_mid": 1.345070000013641,
+      "baseline_spread_bps": 1.040783656109048,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000272821,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.31943750000648"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432045
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000272821,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 47452.817975,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000272821,
+    "priceQuotePerBase": 1.3450000000272821,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816958594-s4gaerv",
+    "timestamp": 1771816958594,
+    "trace": {
+      "trade_id": "1771816958594-s4gaerv",
+      "decision_ts_ms": 1771816958173,
+      "baseline_ts_ms": 1771816958173,
+      "baseline_best_bid": 1.3450000000272821,
+      "baseline_best_ask": 1.3451399998623326,
+      "baseline_mid": 1.3450699999448075,
+      "baseline_spread_bps": 1.0407826327724077,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000272821,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.31943750000648"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432047
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000272821,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 47452.817975,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000272821,
+    "priceQuotePerBase": 1.3450000000272821,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816962905-206scph",
+    "timestamp": 1771816962905,
+    "trace": {
+      "trade_id": "1771816962905-206scph",
+      "decision_ts_ms": 1771816962316,
+      "baseline_ts_ms": 1771816962315,
+      "baseline_best_bid": 1.3450000000272821,
+      "baseline_best_ask": 1.3451399998623326,
+      "baseline_mid": 1.3450699999448075,
+      "baseline_spread_bps": 1.0407826327724077,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000272821,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.31943750000648"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432048
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000272821,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 47452.817975,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000272821,
+    "priceQuotePerBase": 1.3450000000272821,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816967021-8t4xl2b",
+    "timestamp": 1771816967021,
+    "trace": {
+      "trade_id": "1771816967021-8t4xl2b",
+      "decision_ts_ms": 1771816966173,
+      "baseline_ts_ms": 1771816966173,
+      "baseline_best_bid": 1.3450000000272821,
+      "baseline_best_ask": 1.3451399998623326,
+      "baseline_mid": 1.3450699999448075,
+      "baseline_spread_bps": 1.0407826327724077,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000272821,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.31943750000648"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432049
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000272821,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 47452.817975,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000323665,
+    "priceQuotePerBase": 1.3450000000323665,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771816998199-63w5m0b",
+    "timestamp": 1771816998199,
+    "trace": {
+      "trade_id": "1771816998199-63w5m0b",
+      "decision_ts_ms": 1771816997872,
+      "baseline_ts_ms": 1771816997871,
+      "baseline_best_bid": 1.3450000000323665,
+      "baseline_best_ask": 1.34514,
+      "baseline_mid": 1.3450700000161833,
+      "baseline_spread_bps": 1.04078361831092,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000323665,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319437500007687"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432057
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000323665,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 39998.640375,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000323665,
+    "priceQuotePerBase": 1.3450000000323665,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771817002195-oc07jlt",
+    "timestamp": 1771817002195,
+    "trace": {
+      "trade_id": "1771817002195-oc07jlt",
+      "decision_ts_ms": 1771817001983,
+      "baseline_ts_ms": 1771817001982,
+      "baseline_best_bid": 1.3450000000323665,
+      "baseline_best_ask": 1.34514,
+      "baseline_mid": 1.3450700000161833,
+      "baseline_spread_bps": 1.04078361831092,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000323665,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319437500007687"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432058
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000323665,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 32544.682385,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000397802,
+    "priceQuotePerBase": 1.3450000000397802,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771817006623-nxga5rk",
+    "timestamp": 1771817006623,
+    "trace": {
+      "trade_id": "1771817006623-nxga5rk",
+      "decision_ts_ms": 1771817006232,
+      "baseline_ts_ms": 1771817006232,
+      "baseline_best_bid": 1.3450000000397802,
+      "baseline_best_ask": 1.34514,
+      "baseline_mid": 1.34507000001989,
+      "baseline_spread_bps": 1.0407835631967666,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000397802,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319437500009448"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432059
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000397802,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 32544.682385,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000397802,
+    "priceQuotePerBase": 1.3450000000397802,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771817010860-ezhpde2",
+    "timestamp": 1771817010860,
+    "trace": {
+      "trade_id": "1771817010860-ezhpde2",
+      "decision_ts_ms": 1771817010461,
+      "baseline_ts_ms": 1771817010461,
+      "baseline_best_bid": 1.3450000000397802,
+      "baseline_best_ask": 1.34514,
+      "baseline_mid": 1.34507000001989,
+      "baseline_spread_bps": 1.0407835631967666,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000397802,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319437500009448"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432060
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000397802,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 32544.682385,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000397802,
+    "priceQuotePerBase": 1.3450000000397802,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771817015196-wohq1zu",
+    "timestamp": 1771817015196,
+    "trace": {
+      "trade_id": "1771817015196-wohq1zu",
+      "decision_ts_ms": 1771817014578,
+      "baseline_ts_ms": 1771817014578,
+      "baseline_best_bid": 1.3450000000397802,
+      "baseline_best_ask": 1.3451400000000002,
+      "baseline_mid": 1.34507000001989,
+      "baseline_spread_bps": 1.040783563198417,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000397802,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319437500009448"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432061
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000397802,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 32544.682385,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000397802,
+    "priceQuotePerBase": 1.3450000000397802,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771817019085-xovv77o",
+    "timestamp": 1771817019085,
+    "trace": {
+      "trade_id": "1771817019085-xovv77o",
+      "decision_ts_ms": 1771817018690,
+      "baseline_ts_ms": 1771817018690,
+      "baseline_best_bid": 1.3450000000397802,
+      "baseline_best_ask": 1.34541407051793,
+      "baseline_mid": 1.3452070352788552,
+      "baseline_spread_bps": 3.077643435009542,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000397802,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319437500009448"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432062
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000397802,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 32544.682385,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3450000000516031,
+    "priceQuotePerBase": 1.3450000000516031,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771817022531-fp4lcrb",
+    "timestamp": 1771817022531,
+    "trace": {
+      "trade_id": "1771817022531-fp4lcrb",
+      "decision_ts_ms": 1771817022161,
+      "baseline_ts_ms": 1771817022161,
+      "baseline_best_bid": 1.3450000000516031,
+      "baseline_best_ask": 1.34541407051793,
+      "baseline_mid": 1.3452070352847665,
+      "baseline_spread_bps": 3.0776433471333453,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3450000000516031,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.319437500012256"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432063
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3450000000516031,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 25088.388015,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3442938757322538,
+    "priceQuotePerBase": 1.3442938757322538,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771817312116-xbsikl4",
+    "timestamp": 1771817312116,
+    "trace": {
+      "trade_id": "1771817312116-xbsikl4",
+      "decision_ts_ms": 1771817311724,
+      "baseline_ts_ms": 1771817311724,
+      "baseline_best_bid": 1.3442938757322538,
+      "baseline_best_ask": 1.3449999996150797,
+      "baseline_mid": 1.3446469376736667,
+      "baseline_spread_bps": 5.249991695375122,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3442938757322538,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.31926979548641"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432137
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3442938757322538,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 3.034126,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3435032676516618,
+    "priceQuotePerBase": 1.3435032676516618,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771817322382-9m6p1za",
+    "timestamp": 1771817322382,
+    "trace": {
+      "trade_id": "1771817322382-9m6p1za",
+      "decision_ts_ms": 1771817322169,
+      "baseline_ts_ms": 1771817322169,
+      "baseline_best_bid": 1.3435032676516618,
+      "baseline_best_ask": 1.3438799967909363,
+      "baseline_mid": 1.343691632221299,
+      "baseline_spread_bps": 2.803294491874576,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3435032676516618,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": "wss://s1.ripple.com",
+      "fee_drops": "12",
+      "sequence": 102014510,
+      "offer_create": {
+        "flags": 131072,
+        "flagsDecoded": [
+          "IOC"
+        ],
+        "takerGets": "237500",
+        "takerPays": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "[redacted]",
+          "value": "0.31908202606727"
+        },
+        "feeDrops": "12",
+        "sequence": 102014510,
+        "lastLedgerSequence": 102432140
+      },
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3435032676516618,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 40.896036,
+        "has_depth": true,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "execution-min-order-sanity:base-below-min"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "execution-min-order-sanity",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "SELL",
+    "price": 1.3435032676516618,
+    "priceQuotePerBase": 1.3435032676516618,
+    "amount": 0.23750000000000002,
+    "amountBase": 0.23750000000000002,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771817343144-e88bg7a",
+    "timestamp": 1771817343144,
+    "trace": {
+      "trade_id": "1771817343144-e88bg7a",
+      "decision_ts_ms": 1771817342535,
+      "baseline_ts_ms": 1771817342535,
+      "baseline_best_bid": 1.3435032676516618,
+      "baseline_best_ask": 1.3437999996044778,
+      "baseline_mid": 1.34365163362807,
+      "baseline_spread_bps": 2.208155625117761,
+      "baseline_source": "orderbook_snapshot",
+      "expected_price": 1.3435032676516618,
+      "expected_rule": "SELL->best_bid",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": 0,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": null,
+      "fee_drops": null,
+      "sequence": null,
+      "offer_create": null,
+      "depth_check": {
+        "side": "SELL",
+        "intended_price": 1.3435032676516618,
+        "required_base": 0.23750000000000002,
+        "min_required_base": 0.11875000000000001,
+        "fillable_base": 0,
+        "has_depth": false,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 20,
+        "order_type": "IOC",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "RLUSD",
+        "request_taker_pays_currency": "XRP",
+        "error": null
+      },
+      "depth_reprice": null,
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "insufficient-depth-at-price"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "insufficient-depth-at-price",
+      "fill_snapshot": null,
+      "markouts": []
+    }
+  },
+  {
+    "pair": "XRP/RLUSD",
+    "side": "BUY",
+    "price": 1,
+    "priceQuotePerBase": 1,
+    "amount": 0.5,
+    "amountBase": 0.5,
+    "filled": 0,
+    "filledBase": 0,
+    "filledQuote": 0,
+    "fee": 0,
+    "pnl": 0,
+    "paper": false,
+    "status": "REJECTED",
+    "source": "bot",
+    "id": "1771817363033-ydxmqoj",
+    "timestamp": 1771817363033,
+    "trace": {
+      "trade_id": "1771817363033-ydxmqoj",
+      "decision_ts_ms": 1771817363011,
+      "baseline_ts_ms": 1771817363011,
+      "baseline_best_bid": null,
+      "baseline_best_ask": null,
+      "baseline_mid": null,
+      "baseline_spread_bps": null,
+      "baseline_source": "intent_fallback",
+      "expected_price": 1,
+      "expected_rule": "BUY->intent_price",
+      "price_convention": "quote_per_base",
+      "baseline_book_age_ms": null,
+      "submit_ts_ms": null,
+      "submit_response_ts_ms": null,
+      "ack_ts_ms": null,
+      "validated_ts_ms": null,
+      "validated_ledger_index": null,
+      "validated_ledger_time": null,
+      "tx_hash": null,
+      "tx_type": "OfferCreate",
+      "node_endpoint": null,
+      "fee_drops": null,
+      "sequence": null,
+      "offer_create": null,
+      "depth_check": {
+        "side": "BUY",
+        "intended_price": 1,
+        "required_base": 0.5,
+        "min_required_base": 0.5,
+        "fillable_base": 0,
+        "has_depth": false,
+        "ioc_min_fill_ratio": 0.5,
+        "depth_check_levels": 3,
+        "order_type": "FOK",
+        "ledger_index_mode": "validated",
+        "request_taker_gets_currency": "XRP",
+        "request_taker_pays_currency": "RLUSD",
+        "error": null
+      },
+      "depth_reprice": {
+        "enabled": false,
+        "intended_price": 1,
+        "repriced_price": null,
+        "required_reprice_bps": null,
+        "min_required_base": 0.5,
+        "fillable_base_at_intended": 0,
+        "fillable_base_at_repriced": null,
+        "decision": "not_needed",
+        "max_reprice_bps": 3
+      },
+      "submit_result": {
+        "engine_result": null,
+        "engine_result_code": null,
+        "engine_result_message": "insufficient-depth-at-price"
+      },
+      "ack_status": "rejected",
+      "outcome": "rejected",
+      "outcome_reason": "insufficient-depth-at-price",
+      "fill_snapshot": null,
+      "markouts": []
+    }
   }
 ]

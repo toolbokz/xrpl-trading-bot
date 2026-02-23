@@ -19,6 +19,7 @@ interface BucketsResponse {
     limit: number;
     totalTradesAnalyzed: number;
     buckets: Record<string, number>;
+    repriceAppliedByBucket: Record<string, number>;
     flagsDecoded: Record<FlagKey, number>;
     sideByBucket: Record<string, SideCounts>;
     examplesByBucket: Record<string, string[]>;
@@ -132,6 +133,7 @@ function handler(req: LocalRequest, res: NextApiResponse<BucketsResponse | Error
             .filter(isExecutionRelevantTrade);
 
         const buckets: Record<string, number> = {};
+        const repriceAppliedByBucket: Record<string, number> = {};
         const flagsDecoded: Record<FlagKey, number> = {
             IOC: 0,
             FOK: 0,
@@ -143,6 +145,9 @@ function handler(req: LocalRequest, res: NextApiResponse<BucketsResponse | Error
         for (const trade of trades) {
             const bucket = buildBucket(trade);
             buckets[bucket] = (buckets[bucket] ?? 0) + 1;
+            if (trade.trace?.depth_reprice?.decision === 'applied') {
+                repriceAppliedByBucket[bucket] = (repriceAppliedByBucket[bucket] ?? 0) + 1;
+            }
 
             const side = trade.side === 'SELL' ? 'SELL' : 'BUY';
             const bucketSideCounts = sideByBucket[bucket] ?? { BUY: 0, SELL: 0 };
@@ -168,6 +173,7 @@ function handler(req: LocalRequest, res: NextApiResponse<BucketsResponse | Error
             limit,
             totalTradesAnalyzed: trades.length,
             buckets,
+            repriceAppliedByBucket,
             flagsDecoded,
             sideByBucket,
             examplesByBucket,

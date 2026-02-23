@@ -171,6 +171,7 @@ export interface ExecutionQualityEventRecord {
     decisionToSubmitMs: number | null;
     submitToValidatedMs: number | null;
     decisionToValidatedMs: number | null;
+    repriceApplied?: number | null; // 1=true, 0=false, null=unknown
 }
 
 export interface EdgeAttributionEventRecord {
@@ -412,7 +413,8 @@ function initSchema(db: DatabaseType): void {
             submitError TEXT,
             decisionToSubmitMs INTEGER,
             submitToValidatedMs INTEGER,
-            decisionToValidatedMs INTEGER
+            decisionToValidatedMs INTEGER,
+            repriceApplied INTEGER
         )
     `);
 
@@ -593,6 +595,7 @@ const EXECUTION_QUALITY_EXTRA_COLUMNS = {
     decisionToSubmitMs: 'INTEGER',
     submitToValidatedMs: 'INTEGER',
     decisionToValidatedMs: 'INTEGER',
+    repriceApplied: 'INTEGER',
 } as const;
 
 const EDGE_ATTRIBUTION_EXTRA_COLUMNS = {
@@ -704,7 +707,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 status, rejectReason, flags, guardQuarantined,
                 decisionTs, submitTs, submitResponseTs, validatedTs,
                 submitResultEngine, submitError,
-                decisionToSubmitMs, submitToValidatedMs, decisionToValidatedMs
+                decisionToSubmitMs, submitToValidatedMs, decisionToValidatedMs,
+                repriceApplied
             ) VALUES (
                 @id, @ts, @eventId, @txHash, @pairKeyCanonical, @pairAliases,
                 @side, @strategy, @regime, @source, @venue,
@@ -719,7 +723,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 @status, @rejectReason, @flags, @guardQuarantined,
                 @decisionTs, @submitTs, @submitResponseTs, @validatedTs,
                 @submitResultEngine, @submitError,
-                @decisionToSubmitMs, @submitToValidatedMs, @decisionToValidatedMs
+                @decisionToSubmitMs, @submitToValidatedMs, @decisionToValidatedMs,
+                @repriceApplied
             )
         `),
         updateExecutionQualityHorizons: db.prepare(`
@@ -1028,6 +1033,7 @@ export function insertExecutionQualityEvent(event: ExecutionQualityEventRecord):
             decisionToSubmitMs: event.decisionToSubmitMs,
             submitToValidatedMs: event.submitToValidatedMs,
             decisionToValidatedMs: event.decisionToValidatedMs,
+            repriceApplied: event.repriceApplied ?? null,
         });
         if (result.changes === 0) {
             return null;

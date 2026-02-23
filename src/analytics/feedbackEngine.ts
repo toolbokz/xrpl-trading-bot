@@ -192,6 +192,7 @@ export interface ExecutionQualityEventInput {
     decisionToSubmitMs?: number | null;
     submitToValidatedMs?: number | null;
     decisionToValidatedMs?: number | null;
+    repriceApplied?: boolean | null;
 }
 
 export interface ExecutionQualityFilters {
@@ -240,6 +241,7 @@ export interface ExecutionQualitySummary {
     staleFillSnapshotNoDataCount: number;
     tooGoodRate: number;
     tooBadRate: number;
+    repriceAppliedRate: number;
 }
 
 export interface ExecutionQualityRealismDiagnostic {
@@ -294,6 +296,7 @@ export interface ExecutionQualityBreakdownRow {
     avgSlippageBpsVsIntent: number | null;
     avgEffSpreadBps: number | null;
     avgFillRatio: number | null;
+    repriceAppliedRate: number;
 }
 
 export interface ExecutionQualityAnomalies {
@@ -1030,6 +1033,7 @@ class FeedbackEngine {
                 decisionToSubmitMs: input.decisionToSubmitMs ?? null,
                 submitToValidatedMs: input.submitToValidatedMs ?? null,
                 decisionToValidatedMs: input.decisionToValidatedMs ?? null,
+                repriceApplied: input.repriceApplied == null ? null : (input.repriceApplied ? 1 : 0),
             };
 
             return insertExecutionQualityEvent(event);
@@ -1750,6 +1754,7 @@ class FeedbackEngine {
             const staleNoDataCount = fills.length - staleMeasured.length;
             const negCount = slippageValues.filter((v) => v < 0).length;
             const negNoDataCount = fills.length - slippageValues.length;
+            const repriceAppliedCount = events.filter((e) => e.repriceApplied === 1).length;
             const slippageRealismDiagnostics = realism
                 .map((r) => r.diagnostic)
                 .filter((d): d is ExecutionQualityRealismDiagnostic => d != null)
@@ -1820,6 +1825,7 @@ class FeedbackEngine {
                 staleFillSnapshotNoDataCount: staleNoDataCount,
                 tooGoodRate: this.computeTooGoodRate(slippageValues),
                 tooBadRate: this.computeTooBadRate(slippageValues),
+                repriceAppliedRate: events.length > 0 ? repriceAppliedCount / events.length : 0,
             };
 
             const series = this.buildExecutionQualitySeries(events, bucketMs);
@@ -1996,6 +2002,7 @@ class FeedbackEngine {
                 staleFillSnapshotNoDataCount: 0,
                 tooGoodRate: 0,
                 tooBadRate: 0,
+                repriceAppliedRate: 0,
             },
             series: this.buildExecutionQualitySeries([], bucketMs),
             histograms: {
@@ -2415,6 +2422,9 @@ class FeedbackEngine {
                 avgSlippageBpsVsIntent: this.avg(group.map((e) => e.slippageBpsVsIntent)),
                 avgEffSpreadBps: this.avg(group.map((e) => e.effSpreadBps)),
                 avgFillRatio: this.avg(group.map((e) => e.fillRatio)),
+                repriceAppliedRate: group.length > 0
+                    ? group.filter((e) => e.repriceApplied === 1).length / group.length
+                    : 0,
             }))
             .sort((a, b) => b.count - a.count);
     }
