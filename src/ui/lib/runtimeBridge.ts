@@ -78,8 +78,20 @@ export async function initRuntimeBridge(): Promise<void> {
             // Ensure botController hooks are registered via runtimeHooks (single source of truth).
             ensureBridgeHooks();
 
-            // Start the runtime
-            await ensureRuntimeStarted();
+            // Start the runtime outside API-route context so runtime internals
+            // can access shared XRPL safely in single-process mode.
+            const hadApiRouteContext = shouldUseRuntimeState();
+            if (hadApiRouteContext) {
+                clearApiRouteContext();
+            }
+
+            try {
+                await ensureRuntimeStarted();
+            } finally {
+                if (hadApiRouteContext) {
+                    markApiRouteContext();
+                }
+            }
 
             isInitialized = true;
         } catch (err) {

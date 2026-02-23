@@ -4,6 +4,7 @@ import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { botController } from '../../../lib/botController';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
 import { logger } from '../../../../analytics/logger';
+import { clearApiRouteContext, markApiRouteContext } from '../../../../xrpl/guard';
 
 export const config = {
     api: { bodyParser: false },
@@ -22,13 +23,18 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
 
     try {
         ensureRuntimeHooks();
+        // Runtime startup in single-process mode must execute outside API-route context
+        // because runtime internals legitimately use shared XRPL access.
+        clearApiRouteContext();
         const state = await botController.run();
+        markApiRouteContext();
 
         // Audit log sensitive action
         await logSensitiveAction(req.requestId, 'bot:run', { previousState: currentState });
 
         res.status(200).json({ state, message: 'Bot is now running', requestId: req.requestId });
     } catch (err: unknown) {
+        markApiRouteContext();
         const errorMessage = err instanceof Error ? err.message : 'Failed to start bot';
         logger.error({ err }, '[API /bot/run] Error');
         res.status(400).json({

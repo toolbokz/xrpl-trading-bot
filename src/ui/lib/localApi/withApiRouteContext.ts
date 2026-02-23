@@ -31,6 +31,8 @@ export function withApiRouteContext<Req extends NextApiRequest, Res extends Next
     handler: ApiRouteHandler<Req, Res>,
 ): (req: Req, res: Res) => Promise<void> {
     return async (req: Req, res: Res): Promise<void> => {
+        const requestId = extractRequestId(req);
+        const context = typeof requestId === 'string' ? { requestId } : {};
         await runWithRequestContext(async () => {
             markApiRouteContext();
             try {
@@ -38,8 +40,6 @@ export function withApiRouteContext<Req extends NextApiRequest, Res extends Next
             } finally {
                 clearApiRouteContext();
             }
-        }, {
-            requestId: extractRequestId(req),
-        });
+        }, context);
     };
 }

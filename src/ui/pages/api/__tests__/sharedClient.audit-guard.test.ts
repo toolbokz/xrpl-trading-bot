@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 class MockClient {
     connected = false;
 
-    constructor(_url: string, _options?: unknown) {}
+    constructor(_url: string, _options?: unknown) { }
 
     async connect(): Promise<void> {
         this.connected = true;
@@ -17,7 +17,7 @@ class MockClient {
         return this.connected;
     }
 
-    on(_event: string, _handler: (...args: unknown[]) => void): void {}
+    on(_event: string, _handler: (...args: unknown[]) => void): void { }
 }
 
 const { mockLoggerWarn } = vi.hoisted(() => ({
@@ -49,8 +49,9 @@ import {
 import { markApiRouteContext, runWithRequestContext } from '../../../../xrpl/guard';
 
 describe('sharedClient API-route context invariant', () => {
+    const envRef: NodeJS.ProcessEnv = process.env;
     const originalAuditFlag = process.env.FEATURE_AUDIT_GUARDS;
-    const originalNodeEnv = process.env.NODE_ENV;
+    const originalNodeEnv = envRef['NODE_ENV'];
     const originalSingleProcess = process.env.SINGLE_PROCESS_MODE;
 
     beforeEach(() => {
@@ -73,8 +74,8 @@ describe('sharedClient API-route context invariant', () => {
         if (typeof originalAuditFlag === 'string') process.env.FEATURE_AUDIT_GUARDS = originalAuditFlag;
         else delete process.env.FEATURE_AUDIT_GUARDS;
 
-        if (typeof originalNodeEnv === 'string') process.env.NODE_ENV = originalNodeEnv;
-        else delete process.env.NODE_ENV;
+        if (typeof originalNodeEnv === 'string') envRef['NODE_ENV'] = originalNodeEnv;
+        else delete envRef['NODE_ENV'];
 
         if (typeof originalSingleProcess === 'string') process.env.SINGLE_PROCESS_MODE = originalSingleProcess;
         else delete process.env.SINGLE_PROCESS_MODE;
@@ -82,7 +83,7 @@ describe('sharedClient API-route context invariant', () => {
 
     it('does not enforce missing-route-context invariant when FEATURE_AUDIT_GUARDS=0', async () => {
         process.env.FEATURE_AUDIT_GUARDS = '0';
-        process.env.NODE_ENV = 'development';
+        envRef['NODE_ENV'] = 'development';
 
         await expect(runWithRequestContext(async () => {
             const client = await getXrplClient();
@@ -94,7 +95,7 @@ describe('sharedClient API-route context invariant', () => {
 
     it('logs warning and throws in non-production when request context exists without API route context', async () => {
         process.env.FEATURE_AUDIT_GUARDS = '1';
-        process.env.NODE_ENV = 'development';
+        envRef['NODE_ENV'] = 'development';
 
         await expect(runWithRequestContext(async () => {
             await getXrplClient();
@@ -105,7 +106,7 @@ describe('sharedClient API-route context invariant', () => {
 
     it('allows shared client access when API route context is present', async () => {
         process.env.FEATURE_AUDIT_GUARDS = '1';
-        process.env.NODE_ENV = 'development';
+        envRef['NODE_ENV'] = 'development';
 
         await expect(runWithRequestContext(async () => {
             markApiRouteContext();

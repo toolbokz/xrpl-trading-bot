@@ -168,9 +168,9 @@ async function probeFeedbackDb(): Promise<ProbeResult> {
 }
 
 type RedisClientLike = {
-    connect: () => Promise<void>;
+    connect: () => Promise<unknown>;
     ping: () => Promise<string>;
-    quit: () => Promise<void>;
+    quit: () => Promise<unknown>;
     disconnect?: () => void;
     on: (event: 'error', handler: (err: unknown) => void) => void;
 };
@@ -288,26 +288,37 @@ async function probeOrderBook(
             cfg.tradingPair.quoteIssuer,
             cfg.tradingPair.issuer,
         );
+        const takerGetsInput = quoteIssuer
+            ? { currency: cfg.tradingPair.quoteCurrency, issuer: quoteIssuer }
+            : { currency: cfg.tradingPair.quoteCurrency };
+        const takerPaysInput = baseIssuer
+            ? { currency: cfg.tradingPair.baseCurrency, issuer: baseIssuer }
+            : { currency: cfg.tradingPair.baseCurrency };
         const response = await withTimeout(
             client.request({
                 command: 'book_offers',
-                taker_gets: toXrplCurrency({ currency: cfg.tradingPair.quoteCurrency, issuer: quoteIssuer }) as unknown as Record<string, unknown>,
-                taker_pays: toXrplCurrency({ currency: cfg.tradingPair.baseCurrency, issuer: baseIssuer }) as unknown as Record<string, unknown>,
+                taker_gets: toXrplCurrency(takerGetsInput) as unknown as Record<string, unknown>,
+                taker_pays: toXrplCurrency(takerPaysInput) as unknown as Record<string, unknown>,
                 ledger_index: 'validated',
                 limit: 5,
-            }),
+            } as unknown as Parameters<Client['request']>[0]),
             timeoutMs,
             'xrpl-book_offers',
         );
 
-        const offers = Array.isArray(response.result?.offers) ? response.result.offers.length : 0;
-        const rawLedgerIndex = response.result?.ledger_index ?? response.result?.ledger_current_index;
+        const responseResult = response.result as {
+            offers?: unknown[];
+            ledger_index?: number | string;
+            ledger_current_index?: number | string;
+        } | undefined;
+        const offers = Array.isArray(responseResult?.offers) ? responseResult.offers.length : 0;
+        const rawLedgerIndex = responseResult?.ledger_index ?? responseResult?.ledger_current_index;
         const parsedLedger = typeof rawLedgerIndex === 'number'
             ? rawLedgerIndex
             : (typeof rawLedgerIndex === 'string' ? Number(rawLedgerIndex) : NaN);
         const ledgerIndex = Number.isFinite(parsedLedger) ? parsedLedger : null;
         return {
-            ok: offers > 0 || response.result !== undefined,
+            ok: offers > 0 || responseResult !== undefined,
             latencyMs: nowMs() - start,
             detail: `book_offers succeeded with ${offers} offers`,
             data: { pairKey, offers, ledgerIndex },

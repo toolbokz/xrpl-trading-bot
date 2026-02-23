@@ -202,6 +202,21 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
                     });
                 }
             }
+
+            return res.status(200).json({
+                address: runtimeWallet?.address ?? null,
+                balance: 0,
+                reserve: cfg.risk.reserveFloorXRP || 10,
+                quoteCurrency: queryQuote || cfg.tradingPair.quoteCurrency || '',
+                quoteBalance: 0,
+                baseCurrency: queryBase || cfg.tradingPair.baseCurrency || 'XRP',
+                baseBalance: 0,
+                usdRate: null,
+                network,
+                trustLines: [],
+                fromRuntime: true,
+                warmingUp: true,
+            });
         }
 
         // Use shared client to avoid rate limiting

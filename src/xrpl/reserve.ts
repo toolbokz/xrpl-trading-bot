@@ -52,6 +52,26 @@ export interface ReserveErrorClassification {
 
 const DROPS_PER_XRP = 1_000_000;
 
+interface ServerStateResponse {
+    result?: {
+        state?: {
+            validated_ledger?: {
+                reserve_base?: number;
+                reserve_inc?: number;
+            };
+        };
+    };
+}
+
+interface AccountInfoResponse {
+    result?: {
+        account_data?: {
+            OwnerCount?: number;
+            Balance?: string;
+        };
+    };
+}
+
 function resolveReserveRequestTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
     const parsed = Number.parseInt(env.XRPL_RESERVE_REQUEST_TIMEOUT_MS ?? '', 10);
     if (!Number.isFinite(parsed)) return 4_000;
@@ -136,7 +156,7 @@ export async function getNetworkReserves(client: Client): Promise<{ baseReserveX
         return null;
     }
 
-    const response = await requestWithOptionalTimeout<Awaited<ReturnType<Client['request']>>>(client, {
+    const response = await requestWithOptionalTimeout<ServerStateResponse>(client, {
         command: 'server_state',
     }, 'server_state');
 
@@ -167,7 +187,7 @@ export async function getAccountInfo(
         return null;
     }
 
-    const response = await requestWithOptionalTimeout<Awaited<ReturnType<Client['request']>>>(client, {
+    const response = await requestWithOptionalTimeout<AccountInfoResponse>(client, {
         command: 'account_info',
         account,
         ledger_index: 'validated',

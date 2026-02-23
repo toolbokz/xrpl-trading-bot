@@ -4,6 +4,7 @@ import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { loadConfig } from '../../../../config';
 import { getSharedClient } from '../../../lib/xrplClient';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
+import { isSingleProcessMode } from '../../../lib/runtimeBridge';
 import { logger } from '../../../../analytics/logger';
 import { validateBody, ordersUpdateSchema, ordersCancelSchema } from '../../../lib/validation/schemas';
 
@@ -113,13 +114,29 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
 
     // GET: Fetch active orders and optionally auto-cancel stale ones
     try {
-        // Use shared client to avoid rate limiting and connection leaks
-        const client = await getSharedClient(cfg.xrpl.endpoint);
+        const runtime = ensureRuntimeHooks();
+        const isSingle = isSingleProcessMode();
+
+        // In single-process mode, always use the runtime-owned client.
+        // In dual-process mode, keep legacy shared-client behavior.
+        const client = isSingle
+            ? runtime.getClient()
+            : await getSharedClient(cfg.xrpl.endpoint);
+
+        if (!client) {
+            return res.status(200).json({
+                orders: [],
+                autoManageEnabled: globalAutoManage._autoManageEnabled,
+                stalenessThresholdSec: globalAutoManage._stalenessThresholdSec,
+                cancelledCount: 0,
+                requestId: req.requestId,
+                message: 'Runtime XRPL client not ready',
+            });
+        }
 
         // Try to get wallet address from runtime if available
         let walletAddress: string | null = null;
         try {
-            const runtime = ensureRuntimeHooks();
             walletAddress = runtime.getWalletAddress();
         } catch {
             // Runtime not initialized, try to get from config
