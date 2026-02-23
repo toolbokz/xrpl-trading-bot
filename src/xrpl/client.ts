@@ -54,6 +54,11 @@ export class XRPLWebSocket extends EventEmitter {
     private onLedgerClosed: ((ledger: LedgerStreamResponse) => void) | null = null;
     private onTransaction: ((tx: TransactionStream) => void) | null = null;
     private onClientDisconnected: (() => void) | null = null;
+    private readonly requestTimeoutMs = (() => {
+        const raw = Number.parseInt(process.env.XRPL_REQUEST_TIMEOUT_MS ?? '', 10);
+        if (!Number.isFinite(raw)) return 8_000;
+        return Math.max(1_000, raw);
+    })();
 
     constructor(private readonly cfg: XRPLConfig) {
         super();
@@ -151,7 +156,7 @@ export class XRPLWebSocket extends EventEmitter {
         }
     }
 
-    async getOrderBook(pair: TradingPair): Promise<{ bids: BookOffer[]; asks: BookOffer[] }> {
+    async getOrderBook(pair: TradingPair): Promise<{ bids: BookOffer[]; asks: BookOffer[]; sourceLedgerIndex: number | null }> {
         await this.ensureConnected();
         const common = { ledger_index: 'validated' as const, limit: 50 };
         const baseIssuerRaw = pair.baseIssuer ?? pair.issuer ?? '';
@@ -186,7 +191,23 @@ export class XRPLWebSocket extends EventEmitter {
 
         const bidsRes = await this.safeRequest(bidsReq);
         const asksRes = await this.safeRequest(asksReq);
-        return { bids: (bidsRes?.result?.offers || []) as BookOffer[], asks: (asksRes?.result?.offers || []) as BookOffer[] };
+        const parseLedgerIndex = (res: any): number | null => {
+            const raw = res?.result?.ledger_index ?? res?.result?.ledger_current_index;
+            const parsed = typeof raw === 'string' ? Number(raw) : raw;
+            if (!Number.isFinite(parsed) || parsed <= 0) return null;
+            return Math.floor(parsed);
+        };
+        const bidsLedger = parseLedgerIndex(bidsRes);
+        const asksLedger = parseLedgerIndex(asksRes);
+        const sourceLedgerIndex = [bidsLedger, asksLedger].filter((v): v is number => v !== null).reduce<number | null>(
+            (acc, v) => (acc === null ? v : Math.max(acc, v)),
+            null,
+        );
+        return {
+            bids: (bidsRes?.result?.offers || []) as BookOffer[],
+            asks: (asksRes?.result?.offers || []) as BookOffer[],
+            sourceLedgerIndex,
+        };
     }
 
     async getAMMInfo(asset: { currency: string; issuer?: string }, asset2: { currency: string; issuer?: string }): Promise<any> {
@@ -330,11 +351,27 @@ export class XRPLWebSocket extends EventEmitter {
         try {
             await this.ensureConnected();
             logger.info({ request }, 'XRPL client.request');
-            return await this.client!.request(request);
+            return await this.withTimeout(
+                this.client!.request(request),
+                this.requestTimeoutMs,
+                `xrpl-request:${(request as { command?: string }).command ?? 'unknown'}`,
+            );
         } catch (err) {
             logger.error({ err, request }, 'XRPL request failed');
             await this.handleReconnect();
             throw err;
+        }
+    }
+
+    private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, context: string): Promise<T> {
+        let timer: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`${context}-timeout:${timeoutMs}ms`)), timeoutMs);
+        });
+        try {
+            return await Promise.race([promise, timeoutPromise]);
+        } finally {
+            if (timer) clearTimeout(timer);
         }
     }
 }
