@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { getApiXrplClient } from '../../../lib/apiXrplClient';
 import {
     tradeHistory,
@@ -159,14 +160,26 @@ function sanitizeDepthCheckSnapshot(snapshot: TradeDepthCheckSnapshot | null | u
             ? snapshot.fillable_base
             : null,
         has_depth: typeof snapshot.has_depth === 'boolean' ? snapshot.has_depth : null,
-        ioc_min_fill_ratio: typeof snapshot.ioc_min_fill_ratio === 'number' && Number.isFinite(snapshot.ioc_min_fill_ratio)
-            ? snapshot.ioc_min_fill_ratio
-            : null,
+        min_fill_ratio: typeof snapshot.min_fill_ratio === 'number' && Number.isFinite(snapshot.min_fill_ratio)
+            ? snapshot.min_fill_ratio
+            : (typeof (snapshot as TradeDepthCheckSnapshot & { ioc_min_fill_ratio?: unknown }).ioc_min_fill_ratio === 'number'
+                && Number.isFinite((snapshot as TradeDepthCheckSnapshot & { ioc_min_fill_ratio?: number }).ioc_min_fill_ratio)
+                ? (snapshot as TradeDepthCheckSnapshot & { ioc_min_fill_ratio?: number }).ioc_min_fill_ratio ?? null
+                : null),
         depth_check_levels: typeof snapshot.depth_check_levels === 'number' && Number.isFinite(snapshot.depth_check_levels)
             ? snapshot.depth_check_levels
             : null,
         order_type: snapshot.order_type === 'IOC' || snapshot.order_type === 'FOK'
             ? snapshot.order_type
+            : null,
+        snapshot_age_ms: typeof snapshot.snapshot_age_ms === 'number' && Number.isFinite(snapshot.snapshot_age_ms)
+            ? snapshot.snapshot_age_ms
+            : null,
+        ledger_index: typeof snapshot.ledger_index === 'number' && Number.isFinite(snapshot.ledger_index)
+            ? snapshot.ledger_index
+            : null,
+        fetched_at: typeof snapshot.fetched_at === 'number' && Number.isFinite(snapshot.fetched_at)
+            ? snapshot.fetched_at
             : null,
         ledger_index_mode: snapshot.ledger_index_mode === 'current' || snapshot.ledger_index_mode === 'validated'
             ? snapshot.ledger_index_mode
@@ -185,7 +198,9 @@ function sanitizeDepthCheckSnapshot(snapshot: TradeDepthCheckSnapshot | null | u
 
 function sanitizeDepthRepriceSnapshot(snapshot: TradeDepthRepriceSnapshot | null | undefined): TradeDepthRepriceSnapshot | null {
     if (!snapshot) return null;
-    const decision = snapshot.decision === 'applied'
+    const decision = snapshot.decision === 'reprice'
+        || snapshot.decision === 'skip_too_far'
+        || snapshot.decision === 'applied'
         || snapshot.decision === 'skipped_over_budget'
         || snapshot.decision === 'skipped_no_candidate'
         || snapshot.decision === 'not_needed'
@@ -438,4 +453,4 @@ async function handler(req: LocalRequest, res: NextApiResponse<TxIntentResponse 
     });
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

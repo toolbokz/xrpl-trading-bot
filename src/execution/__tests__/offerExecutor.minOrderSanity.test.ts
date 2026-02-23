@@ -71,8 +71,8 @@ describe.sequential('OfferExecutor min-order sanity feature flag', () => {
 
     afterEach(async () => {
         delete process.env.FEATURE_EXECUTION_MIN_ORDER_SANITY;
-        delete process.env.EXECUTION_MIN_BASE;
-        delete process.env.EXECUTION_MIN_QUOTE;
+        delete process.env.EXECUTION_MIN_BASE_XRP;
+        delete process.env.EXECUTION_MIN_QUOTE_RLUSD;
         try {
             const { tradeMarkoutScheduler } = await import('../../analytics/tradeMarkoutScheduler');
             tradeMarkoutScheduler.stop();
@@ -87,8 +87,8 @@ describe.sequential('OfferExecutor min-order sanity feature flag', () => {
 
     it('rejects before submit when XRP drops would underflow below 1 drop', async () => {
         process.env.FEATURE_EXECUTION_MIN_ORDER_SANITY = 'true';
-        process.env.EXECUTION_MIN_BASE = '0';
-        process.env.EXECUTION_MIN_QUOTE = '0';
+        process.env.EXECUTION_MIN_BASE_XRP = '0';
+        process.env.EXECUTION_MIN_QUOTE_RLUSD = '0';
 
         const { OfferExecutor } = await import('../offerExecutor');
         const { tradeHistory } = await import('../../analytics/tradeHistory');
@@ -145,8 +145,8 @@ describe.sequential('OfferExecutor min-order sanity feature flag', () => {
 
     it('rejects before submit when issued amount would underflow at serialization precision', async () => {
         process.env.FEATURE_EXECUTION_MIN_ORDER_SANITY = 'true';
-        process.env.EXECUTION_MIN_BASE = '0';
-        process.env.EXECUTION_MIN_QUOTE = '0';
+        process.env.EXECUTION_MIN_BASE_XRP = '0';
+        process.env.EXECUTION_MIN_QUOTE_RLUSD = '0';
 
         const { OfferExecutor } = await import('../offerExecutor');
         const { feedbackEngine } = await import('../../analytics/feedbackEngine');
@@ -195,6 +195,8 @@ describe.sequential('OfferExecutor min-order sanity feature flag', () => {
 
     it('accepts normal-sized orders at 0.25 and 0.5 base when enabled', async () => {
         process.env.FEATURE_EXECUTION_MIN_ORDER_SANITY = 'true';
+        process.env.EXECUTION_MIN_BASE_XRP = '0';
+        process.env.EXECUTION_MIN_QUOTE_RLUSD = '0';
 
         const { OfferExecutor } = await import('../offerExecutor');
         const { client, hash } = buildClient();

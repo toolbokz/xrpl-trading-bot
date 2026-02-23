@@ -111,7 +111,7 @@ describe('GET /api/debug/tx-intent backfill', () => {
                     min_required_base: 0.5,
                     fillable_base: 0.25,
                     has_depth: false,
-                    ioc_min_fill_ratio: 1,
+                    min_fill_ratio: 1,
                     depth_check_levels: 12,
                     order_type: 'IOC',
                     ledger_index_mode: 'validated',

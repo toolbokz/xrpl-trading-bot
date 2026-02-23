@@ -38,12 +38,13 @@ export interface Trade {
 }
 
 export type TradeAckStatus = 'accepted' | 'queued' | 'rejected' | 'unknown';
-export type TradeOutcome = 'filled' | 'partial' | 'rejected' | 'abandoned' | 'timeout';
+export type TradeOutcome = 'filled' | 'partial' | 'rejected' | 'abandoned' | 'timeout' | 'skipped';
 export type TradePriceConvention = 'quote_per_base' | 'base_per_quote';
 export type TradeBaselineSource =
     | 'orderbook_snapshot'
     | 'fair_value'
     | 'intent_fallback'
+    | 'market_data_missing'
     | 'invalid'
     | 'missing';
 export type TradeExpectedRule =
@@ -88,10 +89,17 @@ export interface TradeDepthCheckSnapshot {
     required_base: number | null;
     min_required_base: number | null;
     fillable_base: number | null;
+    vwap?: number | null;
+    worst_price?: number | null;
+    limit_price?: number | null;
     has_depth: boolean | null;
-    ioc_min_fill_ratio: number | null;
+    min_fill_ratio: number | null;
     depth_check_levels: number | null;
     order_type: 'IOC' | 'FOK' | null;
+    side_used?: 'BUY' | 'SELL' | null;
+    snapshot_age_ms?: number | null;
+    ledger_index?: number | null;
+    fetched_at?: number | null;
     ledger_index_mode?: 'validated' | 'current' | null;
     request_taker_gets_currency?: string | null;
     request_taker_pays_currency?: string | null;
@@ -106,7 +114,7 @@ export interface TradeDepthRepriceSnapshot {
     min_required_base: number | null;
     fillable_base_at_intended: number | null;
     fillable_base_at_repriced: number | null;
-    decision: 'applied' | 'skipped_over_budget' | 'skipped_no_candidate' | 'not_needed' | null;
+    decision: 'reprice' | 'skip_too_far' | 'skipped_no_candidate' | 'not_needed' | 'applied' | 'skipped_over_budget' | null;
     max_reprice_bps: number | null;
 }
 
@@ -131,6 +139,16 @@ export interface TradeMarkoutRecord {
     missing_reason: TradeMarkoutMissingReason | null;
     attempts: number;
     last_error: string | null;
+}
+
+export interface TradeRetryAttemptSnapshot {
+    attempt_n: number;
+    slippage_bps: number | null;
+    limit_price: number | null;
+    fillable_base: number | null;
+    snapshot_age_ms: number | null;
+    engine_result: string | null;
+    classified_outcome: string | null;
 }
 
 export interface TradeTrace {
@@ -164,6 +182,7 @@ export interface TradeTrace {
     ack_status: TradeAckStatus;
     outcome: TradeOutcome;
     outcome_reason: string | null;
+    retry_attempts: TradeRetryAttemptSnapshot[];
     fill_snapshot: TradeFillSnapshot | null;
     markouts: TradeMarkoutRecord[];
 }
@@ -328,6 +347,7 @@ function parseDepthCheckSnapshot(raw: unknown): TradeDepthCheckSnapshot | null {
     if (!side) return null;
     const hasDepth = typeof raw.has_depth === 'boolean' ? raw.has_depth : null;
     const orderType = raw.order_type === 'IOC' || raw.order_type === 'FOK' ? raw.order_type : null;
+    const sideUsed = raw.side_used === 'BUY' || raw.side_used === 'SELL' ? raw.side_used : null;
     const ledgerIndexMode = raw.ledger_index_mode === 'validated' || raw.ledger_index_mode === 'current'
         ? raw.ledger_index_mode
         : null;
@@ -337,10 +357,17 @@ function parseDepthCheckSnapshot(raw: unknown): TradeDepthCheckSnapshot | null {
         required_base: toFiniteNumberOrNull(raw.required_base),
         min_required_base: toFiniteNumberOrNull(raw.min_required_base),
         fillable_base: toFiniteNumberOrNull(raw.fillable_base),
+        vwap: toFiniteNumberOrNull(raw.vwap),
+        worst_price: toFiniteNumberOrNull(raw.worst_price),
+        limit_price: toFiniteNumberOrNull(raw.limit_price),
         has_depth: hasDepth,
-        ioc_min_fill_ratio: toFiniteNumberOrNull(raw.ioc_min_fill_ratio),
+        min_fill_ratio: toFiniteNumberOrNull(raw.min_fill_ratio) ?? toFiniteNumberOrNull(raw.ioc_min_fill_ratio),
         depth_check_levels: toFiniteNumberOrNull(raw.depth_check_levels),
         order_type: orderType,
+        side_used: sideUsed,
+        snapshot_age_ms: toFiniteNumberOrNull(raw.snapshot_age_ms),
+        ledger_index: toFiniteNumberOrNull(raw.ledger_index),
+        fetched_at: toFiniteNumberOrNull(raw.fetched_at),
         ledger_index_mode: ledgerIndexMode,
         request_taker_gets_currency: toStringOrNull(raw.request_taker_gets_currency),
         request_taker_pays_currency: toStringOrNull(raw.request_taker_pays_currency),
@@ -350,7 +377,9 @@ function parseDepthCheckSnapshot(raw: unknown): TradeDepthCheckSnapshot | null {
 
 function parseDepthRepriceSnapshot(raw: unknown): TradeDepthRepriceSnapshot | null {
     if (!isObject(raw)) return null;
-    const decision = raw.decision === 'applied'
+    const decision = raw.decision === 'reprice'
+        || raw.decision === 'skip_too_far'
+        || raw.decision === 'applied'
         || raw.decision === 'skipped_over_budget'
         || raw.decision === 'skipped_no_candidate'
         || raw.decision === 'not_needed'
@@ -415,6 +444,27 @@ function parseMarkouts(raw: unknown): TradeMarkoutRecord[] {
     return parsed;
 }
 
+function parseRetryAttemptSnapshots(raw: unknown): TradeRetryAttemptSnapshot[] {
+    if (!Array.isArray(raw)) return [];
+    const parsed: TradeRetryAttemptSnapshot[] = [];
+    for (const entry of raw) {
+        if (!isObject(entry)) continue;
+        const attempt = toFiniteNumberOrNull(entry.attempt_n);
+        if (attempt == null) continue;
+        parsed.push({
+            attempt_n: Math.max(1, Math.floor(attempt)),
+            slippage_bps: toFiniteNumberOrNull(entry.slippage_bps),
+            limit_price: toFiniteNumberOrNull(entry.limit_price),
+            fillable_base: toFiniteNumberOrNull(entry.fillable_base),
+            snapshot_age_ms: toFiniteNumberOrNull(entry.snapshot_age_ms),
+            engine_result: typeof entry.engine_result === 'string' ? entry.engine_result : null,
+            classified_outcome: typeof entry.classified_outcome === 'string' ? entry.classified_outcome : null,
+        });
+    }
+    parsed.sort((a, b) => a.attempt_n - b.attempt_n);
+    return parsed;
+}
+
 function outcomeFromStatus(status: Trade['status']): TradeOutcome {
     if (status === 'FILLED') return 'filled';
     if (status === 'PARTIAL') return 'partial';
@@ -461,6 +511,7 @@ function defaultTrace(trade: TraceFallback): TradeTrace {
         ack_status: 'unknown',
         outcome: outcomeFromStatus(trade.status),
         outcome_reason: null,
+        retry_attempts: [],
         fill_snapshot: null,
         markouts: [],
     };
@@ -485,6 +536,7 @@ function parseTrace(raw: unknown, fallback: TraceFallback): TradeTrace | undefin
         baseline_source: baselineSource === 'orderbook_snapshot'
             || baselineSource === 'fair_value'
             || baselineSource === 'intent_fallback'
+            || baselineSource === 'market_data_missing'
             || baselineSource === 'invalid'
             || baselineSource === 'missing'
             ? baselineSource
@@ -530,10 +582,12 @@ function parseTrace(raw: unknown, fallback: TraceFallback): TradeTrace | undefin
             || raw.outcome === 'partial'
             || raw.outcome === 'rejected'
             || raw.outcome === 'abandoned'
+            || raw.outcome === 'skipped'
             || raw.outcome === 'timeout'
             ? raw.outcome
             : outcomeFromStatus(fallback.status),
         outcome_reason: typeof raw.outcome_reason === 'string' ? raw.outcome_reason : null,
+        retry_attempts: parseRetryAttemptSnapshots(raw.retry_attempts),
         fill_snapshot: parseFillSnapshot(raw.fill_snapshot),
         markouts: parseMarkouts(raw.markouts),
     };
@@ -562,6 +616,9 @@ function mergeTrace(
         decision_ts_ms: patch.decision_ts_ms !== undefined ? patch.decision_ts_ms : base.decision_ts_ms,
         submit_response_ts_ms: nextSubmitResponseTs ?? null,
         ack_ts_ms: nextAckTs ?? nextSubmitResponseTs ?? null,
+        retry_attempts: patch.retry_attempts !== undefined
+            ? [...patch.retry_attempts]
+            : base.retry_attempts,
         markouts: patch.markouts !== undefined ? [...patch.markouts] : base.markouts,
     };
 
@@ -595,6 +652,9 @@ function mergeTrace(
     }
     if (!Array.isArray(merged.markouts)) {
         merged.markouts = [];
+    }
+    if (!Array.isArray(merged.retry_attempts)) {
+        merged.retry_attempts = [];
     }
     return merged;
 }

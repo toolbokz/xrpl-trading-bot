@@ -10,6 +10,7 @@
 
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { getCacheSnapshot, isSingleProcessMode } from '../../../lib/runtimeBridge';
 import { buildPairPayload, PairPayload } from '../../../lib/types/pairPayload';
 import type { RuntimeCacheSnapshot } from '../../../../runtime/runtimeCacheRegistry';
@@ -34,4 +35,4 @@ function handler(
     ));
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
+import { withApiRouteContext } from '../../../../lib/localApi/withApiRouteContext';
 import { triggerUpdate, isSchedulerRunning } from '../../../../../analytics/adaptiveScheduler';
 import { isAdaptiveEnabled } from '../../../../../analytics/adaptiveConfig';
 import { invalidateAnalyticsCache } from '../_cache';
@@ -62,4 +63,4 @@ function handler(req: LocalRequest, res: NextApiResponse<RecomputeApiResponse | 
     }
 }
 
-export default withLocalApi(handler);
+export default withLocalApi(withApiRouteContext(handler));

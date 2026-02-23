@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest, logSensitiveAction } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { loadConfig } from '../../../../config';
 import { getSharedClient } from '../../../lib/xrplClient';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
@@ -246,4 +247,4 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
     }
 }
 
-export default withLocalApi(handler, { methods: ['GET', 'POST', 'DELETE'] });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET', 'POST', 'DELETE'] });

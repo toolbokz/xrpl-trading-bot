@@ -12,12 +12,21 @@ import {
     TradePriceConvention,
     TradeOfferCreateIntent,
     TradeIntentAmount,
+    TradeRetryAttemptSnapshot,
 } from '../analytics/tradeHistory';
 import { feedbackEngine } from '../analytics/feedbackEngine';
 import { tradeMarkoutScheduler } from '../analytics/tradeMarkoutScheduler';
 import { computeCostRealism } from '../analytics/costRealism';
 import { isAdaptiveEnabled } from '../analytics/adaptiveConfig';
 import { buildOfferCreate, TradeIntent, TradeSide, normalizeIntent } from './offerBuilder';
+import {
+    checkLimitVsMidSlippage,
+    chooseLimitPrice,
+    type DepthBookLevel,
+} from './depthPricing';
+import { evaluateDepthAvailability } from './depthCheck';
+import { enforceMinSize, getMinSizeGateConfig, type MinSizeGateReason } from './minSizeGate';
+import { assertMarketDataReady } from './marketDataGate';
 import { ExecutionQualityCollector, InFlightTrace } from '../analytics/executionQuality';
 import { ExposureTracker } from '../risk/exposureTracker';
 import { FlowRegime } from '../market/flowMetrics';
@@ -25,6 +34,15 @@ import { canonicalizePairKey, decodeXrplCurrencyCode, toXrplCurrency } from '../
 import { quarantineTradeRecord, validateTradeIntegrity, warnSuspiciousSlippage } from '../analytics/tradeIntegrity';
 import { computeCanonicalSlippageBps, ExpectedPriceSource } from '../analytics/slippageMath';
 import { buildExecutionQualityMetrics, computeLatencyMetrics } from '../analytics/executionQualityMetrics';
+import {
+    classifyRetryOutcome,
+    computeRetryBackoffMs,
+    decideRetryAmount,
+    loadExecutionRetryConfig,
+    nextRetrySlippageBps,
+    shouldRetryNoFill,
+} from './retryPolicy';
+import { getExecutionMode, type ExecutionOrderType } from './orderType';
 import type { TradeToastEvent } from '../observability/tradeToastEvents';
 import type { StrategySubmitTelemetryEvent } from '../observability/strategyDecisionFunnel';
 
@@ -32,6 +50,7 @@ export interface OfferParams {
     side: 'buy' | 'sell';
     price: number;
     amount: number;
+    allowPartialSizing?: boolean;
     /** Explicit strategy attribution override for this order. */
     strategy?: string;
     expectedPrice?: number; // For slippage calculation
@@ -232,10 +251,18 @@ export function computeRepriceToMeetMinFill(
 
     const levels = buildRepriceLevels(input.side, input.offers ?? []);
     let cumulativeBase = 0;
+    let cumulativeQuote = 0;
     let candidatePrice: number | null = null;
 
     for (const level of levels) {
-        cumulativeBase += level.baseAvailable;
+        const remaining = Math.max(0, minRequiredBase - cumulativeBase);
+        if (remaining <= 1e-12) break;
+        const takeBase = Math.min(level.baseAvailable, remaining);
+        if (!Number.isFinite(takeBase) || takeBase <= 0) {
+            continue;
+        }
+        cumulativeBase += takeBase;
+        cumulativeQuote += takeBase * level.price;
         if (cumulativeBase + 1e-12 >= minRequiredBase) {
             candidatePrice = level.price;
             break;
@@ -251,9 +278,19 @@ export function computeRepriceToMeetMinFill(
         };
     }
 
+    const vwapPrice = cumulativeBase > 0 ? (cumulativeQuote / cumulativeBase) : null;
+    if (!Number.isFinite(vwapPrice) || (vwapPrice as number) <= 0) {
+        return {
+            repricedPrice: null,
+            requiredRepriceBps: null,
+            fillableAtRepriced: cumulativeBase,
+            reason: 'invalid-input',
+        };
+    }
+
     const rawRequiredBps = input.side === 'BUY'
-        ? ((candidatePrice - intendedPrice) / intendedPrice) * 10_000
-        : ((intendedPrice - candidatePrice) / intendedPrice) * 10_000;
+        ? (((vwapPrice as number) - intendedPrice) / intendedPrice) * 10_000
+        : ((intendedPrice - (vwapPrice as number)) / intendedPrice) * 10_000;
     const requiredRepriceBps = Number.isFinite(rawRequiredBps)
         ? Math.max(0, rawRequiredBps)
         : null;
@@ -267,7 +304,7 @@ export function computeRepriceToMeetMinFill(
         };
     }
 
-    if (!Number.isFinite(candidatePrice) || candidatePrice <= 0) {
+    if (!Number.isFinite(vwapPrice) || (vwapPrice as number) <= 0) {
         return {
             repricedPrice: null,
             requiredRepriceBps,
@@ -289,7 +326,7 @@ export function computeRepriceToMeetMinFill(
     }
 
     return {
-        repricedPrice: candidatePrice,
+        repricedPrice: vwapPrice as number,
         requiredRepriceBps,
         fillableAtRepriced: cumulativeBase,
     };
@@ -426,12 +463,10 @@ export class OfferExecutor {
         private readonly strategyConfig?: StrategyConfig
     ) { }
 
-    private readonly depthCheckLevels: number = Math.max(1, Math.min(20, parseInt(process.env.EXECUTION_DEPTH_LEVELS ?? '5', 10) || 5));
-    private readonly iocMinFillRatio: number = (() => {
-        const parsed = Number(process.env.EXECUTION_IOC_MIN_FILL_RATIO ?? '1');
-        if (!Number.isFinite(parsed)) return 1;
-        return Math.max(0.05, Math.min(1, parsed));
-    })();
+    private readonly executionMode = getExecutionMode();
+    private readonly depthCheckLevels: number = Math.max(1, Math.min(100, parseInt(process.env.EXECUTION_DEPTH_LEVELS ?? '25', 10) || 25));
+    private readonly executionMinFillRatio: number = this.executionMode.minFillRatio;
+    private readonly executionOrderType: ExecutionOrderType = this.executionMode.orderType;
     private readonly executionDepthLedgerCurrentEnabled: boolean = (() => {
         const raw = (process.env.FEATURE_EXECUTION_DEPTH_LEDGER_CURRENT ?? '').trim().toLowerCase();
         return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
@@ -444,16 +479,9 @@ export class OfferExecutor {
         const raw = (process.env.FEATURE_EXECUTION_MIN_ORDER_SANITY ?? '').trim().toLowerCase();
         return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
     })();
-    private readonly executionMinBase: number = (() => {
-        const parsed = Number(process.env.EXECUTION_MIN_BASE ?? '0.25');
-        if (!Number.isFinite(parsed) || parsed < 0) return 0.25;
-        return parsed;
-    })();
-    private readonly executionMinQuote: number = (() => {
-        const parsed = Number(process.env.EXECUTION_MIN_QUOTE ?? '0.1');
-        if (!Number.isFinite(parsed) || parsed < 0) return 0.1;
-        return parsed;
-    })();
+    private readonly minSizeGateConfig = getMinSizeGateConfig();
+    private readonly executionMinBase: number = this.minSizeGateConfig.minBaseXrp;
+    private readonly executionMinQuote: number = this.minSizeGateConfig.minQuoteRlusd;
     private readonly executionDepthRepriceEnabled: boolean = (() => {
         const raw = (process.env.FEATURE_EXECUTION_DEPTH_REPRICE ?? '').trim().toLowerCase();
         return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
@@ -463,6 +491,26 @@ export class OfferExecutor {
         if (!Number.isFinite(parsed) || parsed < 0) return 3;
         return Math.min(100, parsed);
     })();
+    private readonly executionSlippageBpsDefault: number = (() => {
+        const parsed = Number(process.env.EXECUTION_SLIPPAGE_BPS_DEFAULT ?? '5');
+        if (!Number.isFinite(parsed) || parsed < 0) return 5;
+        return Math.min(500, parsed);
+    })();
+    private readonly executionMaxSlippageBpsVsMid: number = (() => {
+        const parsed = Number(process.env.EXECUTION_MAX_SLIPPAGE_BPS_VS_MID ?? '30');
+        if (!Number.isFinite(parsed) || parsed < 0) return 30;
+        return Math.min(1_000, parsed);
+    })();
+    private readonly executionBookMaxAgeMs: number = (() => {
+        const parsed = Number(process.env.EXECUTION_BOOK_MAX_AGE_MS ?? '1500');
+        if (!Number.isFinite(parsed) || parsed < 0) return 1500;
+        return Math.min(30_000, Math.floor(parsed));
+    })();
+    private readonly executionAllowPartialSizing: boolean = (() => {
+        const raw = (process.env.EXECUTION_ALLOW_PARTIAL_SIZING ?? '').trim().toLowerCase();
+        return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+    })();
+    private readonly executionRetryConfig = loadExecutionRetryConfig();
     private readonly executionLastLedgerSlackEnabled: boolean = (() => {
         const raw = (process.env.FEATURE_EXECUTION_LLS_SLACK ?? '').trim().toLowerCase();
         return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
@@ -472,6 +520,20 @@ export class OfferExecutor {
         if (!Number.isFinite(parsed)) return 8;
         return Math.max(4, Math.min(12, Math.floor(parsed)));
     })();
+    private readonly executionIdempotencyEnabled: boolean = (() => {
+        const raw = (process.env.FEATURE_AUDIT_GUARDS ?? '').trim().toLowerCase();
+        return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+    })();
+    private readonly executionIdempotencyWindowMs: number = (() => {
+        const parsed = Number(process.env.EXECUTION_IDEMPOTENCY_WINDOW_MS ?? '15000');
+        if (!Number.isFinite(parsed)) return 15_000;
+        return Math.max(500, Math.min(120_000, Math.floor(parsed)));
+    })();
+    private readonly executionFokPartialAlertEnabled: boolean = (() => {
+        const raw = (process.env.FEATURE_EXECUTION_FOK_PARTIAL_ALERT ?? '').trim().toLowerCase();
+        return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+    })();
+    private readonly recentIntentFingerprints = new Map<string, number>();
 
     /**
      * Update the trading pair (called by TradingRuntime on pair switch).
@@ -558,6 +620,49 @@ export class OfferExecutor {
      */
     setSubmitTelemetrySink(sink: ((event: StrategySubmitTelemetryEvent) => void) | null): void {
         this.submitTelemetrySink = sink;
+    }
+
+    private pruneIntentFingerprints(nowMs: number): void {
+        const cutoff = nowMs - this.executionIdempotencyWindowMs;
+        for (const [fingerprint, seenAtMs] of this.recentIntentFingerprints.entries()) {
+            if (seenAtMs < cutoff) {
+                this.recentIntentFingerprints.delete(fingerprint);
+            }
+        }
+    }
+
+    private buildIntentFingerprint(
+        pairKey: string,
+        intent: TradeIntent,
+        flags?: OfferParams['flags'],
+    ): string {
+        const amount = Number.isFinite(intent.amount) ? intent.amount.toFixed(8) : 'nan';
+        const price = Number.isFinite(intent.price) ? intent.price.toFixed(10) : 'nan';
+        const expectedPrice = intent.expectedPrice;
+        const expected = typeof expectedPrice === 'number' && Number.isFinite(expectedPrice)
+            ? expectedPrice.toFixed(10)
+            : 'none';
+        const executionFlags = this.buildExecutionFlags(flags).sort().join('|') || 'none';
+        return [
+            pairKey,
+            intent.side,
+            amount,
+            price,
+            expected,
+            executionFlags,
+        ].join(':');
+    }
+
+    private isDuplicateIntentFingerprint(fingerprint: string, nowMs: number): boolean {
+        this.pruneIntentFingerprints(nowMs);
+        const seenAtMs = this.recentIntentFingerprints.get(fingerprint);
+        if (typeof seenAtMs !== 'number') return false;
+        return nowMs - seenAtMs < this.executionIdempotencyWindowMs;
+    }
+
+    private rememberIntentFingerprint(fingerprint: string, nowMs: number): void {
+        this.pruneIntentFingerprints(nowMs);
+        this.recentIntentFingerprints.set(fingerprint, nowMs);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -923,10 +1028,20 @@ export class OfferExecutor {
             price: adjustedParams.price,
             expectedPrice: adjustedParams.expectedPrice ?? adjustedParams.price,
         };
-        return this.placeOfferIntent(intent, adjustedParams.flags, adjustedParams.expectedPrice);
+        return this.placeOfferIntent(
+            intent,
+            adjustedParams.flags,
+            adjustedParams.expectedPrice,
+            adjustedParams.allowPartialSizing,
+        );
     }
 
-    async placeOfferIntent(intent: TradeIntent, flags?: OfferParams['flags'], expectedPriceOverride?: number): Promise<ExecutionResult> {
+    async placeOfferIntent(
+        intent: TradeIntent,
+        flags?: OfferParams['flags'],
+        expectedPriceOverride?: number,
+        allowPartialSizingOverride?: boolean,
+    ): Promise<ExecutionResult> {
         const pairSymbol = canonicalizePairKey(`${this.pair.baseCurrency}/${this.pair.quoteCurrency}`);
         const effectiveExpectedPrice = expectedPriceOverride ?? intent.expectedPrice ?? intent.price;
         const normalizedIntent: TradeIntent = { ...intent, expectedPrice: effectiveExpectedPrice };
@@ -939,12 +1054,83 @@ export class OfferExecutor {
             decisionTsMs: baselineDecisionTs,
         });
         const bboBaseline = this.getBboBaseline(normalizedSide);
+        const marketDataReadiness = assertMarketDataReady({
+            paper: this.paper,
+            bestBid: this.normalizeQuotePerBase(this.currentBestBid),
+            bestAsk: this.normalizeQuotePerBase(this.currentBestAsk),
+            mid: this.normalizeQuotePerBase(this.currentMidPrice),
+            spreadBps: this.normalizeNonNegative(this.currentSpreadBps),
+            snapshotAgeMs: this.normalizeNonNegative(this.currentBookAgeMs),
+            bookMaxAgeMs: this.executionBookMaxAgeMs,
+        });
+
+        if (marketDataReadiness.warning) {
+            logger.warn({
+                pair: pairSymbol,
+                side: normalizedIntent.side,
+                paper: this.paper,
+                reason: marketDataReadiness.warning,
+                baselineSource: expectedBaseline.baselineSource,
+                baselineBookAgeMs: expectedBaseline.baselineBookAgeMs,
+            }, 'Paper execution using fallback market baseline');
+        }
 
         if (this.paper) {
+            const paperMinSizeGate = enforceMinSize({
+                pair: pairSymbol,
+                side: normalizedIntent.side,
+                amountBase: normalizedIntent.amount,
+                price: normalizedIntent.price,
+            }, this.minSizeGateConfig);
+            if (!paperMinSizeGate.ok) {
+                const rejectReason = `ABORT_BELOW_MIN:${paperMinSizeGate.reason ?? 'unknown'}`;
+                logger.warn({
+                    pair: pairSymbol,
+                    side: normalizedIntent.side,
+                    amountBase: normalizedIntent.amount,
+                    limitPrice: normalizedIntent.price,
+                    reason: paperMinSizeGate.reason,
+                }, 'Rejected paper order by minimum size gate');
+
+                tradeHistory.recordTrade({
+                    pair: pairSymbol,
+                    side: normalizedIntent.side as 'BUY' | 'SELL',
+                    price: normalizedIntent.price,
+                    priceQuotePerBase: normalizedIntent.price,
+                    amount: normalizedIntent.amount,
+                    amountBase: normalizedIntent.amount,
+                    filled: 0,
+                    filledBase: 0,
+                    filledQuote: 0,
+                    fee: 0,
+                    pnl: 0,
+                    paper: true,
+                    status: 'REJECTED',
+                    source: 'bot',
+                });
+
+                try {
+                    feedbackEngine.recordTradeEvent({
+                        pairKey: pairSymbol,
+                        strategy: this.currentStrategy,
+                        action: 'reject',
+                        side: normalizedSide,
+                        intentPrice: normalizedIntent.price,
+                        intentSizeBase: normalizedIntent.amount,
+                        error: rejectReason,
+                        resultCode: 'ABORT_BELOW_MIN',
+                        midPriceAtDecision: this.currentMidPrice ?? undefined,
+                        isBotTrade: true,
+                    });
+                } catch { /* feedback should never crash trading */ }
+
+                return { accepted: false, reason: 'ABORT_BELOW_MIN' };
+            }
+
             logger.info({ intent: normalizedIntent }, 'Paper trade: simulated OfferCreate');
 
             // Record paper trade
-            tradeHistory.recordTrade({
+            const recordedPaperTrade = tradeHistory.recordTrade({
                 pair: pairSymbol,
                 side: normalizedIntent.side as 'BUY' | 'SELL',
                 price: normalizedIntent.price,
@@ -959,6 +1145,31 @@ export class OfferExecutor {
                 paper: true,
                 status: 'FILLED',
             });
+
+            if (marketDataReadiness.warning || expectedBaseline.baselineSource === 'intent_fallback') {
+                tradeHistory.upsertTradeTrace({
+                    tradeId: recordedPaperTrade.id,
+                    patch: {
+                        decision_ts_ms: baselineDecisionTs,
+                        baseline_ts_ms: expectedBaseline.baselineTsMs,
+                        baseline_best_bid: expectedBaseline.baselineBestBid ?? null,
+                        baseline_best_ask: expectedBaseline.baselineBestAsk ?? null,
+                        baseline_mid: expectedBaseline.baselineMid ?? null,
+                        baseline_spread_bps: expectedBaseline.baselineSpreadBps ?? null,
+                        baseline_source: expectedBaseline.baselineSource,
+                        expected_price: expectedBaseline.expectedPrice ?? null,
+                        expected_rule: expectedBaseline.expectedRule,
+                        price_convention: expectedBaseline.priceConvention,
+                        baseline_book_age_ms: expectedBaseline.baselineBookAgeMs ?? null,
+                        tx_type: 'OfferCreate',
+                        ack_status: 'accepted',
+                        outcome: 'filled',
+                        outcome_reason: marketDataReadiness.warning === 'STALE_MARKET_DATA'
+                            ? 'stale_market_data'
+                            : 'no_market_data',
+                    },
+                });
+            }
 
             // Compute cost realism for paper trades
             const side = normalizedIntent.side.toLowerCase() as 'buy' | 'sell';
@@ -1073,85 +1284,386 @@ export class OfferExecutor {
             return { accepted: false, reason: 'invalid-params' };
         }
 
-        const depth = await this.hasSufficientDepthAtPrice(normalizedIntent.side, normalizedIntent.price, normalizedIntent.amount, flags);
-        const depthCheckSnapshot: TradeDepthCheckSnapshot = depth.depthCheckSnapshot;
-        const depthRepriceSnapshot: TradeDepthRepriceSnapshot = {
-            enabled: this.executionDepthRepriceEnabled,
-            intended_price: Number.isFinite(normalizedIntent.price) ? normalizedIntent.price : null,
-            repriced_price: null,
-            required_reprice_bps: null,
-            min_required_base: Number.isFinite(depth.minRequiredBase) ? depth.minRequiredBase : null,
-            fillable_base_at_intended: Number.isFinite(depth.fillableBase) ? depth.fillableBase : null,
-            fillable_base_at_repriced: null,
-            decision: 'not_needed',
-            max_reprice_bps: Number.isFinite(this.executionRepriceMaxBps) ? this.executionRepriceMaxBps : null,
-        };
-        let intentForSubmission: TradeIntent = normalizedIntent;
-        let preSubmitDepthRejectReason = 'insufficient-depth-at-price';
+        if (!marketDataReadiness.ok) {
+            const outcomeReason = marketDataReadiness.reason === 'STALE_MARKET_DATA'
+                ? 'stale_market_data'
+                : 'no_market_data';
+            const rejectReason = marketDataReadiness.reason === 'STALE_MARKET_DATA'
+                ? 'SKIP_STALE_MARKET_DATA'
+                : 'SKIP_NO_MARKET_DATA';
 
-        if (!depth.hasDepth && this.executionDepthRepriceEnabled) {
-            const reprice = computeRepriceToMeetMinFill({
+            logger.warn({
+                pair: pairSymbol,
                 side: normalizedIntent.side,
-                offers: depth.offers,
-                intendedPrice: normalizedIntent.price,
-                minRequiredBase: depth.minRequiredBase,
-                maxRepriceBps: this.executionRepriceMaxBps,
+                reason: marketDataReadiness.reason,
+                bestBid: expectedBaseline.baselineBestBid,
+                bestAsk: expectedBaseline.baselineBestAsk,
+                mid: expectedBaseline.baselineMid,
+                spreadBps: expectedBaseline.baselineSpreadBps,
+                bookAgeMs: expectedBaseline.baselineBookAgeMs,
+                maxBookAgeMs: this.executionBookMaxAgeMs,
+            }, 'Skipping live order due to market-data readiness gate');
+
+            const skippedTrade = tradeHistory.recordTrade({
+                pair: pairSymbol,
+                side: normalizedIntent.side as 'BUY' | 'SELL',
+                price: normalizedIntent.price,
+                priceQuotePerBase: normalizedIntent.price,
+                amount: normalizedIntent.amount,
+                amountBase: normalizedIntent.amount,
+                filled: 0,
+                filledBase: 0,
+                filledQuote: 0,
+                fee: 0,
+                pnl: 0,
+                paper: false,
+                status: 'REJECTED',
+                source: 'bot',
+            });
+            tradeHistory.upsertTradeTrace({
+                tradeId: skippedTrade.id,
+                patch: {
+                    decision_ts_ms: baselineDecisionTs,
+                    baseline_ts_ms: expectedBaseline.baselineTsMs,
+                    baseline_best_bid: expectedBaseline.baselineBestBid ?? null,
+                    baseline_best_ask: expectedBaseline.baselineBestAsk ?? null,
+                    baseline_mid: expectedBaseline.baselineMid ?? null,
+                    baseline_spread_bps: expectedBaseline.baselineSpreadBps ?? null,
+                    baseline_source: 'market_data_missing',
+                    expected_price: expectedBaseline.expectedPrice ?? null,
+                    expected_rule: expectedBaseline.expectedRule,
+                    price_convention: expectedBaseline.priceConvention,
+                    baseline_book_age_ms: expectedBaseline.baselineBookAgeMs ?? null,
+                    tx_type: 'OfferCreate',
+                    offer_create: null,
+                    depth_check: null,
+                    depth_reprice: null,
+                    submit_result: {
+                        engine_result: null,
+                        engine_result_code: null,
+                        engine_result_message: marketDataReadiness.reason ?? 'NO_MARKET_DATA',
+                    },
+                    ack_status: 'rejected',
+                    outcome: 'skipped',
+                    outcome_reason: outcomeReason,
+                },
             });
 
-            depthRepriceSnapshot.repriced_price = reprice.repricedPrice;
-            depthRepriceSnapshot.required_reprice_bps = reprice.requiredRepriceBps;
-            depthRepriceSnapshot.fillable_base_at_repriced = Number.isFinite(reprice.fillableAtRepriced)
-                ? reprice.fillableAtRepriced
-                : null;
+            try {
+                feedbackEngine.recordTradeEvent({
+                    pairKey: pairSymbol,
+                    strategy: this.currentStrategy,
+                    action: 'reject',
+                    side: normalizedIntent.side.toLowerCase() as 'buy' | 'sell',
+                    intentPrice: normalizedIntent.price,
+                    intentSizeBase: normalizedIntent.amount,
+                    error: rejectReason,
+                    resultCode: marketDataReadiness.reason,
+                    midPriceAtDecision: this.currentMidPrice ?? undefined,
+                    isBotTrade: true,
+                });
+            } catch { /* feedback should never crash trading */ }
 
-            if (reprice.repricedPrice != null) {
-                depthRepriceSnapshot.decision = 'applied';
-                intentForSubmission = {
-                    ...normalizedIntent,
-                    price: reprice.repricedPrice,
-                };
-                logger.info({
-                    pair: pairSymbol,
-                    side: normalizedIntent.side,
-                    intendedPrice: normalizedIntent.price,
-                    repricedPrice: reprice.repricedPrice,
-                    requiredRepriceBps: reprice.requiredRepriceBps,
-                    maxRepriceBps: this.executionRepriceMaxBps,
-                    minRequiredBase: depth.minRequiredBase,
-                    fillableBaseAtIntended: depth.fillableBase,
-                    fillableBaseAtRepriced: reprice.fillableAtRepriced,
-                }, 'Applied depth-aware repricing before submit');
-            } else if (reprice.reason === 'over-budget') {
-                depthRepriceSnapshot.decision = 'skipped_over_budget';
-                preSubmitDepthRejectReason = 'depth-reprice-over-budget';
-            } else {
-                depthRepriceSnapshot.decision = 'skipped_no_candidate';
-            }
+            return { accepted: false, reason: rejectReason };
         }
 
-        if (depthRepriceSnapshot.decision === 'applied' && normalizedIntent.expectedPrice) {
-            const slippageCheck = this.checkSlippage(
-                normalizedIntent.expectedPrice,
-                intentForSubmission.price,
-                normalizedSide,
+        const executionFlags = this.normalizeExecutionFlags(flags);
+        const allowPartialSizing = allowPartialSizingOverride ?? this.executionAllowPartialSizing;
+        const retryConfig = this.executionRetryConfig;
+        const isIocOrder = this.resolveOrderTypeFromFlags(executionFlags) === 'IOC';
+        let workingIntent: TradeIntent = { ...normalizedIntent };
+        let retryAttempt = 1;
+        let retrySlippageBps = this.executionSlippageBpsDefault;
+        let latestResult: ExecutionResult | null = null;
+        const retryAttempts: TradeRetryAttemptSnapshot[] = [];
+
+        while (retryAttempt <= retryConfig.maxAttempts) {
+            const depth = await this.hasSufficientDepthAtPrice(
+                workingIntent.side,
+                workingIntent.price,
+                workingIntent.amount,
+                executionFlags,
+                retrySlippageBps,
             );
-            if (!slippageCheck.allowed) {
-                logger.warn({
+            const depthCheckSnapshot: TradeDepthCheckSnapshot = depth.depthCheckSnapshot;
+            const depthRepriceSnapshot: TradeDepthRepriceSnapshot = {
+                enabled: this.executionDepthRepriceEnabled,
+                intended_price: Number.isFinite(workingIntent.price) ? workingIntent.price : null,
+                repriced_price: null,
+                required_reprice_bps: null,
+                min_required_base: Number.isFinite(depth.minRequiredBase) ? depth.minRequiredBase : null,
+                fillable_base_at_intended: Number.isFinite(depth.fillableBase) ? depth.fillableBase : null,
+                fillable_base_at_repriced: Number.isFinite(depth.fillableBase) ? depth.fillableBase : null,
+                decision: 'not_needed',
+                max_reprice_bps: Number.isFinite(this.executionRepriceMaxBps) ? this.executionRepriceMaxBps : null,
+            };
+            let intentForSubmission: TradeIntent = workingIntent;
+            let preSubmitDepthRejectReason: string | null = null;
+            let minSizeRejectReason: MinSizeGateReason | null = null;
+
+            const amountDecision = decideRetryAmount({
+                desiredBase: workingIntent.amount,
+                fillableBase: depth.fillableBase,
+                allowPartialSizing,
+                minBase: this.executionMinBase,
+            });
+            const noFillAtIntended = depth.fillableBase <= 1e-12;
+            const belowMinRequiredAtIntended = depth.fillableBase + 1e-12 < depth.minRequiredBase;
+
+            if (
+                this.executionDepthRepriceEnabled
+                && depthCheckSnapshot.error == null
+                && belowMinRequiredAtIntended
+                && !noFillAtIntended
+                && depth.offers.length > 0
+            ) {
+                const repriceCandidate = computeRepriceToMeetMinFill({
+                    side: workingIntent.side,
+                    intendedPrice: workingIntent.price,
+                    minRequiredBase: depth.minRequiredBase,
+                    maxRepriceBps: this.executionRepriceMaxBps,
+                    offers: depth.offers,
+                });
+
+                depthRepriceSnapshot.required_reprice_bps = repriceCandidate.requiredRepriceBps;
+                depthRepriceSnapshot.fillable_base_at_repriced = Number.isFinite(repriceCandidate.fillableAtRepriced)
+                    ? repriceCandidate.fillableAtRepriced
+                    : null;
+
+                if (repriceCandidate.repricedPrice != null) {
+                    const repricedMidGuard = checkLimitVsMidSlippage({
+                        side: workingIntent.side,
+                        limitPrice: repriceCandidate.repricedPrice,
+                        midPrice: this.currentMidPrice,
+                        maxSlippageBps: this.executionMaxSlippageBpsVsMid,
+                    });
+
+                    if (repricedMidGuard.allowed) {
+                        depthRepriceSnapshot.decision = 'reprice';
+                        depthRepriceSnapshot.repriced_price = repriceCandidate.repricedPrice;
+                        intentForSubmission = {
+                            ...intentForSubmission,
+                            price: repriceCandidate.repricedPrice,
+                        };
+                    } else {
+                        depthRepriceSnapshot.decision = 'skip_too_far';
+                        preSubmitDepthRejectReason = 'SKIP_INSUFFICIENT_DEPTH';
+                    }
+                } else if (repriceCandidate.reason === 'over-budget') {
+                    depthRepriceSnapshot.decision = 'skip_too_far';
+                    preSubmitDepthRejectReason = 'SKIP_INSUFFICIENT_DEPTH';
+                } else if (repriceCandidate.reason === 'no-candidate') {
+                    depthRepriceSnapshot.decision = 'skipped_no_candidate';
+                    preSubmitDepthRejectReason = 'SKIP_INSUFFICIENT_DEPTH';
+                }
+            }
+
+            if (preSubmitDepthRejectReason == null) {
+                if (depthCheckSnapshot.error === 'NO_ORDERBOOK') {
+                    preSubmitDepthRejectReason = 'SKIP_NO_MARKET_DATA';
+                } else if (noFillAtIntended) {
+                    preSubmitDepthRejectReason = 'SKIP_NO_DEPTH';
+                } else if (!depth.midSlippageAllowed) {
+                    preSubmitDepthRejectReason = 'MAX_SLIPPAGE_VS_MID';
+                } else if (belowMinRequiredAtIntended && depthRepriceSnapshot.decision !== 'reprice') {
+                    preSubmitDepthRejectReason = 'INSUFFICIENT_DEPTH';
+                } else if (amountDecision.reason === 'insufficient-depth') {
+                    preSubmitDepthRejectReason = 'INSUFFICIENT_DEPTH';
+                } else if (amountDecision.reason === 'below-min') {
+                    preSubmitDepthRejectReason = 'ABORT_BELOW_MIN';
+                    minSizeRejectReason = 'base-below-min';
+                } else if (amountDecision.nextBase != null && amountDecision.shrunk) {
+                    intentForSubmission = {
+                        ...intentForSubmission,
+                        amount: amountDecision.nextBase,
+                    };
+                }
+            }
+
+            if (preSubmitDepthRejectReason == null && depthRepriceSnapshot.decision !== 'reprice') {
+                if (depth.limitPrice == null || !Number.isFinite(depth.limitPrice) || depth.limitPrice <= 0) {
+                    preSubmitDepthRejectReason = 'SKIP_NO_DEPTH';
+                } else {
+                    const repriced = Math.abs(depth.limitPrice - workingIntent.price) > 1e-12;
+                    if (repriced) {
+                        const rawRequiredBps = workingIntent.side === 'BUY'
+                            ? ((depth.limitPrice - workingIntent.price) / workingIntent.price) * 10_000
+                            : ((workingIntent.price - depth.limitPrice) / workingIntent.price) * 10_000;
+                        const requiredRepriceBps = Number.isFinite(rawRequiredBps)
+                            ? Math.max(0, rawRequiredBps)
+                            : null;
+                        depthRepriceSnapshot.required_reprice_bps = requiredRepriceBps;
+
+                        if (requiredRepriceBps != null && requiredRepriceBps > this.executionRepriceMaxBps + 1e-9) {
+                            depthRepriceSnapshot.decision = 'skip_too_far';
+                            preSubmitDepthRejectReason = 'SKIP_INSUFFICIENT_DEPTH';
+                        } else {
+                            depthRepriceSnapshot.decision = 'reprice';
+                            depthRepriceSnapshot.repriced_price = depth.limitPrice;
+                            intentForSubmission = {
+                                ...intentForSubmission,
+                                price: depth.limitPrice,
+                            };
+                        }
+                    } else {
+                        intentForSubmission = {
+                            ...intentForSubmission,
+                            price: depth.limitPrice,
+                        };
+                    }
+                }
+            }
+
+            if (preSubmitDepthRejectReason == null) {
+                const minSizeGate = enforceMinSize({
                     pair: pairSymbol,
-                    side: normalizedIntent.side,
-                    expectedPrice: normalizedIntent.expectedPrice,
+                    side: intentForSubmission.side,
+                    amountBase: intentForSubmission.amount,
+                    price: intentForSubmission.price,
+                }, this.minSizeGateConfig);
+
+                if (!minSizeGate.ok) {
+                    preSubmitDepthRejectReason = 'ABORT_BELOW_MIN';
+                    minSizeRejectReason = minSizeGate.reason;
+                }
+            }
+
+            if (preSubmitDepthRejectReason == null && Math.abs(intentForSubmission.amount - workingIntent.amount) > 1e-12) {
+                logger.info({
+                    pair: pairSymbol,
+                    side: workingIntent.side,
+                    intendedAmount: workingIntent.amount,
+                    adjustedAmount: intentForSubmission.amount,
+                    fillableBase: depth.fillableBase,
+                }, 'Adjusted order size to executable depth');
+            }
+
+            if (preSubmitDepthRejectReason == null && depthRepriceSnapshot.decision === 'reprice') {
+                logger.info({
+                    pair: pairSymbol,
+                    side: workingIntent.side,
+                    intendedPrice: workingIntent.price,
                     repricedPrice: intentForSubmission.price,
-                    slippageBps: slippageCheck.actualSlippageBps,
-                    maxSlippageBps: slippageCheck.maxSlippageBps,
-                }, 'Depth repricing rejected by existing slippage gate');
+                    requiredRepriceBps: depthRepriceSnapshot.required_reprice_bps,
+                    maxRepriceBps: this.executionRepriceMaxBps,
+                    expectedVwap: depth.expectedVwap,
+                    worstPrice: depth.worstPrice,
+                }, 'Applied depth-aware VWAP limit before submit');
+            }
+
+            if (preSubmitDepthRejectReason == null && depthRepriceSnapshot.decision === 'reprice' && workingIntent.expectedPrice) {
+                const slippageCheck = this.checkSlippage(
+                    workingIntent.expectedPrice,
+                    intentForSubmission.price,
+                    normalizedSide,
+                );
+                if (!slippageCheck.allowed) {
+                    logger.warn({
+                        pair: pairSymbol,
+                        side: workingIntent.side,
+                        expectedPrice: workingIntent.expectedPrice,
+                        repricedPrice: intentForSubmission.price,
+                        slippageBps: slippageCheck.actualSlippageBps,
+                        maxSlippageBps: slippageCheck.maxSlippageBps,
+                    }, 'Depth repricing rejected by existing slippage gate');
+
+                    const rejectedTrade = tradeHistory.recordTrade({
+                        pair: pairSymbol,
+                        side: workingIntent.side as 'BUY' | 'SELL',
+                        price: intentForSubmission.price,
+                        priceQuotePerBase: intentForSubmission.price,
+                        amount: workingIntent.amount,
+                        amountBase: workingIntent.amount,
+                        filled: 0,
+                        filledBase: 0,
+                        filledQuote: 0,
+                        fee: 0,
+                        pnl: 0,
+                        paper: false,
+                        status: 'REJECTED',
+                        source: 'bot',
+                    });
+                    tradeHistory.upsertTradeTrace({
+                        tradeId: rejectedTrade.id,
+                        patch: {
+                            decision_ts_ms: baselineDecisionTs,
+                            baseline_ts_ms: expectedBaseline.baselineTsMs,
+                            baseline_best_bid: expectedBaseline.baselineBestBid ?? null,
+                            baseline_best_ask: expectedBaseline.baselineBestAsk ?? null,
+                            baseline_mid: expectedBaseline.baselineMid ?? null,
+                            baseline_spread_bps: expectedBaseline.baselineSpreadBps ?? null,
+                            baseline_source: expectedBaseline.baselineSource,
+                            expected_price: expectedBaseline.expectedPrice ?? null,
+                            expected_rule: expectedBaseline.expectedRule,
+                            price_convention: expectedBaseline.priceConvention,
+                            baseline_book_age_ms: expectedBaseline.baselineBookAgeMs ?? null,
+                            tx_type: 'OfferCreate',
+                            offer_create: null,
+                            depth_check: depthCheckSnapshot,
+                            depth_reprice: depthRepriceSnapshot,
+                            submit_result: {
+                                engine_result: null,
+                                engine_result_code: null,
+                                engine_result_message: slippageCheck.reason ?? 'slippage-reject',
+                            },
+                            ack_status: 'rejected',
+                            outcome: 'rejected',
+                            outcome_reason: slippageCheck.reason ?? 'slippage-reject',
+                        },
+                    });
+
+                    try {
+                        feedbackEngine.recordTradeEvent({
+                            pairKey: pairSymbol,
+                            strategy: this.currentStrategy,
+                            action: 'reject',
+                            side: workingIntent.side.toLowerCase() as 'buy' | 'sell',
+                            intentPrice: intentForSubmission.price,
+                            intentSizeBase: workingIntent.amount,
+                            error: slippageCheck.reason,
+                            resultCode: 'slippage',
+                            midPriceAtDecision: this.currentMidPrice ?? undefined,
+                            isBotTrade: true,
+                        });
+                    } catch { /* feedback should never crash trading */ }
+
+                    return { accepted: false, reason: slippageCheck.reason };
+                }
+            }
+
+            if (preSubmitDepthRejectReason != null) {
+                const rejectDetail = minSizeRejectReason == null
+                    ? preSubmitDepthRejectReason
+                    : `${preSubmitDepthRejectReason}:${minSizeRejectReason}`;
+                logger.warn({
+                    side: workingIntent.side,
+                    price: workingIntent.price,
+                    amount: workingIntent.amount,
+                    allowPartialSizing,
+                    levels: this.depthCheckLevels,
+                    pair: pairSymbol,
+                    orderType: depth.orderType,
+                    configuredOrderType: this.executionOrderType,
+                    fillableBase: depth.fillableBase,
+                    minRequiredBase: depth.minRequiredBase,
+                    minFillRatio: this.executionMinFillRatio,
+                    midSlippageAllowed: depth.midSlippageAllowed,
+                    midSlippageBps: depth.midSlippageBps,
+                    depthCheckError: depthCheckSnapshot.error ?? null,
+                    ledgerIndexMode: depthCheckSnapshot.ledger_index_mode ?? null,
+                    repriceDecision: depthRepriceSnapshot.decision,
+                    requiredRepriceBps: depthRepriceSnapshot.required_reprice_bps,
+                    maxRepriceBps: depthRepriceSnapshot.max_reprice_bps,
+                    minSizeRejectReason,
+                }, 'Skipped order before submit due to depth constraints');
 
                 const rejectedTrade = tradeHistory.recordTrade({
                     pair: pairSymbol,
-                    side: normalizedIntent.side as 'BUY' | 'SELL',
-                    price: intentForSubmission.price,
-                    priceQuotePerBase: intentForSubmission.price,
-                    amount: normalizedIntent.amount,
-                    amountBase: normalizedIntent.amount,
+                    side: workingIntent.side as 'BUY' | 'SELL',
+                    price: workingIntent.price,
+                    priceQuotePerBase: workingIntent.price,
+                    amount: workingIntent.amount,
+                    amountBase: workingIntent.amount,
                     filled: 0,
                     filledBase: 0,
                     filledQuote: 0,
@@ -1182,11 +1694,11 @@ export class OfferExecutor {
                         submit_result: {
                             engine_result: null,
                             engine_result_code: null,
-                            engine_result_message: slippageCheck.reason ?? 'slippage-reject',
+                            engine_result_message: rejectDetail,
                         },
                         ack_status: 'rejected',
                         outcome: 'rejected',
-                        outcome_reason: slippageCheck.reason ?? 'slippage-reject',
+                        outcome_reason: preSubmitDepthRejectReason,
                     },
                 });
 
@@ -1195,119 +1707,119 @@ export class OfferExecutor {
                         pairKey: pairSymbol,
                         strategy: this.currentStrategy,
                         action: 'reject',
-                        side: normalizedIntent.side.toLowerCase() as 'buy' | 'sell',
-                        intentPrice: intentForSubmission.price,
-                        intentSizeBase: normalizedIntent.amount,
-                        error: slippageCheck.reason,
-                        resultCode: 'slippage',
+                        side: workingIntent.side.toLowerCase() as 'buy' | 'sell',
+                        intentPrice: workingIntent.price,
+                        intentSizeBase: workingIntent.amount,
+                        error: rejectDetail,
+                        resultCode: preSubmitDepthRejectReason ?? 'INSUFFICIENT_DEPTH',
                         midPriceAtDecision: this.currentMidPrice ?? undefined,
                         isBotTrade: true,
                     });
                 } catch { /* feedback should never crash trading */ }
 
-                return { accepted: false, reason: slippageCheck.reason };
+                return { accepted: false, reason: preSubmitDepthRejectReason };
             }
-        }
 
-        if (!depth.hasDepth && depthRepriceSnapshot.decision !== 'applied') {
-            logger.warn({
-                side: normalizedIntent.side,
-                price: normalizedIntent.price,
-                amount: normalizedIntent.amount,
-                levels: this.depthCheckLevels,
-                pair: pairSymbol,
-                orderType: depth.orderType,
-                fillableBase: depth.fillableBase,
-                minRequiredBase: depth.minRequiredBase,
-                iocMinFillRatio: this.iocMinFillRatio,
-                depthCheckError: depthCheckSnapshot.error ?? null,
-                ledgerIndexMode: depthCheckSnapshot.ledger_index_mode ?? null,
-                repriceDecision: depthRepriceSnapshot.decision,
-                requiredRepriceBps: depthRepriceSnapshot.required_reprice_bps,
-                maxRepriceBps: depthRepriceSnapshot.max_reprice_bps,
-            }, 'Skipped order before submit due to insufficient depth / reprice budget');
+            const normalized = normalizeIntent(intentForSubmission);
+            const txCore = buildOfferCreate(normalized);
 
-            const rejectedTrade = tradeHistory.recordTrade({
-                pair: pairSymbol,
-                side: normalizedIntent.side as 'BUY' | 'SELL',
-                price: normalizedIntent.price,
-                priceQuotePerBase: normalizedIntent.price,
-                amount: normalizedIntent.amount,
-                amountBase: normalizedIntent.amount,
-                filled: 0,
-                filledBase: 0,
-                filledQuote: 0,
-                fee: 0,
-                pnl: 0,
-                paper: false,
-                status: 'REJECTED',
-                source: 'bot',
+            const tx: any = {
+                ...txCore,
+                TransactionType: 'OfferCreate',
+                Account: this.wallet.classicAddress,
+                Flags: this.mapFlags(executionFlags),
+                LastLedgerSequence: await this.computeLastLedgerSequence(),
+            };
+            latestResult = await this.submitWithGuards(
+                tx,
+                normalized.pair.symbol,
+                intentForSubmission,
+                executionFlags,
+                depthCheckSnapshot,
+                depthRepriceSnapshot,
+                retryAttempt > 1 ? { bypassIdempotency: true } : undefined,
+            );
+
+            const attemptEngineResult = latestResult.accepted
+                ? 'tesSUCCESS'
+                : (latestResult.reason ?? null);
+            const classifiedOutcome = classifyRetryOutcome({
+                accepted: latestResult.accepted,
+                engineResult: attemptEngineResult,
             });
-            tradeHistory.upsertTradeTrace({
-                tradeId: rejectedTrade.id,
-                patch: {
-                    decision_ts_ms: baselineDecisionTs,
-                    baseline_ts_ms: expectedBaseline.baselineTsMs,
-                    baseline_best_bid: expectedBaseline.baselineBestBid ?? null,
-                    baseline_best_ask: expectedBaseline.baselineBestAsk ?? null,
-                    baseline_mid: expectedBaseline.baselineMid ?? null,
-                    baseline_spread_bps: expectedBaseline.baselineSpreadBps ?? null,
-                    baseline_source: expectedBaseline.baselineSource,
-                    expected_price: expectedBaseline.expectedPrice ?? null,
-                    expected_rule: expectedBaseline.expectedRule,
-                    price_convention: expectedBaseline.priceConvention,
-                    baseline_book_age_ms: expectedBaseline.baselineBookAgeMs ?? null,
-                    tx_type: 'OfferCreate',
-                    offer_create: null,
-                    depth_check: depthCheckSnapshot,
-                    depth_reprice: depthRepriceSnapshot,
-                    submit_result: {
-                        engine_result: null,
-                        engine_result_code: null,
-                        engine_result_message: preSubmitDepthRejectReason,
+            const attemptTrace: TradeRetryAttemptSnapshot = {
+                attempt_n: retryAttempt,
+                slippage_bps: retrySlippageBps,
+                limit_price: Number.isFinite(intentForSubmission.price) ? intentForSubmission.price : null,
+                fillable_base: Number.isFinite(depth.fillableBase) ? depth.fillableBase : null,
+                snapshot_age_ms: depthCheckSnapshot.snapshot_age_ms ?? null,
+                engine_result: typeof attemptEngineResult === 'string' ? attemptEngineResult : null,
+                classified_outcome: classifiedOutcome,
+            };
+            retryAttempts.push(attemptTrace);
+            logger.info({
+                pair: pairSymbol,
+                side: intentForSubmission.side,
+                ...attemptTrace,
+            }, 'Recorded OfferCreate attempt trace');
+
+            if (latestResult.hash) {
+                tradeHistory.upsertTradeTrace({
+                    hash: latestResult.hash,
+                    patch: {
+                        retry_attempts: retryAttempts,
                     },
-                    ack_status: 'rejected',
-                    outcome: 'rejected',
-                    outcome_reason: preSubmitDepthRejectReason,
-                },
-            });
-
-            try {
-                feedbackEngine.recordTradeEvent({
-                    pairKey: pairSymbol,
-                    strategy: this.currentStrategy,
-                    action: 'reject',
-                    side: normalizedIntent.side.toLowerCase() as 'buy' | 'sell',
-                    intentPrice: normalizedIntent.price,
-                    intentSizeBase: normalizedIntent.amount,
-                    error: preSubmitDepthRejectReason,
-                    resultCode: preSubmitDepthRejectReason,
-                    midPriceAtDecision: this.currentMidPrice ?? undefined,
-                    isBotTrade: true,
                 });
-            } catch { /* feedback should never crash trading */ }
+            }
 
-            return { accepted: false, reason: preSubmitDepthRejectReason };
+            if (latestResult.accepted) {
+                return latestResult;
+            }
+
+            const shouldRetry = shouldRetryNoFill({
+                attempt: retryAttempt,
+                isIoc: isIocOrder,
+                config: retryConfig,
+                engineResult: attemptEngineResult,
+                classifiedOutcome,
+            });
+            if (!shouldRetry) {
+                return latestResult;
+            }
+
+            const nextSlippageBps = nextRetrySlippageBps(retrySlippageBps, retryConfig);
+            if (nextSlippageBps <= retrySlippageBps + 1e-9) {
+                return latestResult;
+            }
+
+            const backoffMs = computeRetryBackoffMs({
+                attempt: retryAttempt,
+                config: retryConfig,
+            });
+            logger.warn({
+                pair: pairSymbol,
+                side: intentForSubmission.side,
+                retryAttempt,
+                maxAttempts: retryConfig.maxAttempts,
+                engineResult: attemptEngineResult,
+                classifiedOutcome,
+                fromSlippageBps: retrySlippageBps,
+                toSlippageBps: nextSlippageBps,
+                backoffMs,
+            }, 'Retrying IOC OfferCreate after no-fill outcome');
+            await this.waitMs(backoffMs);
+
+            retryAttempt += 1;
+            retrySlippageBps = nextSlippageBps;
+            workingIntent = {
+                ...workingIntent,
+                amount: intentForSubmission.amount,
+                price: normalizedIntent.price,
+                expectedPrice: normalizedIntent.expectedPrice ?? normalizedIntent.price,
+            };
         }
 
-        const normalized = normalizeIntent(intentForSubmission);
-        const txCore = buildOfferCreate(normalized);
-
-        const tx: any = {
-            ...txCore,
-            TransactionType: 'OfferCreate',
-            Account: this.wallet.classicAddress,
-            Flags: this.mapFlags(flags),
-            LastLedgerSequence: await this.computeLastLedgerSequence(),
-        };
-        return this.submitWithGuards(
-            tx,
-            normalized.pair.symbol,
-            intentForSubmission,
-            flags,
-            depthCheckSnapshot,
-            depthRepriceSnapshot,
-        );
+        return latestResult ?? { accepted: false, reason: 'retry-attempts-exhausted' };
     }
 
     async executeIntents(intents: TradeIntent[]): Promise<ExecutionResult[]> {
@@ -1375,6 +1887,23 @@ export class OfferExecutor {
         if (flags?.fillOrKill) values.push('FOK');
         if (flags?.passive) values.push('PASSIVE');
         return values;
+    }
+
+    private normalizeExecutionFlags(flags?: OfferParams['flags']): OfferParams['flags'] {
+        const normalized = this.executionMode.resolvedOrderType === 'FOK'
+            ? { fillOrKill: true }
+            : { immediateOrCancel: true };
+        if (flags?.passive) {
+            return {
+                ...normalized,
+                passive: true,
+            };
+        }
+        return normalized;
+    }
+
+    private resolveOrderTypeFromFlags(flags?: OfferParams['flags']): 'IOC' | 'FOK' {
+        return flags?.fillOrKill ? 'FOK' : 'IOC';
     }
 
     private decodeOfferCreateFlags(rawFlags: number, flags?: OfferParams['flags']): string[] {
@@ -1668,20 +2197,26 @@ export class OfferExecutor {
         side: TradeSide,
         intendedPrice: number,
         requiredBaseAmount: number,
-        flags?: OfferParams['flags']
+        flags?: OfferParams['flags'],
+        slippageBpsOverride?: number,
     ): Promise<{
         hasDepth: boolean;
         fillableBase: number;
         requiredBaseAmount: number;
         minRequiredBase: number;
         orderType: 'IOC' | 'FOK';
+        limitPrice: number | null;
+        expectedVwap: number | null;
+        worstPrice: number | null;
+        midSlippageAllowed: boolean;
+        midSlippageBps: number | null;
         offers: DepthBookOffer[];
         depthCheckSnapshot: TradeDepthCheckSnapshot;
     }> {
-        const orderType: 'IOC' | 'FOK' = flags?.fillOrKill ? 'FOK' : 'IOC';
+        const orderType: 'IOC' | 'FOK' = this.resolveOrderTypeFromFlags(flags);
         const minRequiredBase = orderType === 'FOK'
             ? requiredBaseAmount
-            : requiredBaseAmount * this.iocMinFillRatio;
+            : requiredBaseAmount * this.executionMinFillRatio;
         const ledgerIndexMode: 'validated' | 'current' = this.executionDepthLedgerCurrentEnabled
             ? 'current'
             : 'validated';
@@ -1696,10 +2231,17 @@ export class OfferExecutor {
             required_base: Number.isFinite(requiredBaseAmount) ? requiredBaseAmount : null,
             min_required_base: Number.isFinite(minRequiredBase) ? minRequiredBase : null,
             fillable_base: 0,
+            vwap: null,
+            worst_price: null,
+            limit_price: null,
             has_depth: false,
-            ioc_min_fill_ratio: this.iocMinFillRatio,
+            min_fill_ratio: this.executionMinFillRatio,
             depth_check_levels: this.depthCheckLevels,
             order_type: orderType,
+            side_used: side,
+            snapshot_age_ms: this.normalizeNonNegative(this.currentBookAgeMs),
+            ledger_index: null,
+            fetched_at: null,
             ledger_index_mode: ledgerIndexMode,
             request_taker_gets_currency: requestTakerGetsCurrency,
             request_taker_pays_currency: requestTakerPaysCurrency,
@@ -1714,6 +2256,11 @@ export class OfferExecutor {
                 requiredBaseAmount,
                 minRequiredBase,
                 orderType,
+                limitPrice: null,
+                expectedVwap: null,
+                worstPrice: null,
+                midSlippageAllowed: false,
+                midSlippageBps: null,
                 offers: [],
                 depthCheckSnapshot: buildDepthCheckSnapshot({
                     error: 'invalid-depth-input',
@@ -1745,40 +2292,130 @@ export class OfferExecutor {
                     taker_pays: base,
                 };
 
+            const fetchedAt = Date.now();
             const res = await this.client.request(req as any);
-            const offers = (((res as any).result?.offers ?? []) as Array<{ TakerGets: Amount; TakerPays: Amount }>)
+            const result = (res as any).result ?? {};
+            const ledgerIndexRaw = result.ledger_index ?? result.ledger_current_index;
+            const ledgerIndex = typeof ledgerIndexRaw === 'number' && Number.isFinite(ledgerIndexRaw)
+                ? Math.max(0, Math.floor(ledgerIndexRaw))
+                : (typeof ledgerIndexRaw === 'string' && /^\d+$/.test(ledgerIndexRaw)
+                    ? Number.parseInt(ledgerIndexRaw, 10)
+                    : null);
+            const offersRaw = result.offers;
+            if (!Array.isArray(offersRaw) || offersRaw.length === 0) {
+                return {
+                    hasDepth: false,
+                    fillableBase: 0,
+                    requiredBaseAmount,
+                    minRequiredBase,
+                    orderType,
+                    limitPrice: null,
+                    expectedVwap: null,
+                    worstPrice: null,
+                    midSlippageAllowed: false,
+                    midSlippageBps: null,
+                    offers: [],
+                    depthCheckSnapshot: buildDepthCheckSnapshot({
+                        fillable_base: 0,
+                        has_depth: false,
+                        ledger_index: ledgerIndex,
+                        fetched_at: fetchedAt,
+                        error: 'NO_ORDERBOOK',
+                    }),
+                };
+            }
+            const offers = (offersRaw as Array<{ TakerGets: Amount; TakerPays: Amount }>)
                 .slice(0, this.depthCheckLevels);
-
-            let fillableBase = 0;
+            const depthLevels: DepthBookLevel[] = [];
             for (const offer of offers) {
                 const gets = this.amountToNumber(offer.TakerGets);
                 const pays = this.amountToNumber(offer.TakerPays);
-                if (gets <= 0 || pays <= 0) continue;
-
+                if (!Number.isFinite(gets) || !Number.isFinite(pays) || gets <= 0 || pays <= 0) {
+                    continue;
+                }
                 if (side === 'BUY') {
-                    const askPrice = pays / gets; // quote/base
-                    if (askPrice <= intendedPrice) {
-                        fillableBase += gets;
-                    }
+                    depthLevels.push({
+                        price: pays / gets, // quote/base ask price
+                        baseSize: gets,
+                    });
                 } else {
-                    const bidPrice = gets / pays; // quote/base
-                    if (bidPrice >= intendedPrice) {
-                        fillableBase += pays;
-                    }
+                    depthLevels.push({
+                        price: gets / pays, // quote/base bid price
+                        baseSize: pays,
+                    });
                 }
             }
+            const depthBook = side === 'BUY'
+                ? { asks: depthLevels, bids: [] as DepthBookLevel[] }
+                : { asks: [] as DepthBookLevel[], bids: depthLevels };
+            const depthAvailability = evaluateDepthAvailability({
+                side,
+                requiredBase: requiredBaseAmount,
+                minRequiredBase,
+                maxLevels: this.depthCheckLevels,
+                book: depthBook,
+            });
+            if (depthAvailability.error != null) {
+                return {
+                    hasDepth: false,
+                    fillableBase: 0,
+                    requiredBaseAmount,
+                    minRequiredBase,
+                    orderType,
+                    limitPrice: null,
+                    expectedVwap: null,
+                    worstPrice: null,
+                    midSlippageAllowed: false,
+                    midSlippageBps: null,
+                    offers,
+                    depthCheckSnapshot: buildDepthCheckSnapshot({
+                        fillable_base: 0,
+                        has_depth: false,
+                        ledger_index: ledgerIndex,
+                        fetched_at: fetchedAt,
+                        error: depthAvailability.error,
+                    }),
+                };
+            }
 
+            const limitChoice = chooseLimitPrice({
+                side,
+                desiredBase: requiredBaseAmount,
+                book: depthBook,
+                slippageBps: Number.isFinite(slippageBpsOverride)
+                    ? Math.max(0, slippageBpsOverride as number)
+                    : this.executionSlippageBpsDefault,
+            });
+            const fillableBase = limitChoice.fillableBase;
             const hasDepth = fillableBase + 1e-12 >= minRequiredBase;
+            const midGuard = checkLimitVsMidSlippage({
+                side,
+                limitPrice: limitChoice.limitPrice,
+                midPrice: this.currentMidPrice,
+                maxSlippageBps: this.executionMaxSlippageBpsVsMid,
+            });
+            const usableDepth = hasDepth && midGuard.allowed;
             return {
-                hasDepth,
+                hasDepth: usableDepth,
                 fillableBase,
                 requiredBaseAmount,
                 minRequiredBase,
                 orderType,
+                limitPrice: limitChoice.limitPrice,
+                expectedVwap: limitChoice.expectedVwap,
+                worstPrice: limitChoice.worstPrice,
+                midSlippageAllowed: midGuard.allowed,
+                midSlippageBps: midGuard.slippageBps,
                 offers,
                 depthCheckSnapshot: buildDepthCheckSnapshot({
                     fillable_base: fillableBase,
+                    vwap: limitChoice.expectedVwap,
+                    worst_price: limitChoice.worstPrice,
+                    limit_price: limitChoice.limitPrice,
                     has_depth: hasDepth,
+                    ledger_index: ledgerIndex,
+                    fetched_at: fetchedAt,
+                    error: midGuard.allowed ? null : 'max-slippage-vs-mid',
                 }),
             };
         } catch (err) {
@@ -1790,6 +2427,11 @@ export class OfferExecutor {
                 requiredBaseAmount,
                 minRequiredBase,
                 orderType,
+                limitPrice: null,
+                expectedVwap: null,
+                worstPrice: null,
+                midSlippageAllowed: false,
+                midSlippageBps: null,
                 offers: [],
                 depthCheckSnapshot: buildDepthCheckSnapshot({
                     fillable_base: 0,
@@ -2033,13 +2675,13 @@ export class OfferExecutor {
             expectedPriceSource = 'mid';
             slippageBaselineUsed = 'mid';
             baselineSource = 'fair_value';
-        } else if (hintedExpected != null) {
+        } else if (this.paper && hintedExpected != null) {
             expectedPrice = hintedExpected;
             expectedRule = sideUpper === 'BUY' ? 'BUY->intent_price' : 'SELL->intent_price';
             expectedPriceSource = 'intent';
             slippageBaselineUsed = 'intent';
             baselineSource = 'intent_fallback';
-        } else if (intentPrice != null) {
+        } else if (this.paper && intentPrice != null) {
             expectedPrice = intentPrice;
             expectedRule = sideUpper === 'BUY' ? 'BUY->fallback_intent' : 'SELL->fallback_intent';
             expectedPriceSource = 'fallback_intent';
@@ -2416,6 +3058,9 @@ export class OfferExecutor {
         flags?: OfferParams['flags'],
         depthCheckSnapshot?: TradeDepthCheckSnapshot | null,
         depthRepriceSnapshot?: TradeDepthRepriceSnapshot | null,
+        submitOptions?: {
+            bypassIdempotency?: boolean;
+        },
     ): Promise<ExecutionResult> {
         const canonicalPair = canonicalizePairKey(
             pairSymbol ?? (intent ? `${intent.pair.baseCurrency}/${intent.pair.quoteCurrency}` : `${this.pair.baseCurrency}/${this.pair.quoteCurrency}`)
@@ -2461,6 +3106,11 @@ export class OfferExecutor {
         if (isOfferCreateAttempt && txType == null) {
             txType = 'OfferCreate';
         }
+        const intentFingerprint = this.executionIdempotencyEnabled
+            && intent
+            && submitOptions?.bypassIdempotency !== true
+            ? this.buildIntentFingerprint(canonicalPair, intent, flags)
+            : null;
         let baselineContext: ExpectedBaselineContext | null = expectedBaseline
             ? {
                 ...expectedBaseline,
@@ -2472,6 +3122,56 @@ export class OfferExecutor {
 
         try {
             if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
+
+            if (intentFingerprint) {
+                const nowMs = Date.now();
+                if (this.isDuplicateIntentFingerprint(intentFingerprint, nowMs)) {
+                    const duplicateReason = 'idempotency-duplicate-prevented';
+                    logger.warn({
+                        pair: canonicalPair,
+                        strategy: this.currentStrategy,
+                        side: intent?.side,
+                        amount: intent?.amount ?? null,
+                        price: intent?.price ?? null,
+                        windowMs: this.executionIdempotencyWindowMs,
+                    }, 'Skipped duplicate submit by idempotency guard');
+                    this.emitSubmitTelemetry({
+                        strategy: this.currentStrategy,
+                        pairKey: canonicalPair,
+                        stage: 'fail',
+                        tradeId,
+                        nodeEndpoint,
+                        feeDrops,
+                        sequence,
+                        offerCreateIntent,
+                        txHash,
+                        submitResult: {
+                            engine_result: null,
+                            engine_result_code: null,
+                            engine_result_message: duplicateReason,
+                        },
+                        ackStatus: 'rejected',
+                        errorCode: duplicateReason,
+                        baselineTsMs: baselineContext?.baselineTsMs ?? null,
+                        baselineBestBid: baselineContext?.baselineBestBid ?? null,
+                        baselineBestAsk: baselineContext?.baselineBestAsk ?? null,
+                        baselineMid: baselineContext?.baselineMid ?? null,
+                        baselineSpreadBps: baselineContext?.baselineSpreadBps ?? null,
+                        baselineSource: baselineContext?.baselineSource ?? null,
+                        expectedPrice: baselineContext?.expectedPrice ?? null,
+                        expectedRule: baselineContext?.expectedRule ?? null,
+                        priceConvention: baselineContext?.priceConvention ?? null,
+                        baselineBookAgeMs: baselineContext?.baselineBookAgeMs ?? null,
+                        ...(executionSide ? { side: executionSide } : {}),
+                        ...(typeof intent?.amount === 'number' ? { amountBase: intent.amount } : {}),
+                        ...(() => {
+                            const duplicateIntentPrice = intentBaselinePrice ?? intent?.price;
+                            return typeof duplicateIntentPrice === 'number' ? { intentPrice: duplicateIntentPrice } : {};
+                        })(),
+                    });
+                    return { accepted: false, reason: duplicateReason };
+                }
+            }
 
             // Ensure required fields are present before autofill; Account must be set.
             if (!tx.Account) {
@@ -2782,6 +3482,9 @@ export class OfferExecutor {
             }
 
             logger.info({ tx: safePrepared, pair: pairSymbol }, 'Autofilled XRPL transaction');
+            if (intentFingerprint) {
+                this.rememberIntentFingerprint(intentFingerprint, Date.now());
+            }
             const signed = this.wallet.sign(prepared);
             txHash = signed.hash;
             feeDrops = typeof prepared.Fee === 'string' ? prepared.Fee : null;
@@ -2966,7 +3669,7 @@ export class OfferExecutor {
                         status: 'REJECTED',
                         rejectReason: 'timeout-unknown-finality',
                         flags: this.buildExecutionFlags(flags),
-                        repriceApplied: depthRepriceSnapshot?.decision === 'applied',
+                        repriceApplied: depthRepriceSnapshot?.decision === 'applied' || depthRepriceSnapshot?.decision === 'reprice',
                         decisionTs,
                         submitTs: eqSubmitTimeMs,
                         submitResponseTs: submitResponseTsMs,
@@ -3273,7 +3976,7 @@ export class OfferExecutor {
                             status: 'REJECTED',
                             rejectReason: txResult ?? 'unknown-error',
                             flags: this.buildExecutionFlags(flags),
-                            repriceApplied: depthRepriceSnapshot?.decision === 'applied',
+                            repriceApplied: depthRepriceSnapshot?.decision === 'applied' || depthRepriceSnapshot?.decision === 'reprice',
                             decisionTs,
                             submitTs: eqSubmitTimeMs,
                             submitResponseTs: submitResponseTsMs,
@@ -3322,6 +4025,43 @@ export class OfferExecutor {
                     baseFilled: fillResult.baseFilled,
                     quoteFilled: fillResult.quoteFilled,
                 }, 'Partial fill detected');
+            }
+
+            const submitOrderType = this.resolveOrderTypeFromFlags(flags);
+            if (
+                this.executionFokPartialAlertEnabled
+                && submitOrderType === 'FOK'
+                && txResult === 'tesSUCCESS'
+                && status === 'PARTIAL'
+            ) {
+                logger.error({
+                    pair: canonicalPair,
+                    strategy: this.currentStrategy,
+                    side: intent?.side,
+                    txHash: responseTxHash,
+                    fillRatio: fillResult.fillRatio,
+                    requestedBase: intent?.amount ?? null,
+                    filledBase: fillResult.baseFilled,
+                    orderType: submitOrderType,
+                }, 'FOK partial fill anomaly detected');
+
+                try {
+                    feedbackEngine.recordTradeEvent({
+                        pairKey: canonicalPair,
+                        strategy: this.currentStrategy,
+                        action: 'error',
+                        side: (intent?.side ?? 'BUY').toLowerCase() as 'buy' | 'sell',
+                        intentPrice: intentBaselinePrice ?? intent?.price ?? 0,
+                        intentSizeBase: intent?.amount ?? 0,
+                        fillPrice: fillResult.effectivePrice,
+                        fillSizeBase: fillResult.baseFilled,
+                        txHash: responseTxHash,
+                        resultCode: 'fok-partial-fill-anomaly',
+                        error: 'fok-partial-fill-anomaly',
+                        isBotTrade: true,
+                        midPriceAtDecision: this.currentMidPrice ?? undefined,
+                    });
+                } catch { /* feedback should never crash trading */ }
             }
 
             // Record trade with actual fill amounts
@@ -3584,7 +4324,7 @@ export class OfferExecutor {
                     rejectReason: integrity.ok ? null : integrity.reasons.join(','),
                     flags: executionFlags,
                     guardQuarantined: !integrity.ok,
-                    repriceApplied: depthRepriceSnapshot?.decision === 'applied',
+                    repriceApplied: depthRepriceSnapshot?.decision === 'applied' || depthRepriceSnapshot?.decision === 'reprice',
                     decisionTs,
                     submitTs: eqSubmitTimeMs,
                     submitResponseTs: submitResponseTsMs,
@@ -3957,7 +4697,7 @@ export class OfferExecutor {
                         status: 'REJECTED',
                         rejectReason: failureMessage,
                         flags: this.buildExecutionFlags(flags),
-                        repriceApplied: depthRepriceSnapshot?.decision === 'applied',
+                        repriceApplied: depthRepriceSnapshot?.decision === 'applied' || depthRepriceSnapshot?.decision === 'reprice',
                         decisionTs: inflightTrace?.trace.decisionTimeMs ?? null,
                         submitTs: eqSubmitTimeMs,
                         submitResponseTs: submitResponseTsMs,

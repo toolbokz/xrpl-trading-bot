@@ -23,6 +23,7 @@ const globalRefs = globalThis as typeof globalThis & {
     _runtimeHooksRegistered?: boolean;
     _localOnlyValidated?: boolean;
 };
+let moduleHooksRegistered = false;
 
 /**
  * Validate local-only execution on first access.
@@ -85,6 +86,15 @@ function registerHooks(): void {
         },
     });
     globalRefs._runtimeHooksRegistered = true;
+    moduleHooksRegistered = true;
+}
+
+function ensureHooksRegisteredOnce(): void {
+    if (moduleHooksRegistered || globalRefs._runtimeHooksRegistered) {
+        moduleHooksRegistered = true;
+        return;
+    }
+    registerHooks();
 }
 
 export const ensureRuntimeHooks = (): TradingRuntime => {
@@ -92,9 +102,7 @@ export const ensureRuntimeHooks = (): TradingRuntime => {
 
     // Register hooks once (they reference the singleton dynamically,
     // so they survive kill/restart cycles without re-registration).
-    if (!globalRefs._runtimeHooksRegistered) {
-        registerHooks();
-    }
+    ensureHooksRegisteredOnce();
 
     // Return the current runtime (may be null if between kill and start)
     const runtime = singletonGetRuntime();
@@ -117,3 +125,9 @@ export const ensureRuntimeHooks = (): TradingRuntime => {
 export const getRuntime = (): TradingRuntime | undefined => {
     return singletonGetRuntime() ?? undefined;
 };
+
+export function __resetRuntimeHooksForTests(): void {
+    moduleHooksRegistered = false;
+    delete globalRefs._runtimeHooksRegistered;
+    delete globalRefs._localOnlyValidated;
+}

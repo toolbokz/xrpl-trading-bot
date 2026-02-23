@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../lib/localApi';
+import { withApiRouteContext } from '../../lib/localApi/withApiRouteContext';
 import { botController } from '../../lib/botController';
 import { ensureRuntimeHooks } from '../../lib/runtimeHooks';
 import { loadConfig } from '../../../config';
@@ -73,4 +74,4 @@ function handler(req: LocalRequest, res: NextApiResponse<HealthResponse>) {
     return res.status(health.ok ? 200 : 503).json(health);
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

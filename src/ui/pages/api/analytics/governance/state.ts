@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
+import { withApiRouteContext } from '../../../../lib/localApi/withApiRouteContext';
 import { getRuntime } from '../../../../lib/runtimeHooks';
 
 export const config = {
@@ -133,4 +134,4 @@ function handler(req: LocalRequest, res: NextApiResponse<GovernanceStateResponse
     }
 }
 
-export default withLocalApi(handler);
+export default withLocalApi(withApiRouteContext(handler));

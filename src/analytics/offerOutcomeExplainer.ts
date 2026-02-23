@@ -42,7 +42,7 @@ export interface OfferOutcomeEvidence {
     offerCreateMissing: boolean;
     takerAmountsMissing: boolean;
     minUnitUnderflowShown: boolean;
-    depthRepriceDecision: 'applied' | 'skipped_over_budget' | 'skipped_no_candidate' | 'not_needed' | null;
+    depthRepriceDecision: 'reprice' | 'skip_too_far' | 'applied' | 'skipped_over_budget' | 'skipped_no_candidate' | 'not_needed' | null;
     depthRepricedPrice: number | null;
     depthRequiredRepriceBps: number | null;
 }
@@ -233,7 +233,9 @@ export function explainOfferOutcome(input: {
     const diffVsIntendedBps = computeAbsoluteDiffBps(intendedPrice, impliedLimitPrice);
     const minUnitUnderflowShown = canShowMinUnitUnderflow(offerCreateIntent);
     const hasDepthCheckEvidence = hasDepthEvidence(trace.depth_check);
-    const depthRepriceDecision = trace.depth_reprice?.decision === 'applied'
+    const depthRepriceDecision = trace.depth_reprice?.decision === 'reprice'
+        || trace.depth_reprice?.decision === 'skip_too_far'
+        || trace.depth_reprice?.decision === 'applied'
         || trace.depth_reprice?.decision === 'skipped_over_budget'
         || trace.depth_reprice?.decision === 'skipped_no_candidate'
         || trace.depth_reprice?.decision === 'not_needed'
@@ -268,7 +270,11 @@ export function explainOfferOutcome(input: {
         minRequiredBase: toFiniteNonNegative(trace.depth_check?.min_required_base ?? null),
         fillableBase: toFiniteNonNegative(trace.depth_check?.fillable_base ?? null),
         hasDepth: trace.depth_check?.has_depth ?? null,
-        iocMinFillRatio: toFiniteNonNegative(trace.depth_check?.ioc_min_fill_ratio ?? null),
+        iocMinFillRatio: toFiniteNonNegative(
+            trace.depth_check?.min_fill_ratio
+            ?? (trace.depth_check as { ioc_min_fill_ratio?: number | null } | null | undefined)?.ioc_min_fill_ratio
+            ?? null
+        ),
         depthCheckLevels: toFiniteNonNegative(trace.depth_check?.depth_check_levels ?? null),
         orderType: trace.depth_check?.order_type ?? null,
         offerCreateMissing: !hasOfferCreateIntent,
@@ -282,11 +288,15 @@ export function explainOfferOutcome(input: {
     let outcomeCategory: OfferOutcomeCategory = 'UNKNOWN';
     let rootCause: string | null = null;
 
-    if (trace.outcome_reason === 'depth-reprice-over-budget' || txResultLower === 'depth-reprice-over-budget') {
+    if (
+        trace.outcome_reason === 'depth-reprice-over-budget'
+        || txResultLower === 'depth-reprice-over-budget'
+        || (trace.outcome_reason === 'SKIP_INSUFFICIENT_DEPTH' && depthRepriceDecision === 'skip_too_far')
+    ) {
         outcomeCategory = 'INSUFFICIENT_LIQUIDITY_AT_PRICE';
         rootCause = 'DEPTH_REPRICE_OVER_BUDGET';
     } else if (
-        depthRepriceDecision === 'applied'
+        (depthRepriceDecision === 'reprice' || depthRepriceDecision === 'applied')
         && (trace.outcome === 'filled' || trace.outcome === 'partial' || txResultUpper === 'TESSUCCESS')
     ) {
         outcomeCategory = 'DEPTH_REPRICE_APPLIED';

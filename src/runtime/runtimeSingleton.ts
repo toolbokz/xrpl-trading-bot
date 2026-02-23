@@ -14,6 +14,7 @@ import { RuntimeCacheRegistry, RuntimeCacheSnapshot } from './runtimeCacheRegist
 import { RuntimeState } from './runtimeFsm';
 import { RuntimeTelemetry } from './runtimeObservability';
 import { loadConfig, TradingPair } from '../config';
+import { enforceStartupConfigValidation } from '../config/startupValidation';
 import { logger } from '../analytics/logger';
 import { OrderBookState } from '../utils/types';
 import { FlowMetrics } from '../market/flowMetrics';
@@ -206,6 +207,10 @@ export async function ensureRuntimeStarted(): Promise<TradingRuntime> {
             logger.info('[RuntimeSingleton] Starting TradingRuntime in single-process mode...');
 
             const config = loadConfig();
+            enforceStartupConfigValidation(process.env, config, {
+                info: (meta, message) => logger.info(meta, message),
+                warn: (meta, message) => logger.warn(meta, message),
+            });
             globalThis.__xrplTradingBotRuntime = new TradingRuntime(config);
             await globalThis.__xrplTradingBotRuntime.start();
 

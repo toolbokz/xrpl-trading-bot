@@ -2,12 +2,13 @@ import fs from 'fs';
 import path from 'path';
 
 export type TradeAckStatus = 'accepted' | 'queued' | 'rejected' | 'unknown';
-export type TradeOutcome = 'filled' | 'partial' | 'rejected' | 'abandoned' | 'timeout';
+export type TradeOutcome = 'filled' | 'partial' | 'rejected' | 'abandoned' | 'timeout' | 'skipped';
 export type TradePriceConvention = 'quote_per_base' | 'base_per_quote';
 export type TradeBaselineSource =
     | 'orderbook_snapshot'
     | 'fair_value'
     | 'intent_fallback'
+    | 'market_data_missing'
     | 'invalid'
     | 'missing';
 export type TradeExpectedRule =
@@ -53,9 +54,12 @@ export interface TradeDepthCheckSnapshot {
     min_required_base: number | null;
     fillable_base: number | null;
     has_depth: boolean | null;
-    ioc_min_fill_ratio: number | null;
+    min_fill_ratio: number | null;
     depth_check_levels: number | null;
     order_type: 'IOC' | 'FOK' | null;
+    snapshot_age_ms?: number | null;
+    ledger_index?: number | null;
+    fetched_at?: number | null;
     ledger_index_mode?: 'validated' | 'current' | null;
     request_taker_gets_currency?: string | null;
     request_taker_pays_currency?: string | null;
@@ -70,7 +74,7 @@ export interface TradeDepthRepriceSnapshot {
     min_required_base: number | null;
     fillable_base_at_intended: number | null;
     fillable_base_at_repriced: number | null;
-    decision: 'applied' | 'skipped_over_budget' | 'skipped_no_candidate' | 'not_needed' | null;
+    decision: 'reprice' | 'skip_too_far' | 'skipped_no_candidate' | 'not_needed' | 'applied' | 'skipped_over_budget' | null;
     max_reprice_bps: number | null;
 }
 
@@ -95,6 +99,16 @@ export interface TradeMarkoutRecord {
     missing_reason: TradeMarkoutMissingReason | null;
     attempts: number;
     last_error: string | null;
+}
+
+export interface TradeRetryAttemptSnapshot {
+    attempt_n: number;
+    slippage_bps: number | null;
+    limit_price: number | null;
+    fillable_base: number | null;
+    snapshot_age_ms: number | null;
+    engine_result: string | null;
+    classified_outcome: string | null;
 }
 
 export interface TradeTrace {
@@ -128,6 +142,7 @@ export interface TradeTrace {
     ack_status: TradeAckStatus;
     outcome: TradeOutcome;
     outcome_reason: string | null;
+    retry_attempts: TradeRetryAttemptSnapshot[];
     fill_snapshot: TradeFillSnapshot | null;
     markouts: TradeMarkoutRecord[];
 }

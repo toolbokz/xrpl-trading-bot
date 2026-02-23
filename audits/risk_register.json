@@ -1,0 +1,163 @@
+[
+  {
+    "id": "RISK-001",
+    "title": "Single-process XRPL direct-call guard is not enforced for Pages API routes",
+    "severity": "P1",
+    "likelihood": "high",
+    "impact": "API routes can continue making direct XRPL RPC requests in single-process mode, increasing node load/rate-limit pressure and bypassing intended runtime-state pathing.",
+    "detection": "`rg -n \"withRuntimeBridge\\(\" src/ui/pages/api` returns no wrappers while routes still call `getSharedClient`.",
+    "mitigation": "Create one wrapper that composes `withLocalApi` with API-route context marking, then migrate high-volume routes to `getApiXrplClient` or runtime cache reads.",
+    "owners_suggested": ["backend-api", "runtime"],
+    "references": [
+      "src/ui/lib/runtimeBridge.ts:132",
+      "src/ui/lib/runtimeBridge.ts:154",
+      "src/ui/pages/api/bot/price.ts:72",
+      "src/ui/pages/api/bot/orders.ts:116",
+      "src/ui/pages/api/pairs/[key]/orderbook.ts:154",
+      "src/ui/lib/xrplClient.ts:40",
+      "src/xrpl/sharedClient.ts:343"
+    ]
+  },
+  {
+    "id": "RISK-002",
+    "title": "Security documentation does not match the implemented API auth model",
+    "severity": "P1",
+    "likelihood": "high",
+    "impact": "Operators may believe HMAC/RBAC is active while runtime is actually localhost-only plus optional LOCAL_API_TOKEN, leading to misconfigured controls and false assurance.",
+    "detection": "Compare `docs/security-api-auth.md` to `withLocalApi` behavior.",
+    "mitigation": "Either implement documented HMAC/RBAC or update docs immediately to match deployed controls and threat model.",
+    "owners_suggested": ["security", "backend-api", "docs"],
+    "references": [
+      "docs/security-api-auth.md:5",
+      "docs/security-api-auth.md:21",
+      "src/ui/lib/localApi/withLocalApi.ts:175",
+      "src/ui/lib/localApi/withLocalApi.ts:196",
+      "server.js:110"
+    ]
+  },
+  {
+    "id": "RISK-003",
+    "title": "Configuration schema validates only a subset of env surface",
+    "severity": "P1",
+    "likelihood": "high",
+    "impact": "Critical misconfiguration can pass startup checks because many env-driven behaviors are outside the strict schema.",
+    "detection": "Env inventory shows 313 unique env keys in non-test source vs limited tracked schema in startup validation.",
+    "mitigation": "Expand schema coverage by feature domain (runtime, execution, risk, API, analytics) and mark required-by-mode keys explicitly.",
+    "owners_suggested": ["backend-api", "runtime", "sre"],
+    "references": [
+      "audits/env_var_inventory.tsv",
+      "src/config/startupValidation.ts:245",
+      "src/config/startupValidation.ts:265",
+      "src/runtime/runtimeSingleton.ts:210"
+    ]
+  },
+  {
+    "id": "RISK-004",
+    "title": "Compiled `.next` test artifacts are discovered by Vitest",
+    "severity": "P1",
+    "likelihood": "high",
+    "impact": "Generated JS test artifacts under `src/ui/.next` introduce false failures/unhandled rejections and unstable CI outcomes.",
+    "detection": "`find src/ui/.next -path '*/__tests__/*'` and full run shows unhandled errors from `.next/server/pages/api/**/__tests__/*.js`.",
+    "mitigation": "Add explicit Vitest include/exclude config to ignore `src/ui/.next/**` and ensure CI runs from clean workspace.",
+    "owners_suggested": ["developer-experience", "ci"],
+    "references": [
+      "src/ui/.next/server/pages/api/analytics/__tests__/execution-quality.integration.test.js",
+      ".github/workflows/ci.yml:55",
+      ".github/workflows/ci.yml:63"
+    ]
+  },
+  {
+    "id": "RISK-005",
+    "title": "Full test suite is currently non-green",
+    "severity": "P1",
+    "likelihood": "high",
+    "impact": "Regressions in runtime/safety/execution can ship undetected because baseline already has broad failing coverage.",
+    "detection": "`npm test -- --run` currently reports many failed files/tests.",
+    "mitigation": "Create a stabilization plan: quarantine known-failing suites, fix deterministic failures, then re-enable hard fail gates.",
+    "owners_suggested": ["runtime", "qa", "ci"],
+    "references": [
+      "src/runtime/__tests__/tradingRuntime.pairSwitch.test.ts",
+      "src/runtime/__tests__/tradingRuntime.regimePolicy.test.ts",
+      "src/security/__tests__/localOnly.test.ts",
+      "src/market/instrumentRegistry/__tests__/registry.test.ts"
+    ]
+  },
+  {
+    "id": "RISK-006",
+    "title": "Bot hook ownership split between runtimeHooks and runtimeBridge",
+    "severity": "P2",
+    "likelihood": "medium",
+    "impact": "Initialization order can change which hook set is active, making behavior harder to reason about and debug.",
+    "detection": "Both modules call `botController.setHooks`; runtimeBridge notes order dependence in comments.",
+    "mitigation": "Consolidate hook registration into one module and treat the other as read-only adapter.",
+    "owners_suggested": ["runtime", "backend-api"],
+    "references": [
+      "src/ui/lib/runtimeHooks.ts:58",
+      "src/ui/lib/runtimeBridge.ts:78",
+      "src/ui/lib/runtimeBridge.ts:82",
+      "src/ui/lib/botController.ts:49"
+    ]
+  },
+  {
+    "id": "RISK-007",
+    "title": "App Router local guard is only active when FEATURE_AUDIT_GUARDS=1",
+    "severity": "P2",
+    "likelihood": "medium",
+    "impact": "Without enabling audit guards, App Router endpoints can miss additional host/header checks applied by the new guard module.",
+    "detection": "`/api/bot/cache` App Router route gates `evaluateAppRouteGuard` behind `isAuditGuardsEnabled()`.",
+    "mitigation": "After validation period, make App Router guard default-on (or mirror `withLocalApi` semantics unconditionally).",
+    "owners_suggested": ["security", "backend-api"],
+    "references": [
+      "src/ui/app/api/bot/cache/route.ts:43",
+      "src/ui/app/api/bot/cache/route.ts:44",
+      "src/ui/lib/localApi/appRouteGuard.ts:38",
+      "src/config/featureFlags.ts:25"
+    ]
+  },
+  {
+    "id": "RISK-008",
+    "title": "Health worker state is best-effort and not heartbeat-backed",
+    "severity": "P2",
+    "likelihood": "medium",
+    "impact": "Health endpoint can report worker status that is only inferred from controller/runtime state, not from a dedicated liveness heartbeat.",
+    "detection": "`getWorkerCheck()` derives status from process mode and bot state only.",
+    "mitigation": "Add periodic runtime heartbeat and last-successful-tick timestamps to health payload.",
+    "owners_suggested": ["runtime", "observability"],
+    "references": [
+      "src/ui/lib/health/botWiringHealth.ts:249",
+      "src/ui/lib/health/botWiringHealth.ts:301",
+      "src/ui/pages/api/health/bot-wiring.ts:21"
+    ]
+  },
+  {
+    "id": "RISK-009",
+    "title": "Reserve error fail-closed behavior depends on feature flag",
+    "severity": "P2",
+    "likelihood": "medium",
+    "impact": "Transient reserve RPC failures may still bubble as tick errors when audit guards are off, reducing runtime resilience under endpoint stress.",
+    "detection": "`RiskEngine.checkReserves()` rethrows reserve errors unless `FEATURE_AUDIT_GUARDS=1`.",
+    "mitigation": "After soak validation, promote classified reserve fail-closed behavior to default and keep old behavior behind a rollback flag.",
+    "owners_suggested": ["runtime", "risk"],
+    "references": [
+      "src/risk/riskEngine.ts:90",
+      "src/risk/riskEngine.ts:101",
+      "src/xrpl/reserve.ts:61",
+      "src/xrpl/reserve.ts:115"
+    ]
+  },
+  {
+    "id": "RISK-010",
+    "title": "No container/deployment manifest in repo for reproducible production wiring",
+    "severity": "P2",
+    "likelihood": "medium",
+    "impact": "Operational drift is likely because runtime assumptions (localhost bind, env, worker mode) are not codified in deployment manifests.",
+    "detection": "No Dockerfile/Procfile/systemd/k8s manifests found under repository root scan.",
+    "mitigation": "Add minimal deployment spec(s) that pin process mode, localhost policy, and required env for consistent environments.",
+    "owners_suggested": ["sre", "platform"],
+    "references": [
+      "package.json:12",
+      "server.js:22",
+      "server.js:110"
+    ]
+  }
+]

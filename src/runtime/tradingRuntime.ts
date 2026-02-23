@@ -1,6 +1,7 @@
 import { Wallet, isValidClassicAddress, Client, TransactionStream } from 'xrpl';
 import crypto from 'crypto';
 import { AppConfig, TradingPair, FlowConfig, loadConfig } from '../config';
+import { isExecTelemetryEnabled } from '../config/featureFlags';
 import { runtimeLog as logger } from '../analytics/logger';
 import { sleep } from '../utils/sleep';
 import { XRPLWebSocket } from '../xrpl/client';
@@ -79,7 +80,7 @@ import {
     SnapshotValidator,
 } from '../market/snapshotValidator';
 import { RuntimeCacheRegistry } from './runtimeCacheRegistry';
-import type { VolatilityStopCacheSnapshot } from './runtimeCacheRegistry';
+import type { RuntimeHeartbeatSnapshot, VolatilityStopCacheSnapshot } from './runtimeCacheRegistry';
 import {
     PairSwitchOrchestrator,
     PairSwitchActions,
@@ -200,6 +201,10 @@ export class TradingRuntime {
     private strategies: Strategy[] = [];
     private walletAddress: string | null = null;
     private tickInFlight = false;
+    private tickHeartbeatCounter = 0;
+    private heartbeatLastSubmitTs: number | null = null;
+    private heartbeatLastValidatedTs: number | null = null;
+    private heartbeatLastError: string | null = null;
     private started = false;
     private shutdownInProgress = false;
     /** @deprecated Legacy field — use pairSwitchOrchestrator.getPhase(). */
@@ -810,6 +815,9 @@ export class TradingRuntime {
         }
 
         this.tickInFlight = true;
+        const tickId = ++this.tickHeartbeatCounter;
+        this.writeTickHeartbeat(tickId, true, this.heartbeatLastError);
+        let tickError: unknown = null;
         try {
             // Re-check after acquiring tickInFlight lock (state may have changed)
             if (!this.tracker || !this.risk || !this.xrpl) {
@@ -1465,9 +1473,17 @@ export class TradingRuntime {
                 }
             }
             this.perfTracer?.phaseEnd(12); // strategies
+        } catch (err) {
+            tickError = err;
+            throw err;
         } finally {
             this.perfTracer?.tickEnd();
             this.tickInFlight = false;
+            this.writeTickHeartbeat(
+                tickId,
+                false,
+                tickError != null ? this.sanitizeTickError(tickError) : null,
+            );
         }
     }
 
@@ -1678,12 +1694,105 @@ export class TradingRuntime {
         };
     }
 
+    private classifyExecutionLifecycle(
+        event: StrategySubmitTelemetryEvent,
+    ): { lifecycleStage: string; outcomeClass: string; retryable: boolean; abortReason: string | null } {
+        if (event.stage === 'attempt') {
+            return {
+                lifecycleStage: 'attempt',
+                outcomeClass: 'attempt',
+                retryable: false,
+                abortReason: null,
+            };
+        }
+
+        if (event.stage === 'success') {
+            return {
+                lifecycleStage: 'submitted',
+                outcomeClass: event.ackStatus === 'queued' ? 'queued' : 'accepted',
+                retryable: false,
+                abortReason: null,
+            };
+        }
+
+        const rawCode = (event.errorCode ?? event.submitResult?.engine_result ?? '').toUpperCase();
+        const timeoutLike = rawCode.includes('TIMEOUT');
+        const networkLike = rawCode.includes('NETWORK') || rawCode.includes('DISCONNECT');
+        const tecLike = rawCode.startsWith('TEC');
+        const tefLike = rawCode.startsWith('TEF');
+        const telLike = rawCode.startsWith('TEL');
+
+        if (timeoutLike || networkLike || telLike) {
+            return {
+                lifecycleStage: 'abort',
+                outcomeClass: 'retry',
+                retryable: true,
+                abortReason: rawCode || 'submit-failed',
+            };
+        }
+
+        if (tecLike || tefLike) {
+            return {
+                lifecycleStage: 'abort',
+                outcomeClass: 'rejected',
+                retryable: false,
+                abortReason: rawCode || 'submit-failed',
+            };
+        }
+
+        return {
+            lifecycleStage: 'abort',
+            outcomeClass: 'failed',
+            retryable: false,
+            abortReason: rawCode || 'submit-failed',
+        };
+    }
+
+    private updateHeartbeatFromSubmitTelemetry(event: StrategySubmitTelemetryEvent): void {
+        const submitTs = event.submitTsMs;
+        if (typeof submitTs === 'number' && Number.isFinite(submitTs)) {
+            this.heartbeatLastSubmitTs = this.heartbeatLastSubmitTs == null
+                ? submitTs
+                : Math.max(this.heartbeatLastSubmitTs, submitTs);
+        }
+
+        const validatedTs = event.validatedTsMs;
+        if (typeof validatedTs === 'number' && Number.isFinite(validatedTs)) {
+            this.heartbeatLastValidatedTs = this.heartbeatLastValidatedTs == null
+                ? validatedTs
+                : Math.max(this.heartbeatLastValidatedTs, validatedTs);
+        }
+    }
+
+    private sanitizeTickError(err: unknown): string {
+        if (err instanceof Error) {
+            return err.message;
+        }
+        return String(err);
+    }
+
+    private writeTickHeartbeat(tickId: number, inFlight: boolean, lastError: string | null): void {
+        this.heartbeatLastError = lastError;
+        const heartbeat: RuntimeHeartbeatSnapshot = {
+            ts: Date.now(),
+            tickId,
+            inFlight,
+            lastError: this.heartbeatLastError,
+            lastSubmitTs: this.heartbeatLastSubmitTs,
+            lastValidatedTs: this.heartbeatLastValidatedTs,
+        };
+        this.cacheRegistry.updateHeartbeat(this.getCurrentPairKey(), heartbeat);
+    }
+
     private recordSubmitTelemetry(event: StrategySubmitTelemetryEvent): void {
+        this.updateHeartbeatFromSubmitTelemetry(event);
         const funnel = this.ensureStrategyFunnel(event.strategy);
         applySubmitTelemetryToFunnel(funnel, event);
         const eventType = event.stage === 'attempt'
             ? 'SUBMIT_ATTEMPT'
             : (event.stage === 'success' ? 'SUBMIT_SUCCESS' : 'SUBMIT_FAIL');
+        const execTelemetryEnabled = isExecTelemetryEnabled();
+        const lifecycle = execTelemetryEnabled ? this.classifyExecutionLifecycle(event) : null;
         this.observabilityBus.emit({
             eventType,
             pairKey: event.pairKey,
@@ -1718,8 +1827,28 @@ export class TradingRuntime {
                 ack_status: event.ackStatus ?? null,
                 tx_hash: event.txHash ?? null,
                 error_code: event.errorCode ?? null,
+                ...(lifecycle ? {
+                    lifecycle_stage: lifecycle.lifecycleStage,
+                    outcome_class: lifecycle.outcomeClass,
+                    retryable: lifecycle.retryable,
+                    abort_reason: lifecycle.abortReason,
+                } : {}),
             },
         });
+        if (lifecycle) {
+            logger.info({
+                event: 'EXECUTION_LIFECYCLE',
+                stage: lifecycle.lifecycleStage,
+                outcome: lifecycle.outcomeClass,
+                retryable: lifecycle.retryable,
+                abortReason: lifecycle.abortReason,
+                strategy: event.strategy,
+                pairKey: event.pairKey,
+                tradeId: event.tradeId ?? null,
+                txHash: event.txHash ?? null,
+                errorCode: event.errorCode ?? null,
+            }, 'Execution lifecycle telemetry');
+        }
         this.syncStrategyFunnelToCache(event.pairKey);
     }
 
@@ -2610,6 +2739,10 @@ export class TradingRuntime {
         this.strategies = [];
         this.walletAddress = null;
         this.tickInFlight = false;
+        this.tickHeartbeatCounter = 0;
+        this.heartbeatLastSubmitTs = null;
+        this.heartbeatLastValidatedTs = null;
+        this.heartbeatLastError = null;
         this.started = false;
         this.shutdownInProgress = false;
         this.pairSwitchState = 'IDLE';

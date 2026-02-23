@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest, logSensitiveAction } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { botController } from '../../../lib/botController';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
 import { logger } from '../../../../analytics/logger';
@@ -38,4 +39,4 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
     }
 }
 
-export default withLocalApi(handler, { methods: ['POST'] });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['POST'] });

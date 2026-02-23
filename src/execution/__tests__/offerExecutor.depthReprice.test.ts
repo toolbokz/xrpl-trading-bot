@@ -32,8 +32,8 @@ describe('computeRepriceToMeetMinFill', () => {
             ],
         });
 
-        expect(result.repricedPrice).toBeCloseTo(1.0002, 8);
-        expect(result.requiredRepriceBps).toBeCloseTo(2, 8);
+        expect(result.repricedPrice).toBeCloseTo(1.00012, 8);
+        expect(result.requiredRepriceBps).toBeCloseTo(1.2, 8);
         expect(result.fillableAtRepriced).toBeCloseTo(10, 8);
         expect(result.reason).toBeUndefined();
     });
@@ -53,13 +53,13 @@ describe('computeRepriceToMeetMinFill', () => {
                 },
                 {
                     TakerGets: '6000000',
-                    TakerPays: { currency: pair.quoteCurrency, issuer: pair.quoteIssuer, value: '6.003' },
+                    TakerPays: { currency: pair.quoteCurrency, issuer: pair.quoteIssuer, value: '6.004' },
                 },
             ],
         });
 
         expect(result.repricedPrice).toBeNull();
-        expect(result.requiredRepriceBps).toBeCloseTo(5, 8);
+        expect(result.requiredRepriceBps).toBeCloseTo(4, 8);
         expect(result.reason).toBe('over-budget');
     });
 
@@ -83,8 +83,8 @@ describe('computeRepriceToMeetMinFill', () => {
             ],
         });
 
-        expect(result.repricedPrice).toBeCloseTo(0.9998, 8);
-        expect(result.requiredRepriceBps).toBeCloseTo(2, 8);
+        expect(result.repricedPrice).toBeCloseTo(0.99988, 8);
+        expect(result.requiredRepriceBps).toBeCloseTo(1.2, 8);
         expect(result.fillableAtRepriced).toBeCloseTo(10, 8);
         expect(result.reason).toBeUndefined();
     });
@@ -103,14 +103,14 @@ describe('computeRepriceToMeetMinFill', () => {
                     TakerPays: '4000000',
                 },
                 {
-                    TakerGets: { currency: pair.quoteCurrency, issuer: pair.quoteIssuer, value: '5.997' },
+                    TakerGets: { currency: pair.quoteCurrency, issuer: pair.quoteIssuer, value: '5.996' },
                     TakerPays: '6000000',
                 },
             ],
         });
 
         expect(result.repricedPrice).toBeNull();
-        expect(result.requiredRepriceBps).toBeCloseTo(5, 8);
+        expect(result.requiredRepriceBps).toBeCloseTo(4, 8);
         expect(result.reason).toBe('over-budget');
     });
 });
@@ -124,7 +124,7 @@ describe.sequential('OfferExecutor depth-aware repricing', () => {
         process.chdir(tempDir);
         fs.writeFileSync(path.join(tempDir, 'trade_history.json'), '[]', 'utf8');
         process.env.FEATURE_EXECUTION_DEPTH_REPRICE = 'true';
-        process.env.EXECUTION_IOC_MIN_FILL_RATIO = '1';
+        process.env.EXECUTION_MIN_FILL_RATIO = '1';
         process.env.EXECUTION_DEPTH_LEVELS = '5';
         vi.resetModules();
     });
@@ -133,6 +133,7 @@ describe.sequential('OfferExecutor depth-aware repricing', () => {
         delete process.env.FEATURE_EXECUTION_DEPTH_REPRICE;
         delete process.env.EXECUTION_REPRICE_MAX_BPS;
         delete process.env.EXECUTION_IOC_MIN_FILL_RATIO;
+        delete process.env.EXECUTION_MIN_FILL_RATIO;
         delete process.env.EXECUTION_DEPTH_LEVELS;
         try {
             const { tradeMarkoutScheduler } = await import('../../analytics/tradeMarkoutScheduler');
@@ -226,6 +227,16 @@ describe.sequential('OfferExecutor depth-aware repricing', () => {
         };
 
         const executor = new OfferExecutor(client as any, wallet as any, risk as any, false, pair as any, undefined);
+        executor.setCurrentMarketContext({
+            midPrice: 1.0,
+            bestBid: 0.999,
+            bestAsk: 1.001,
+            spreadBps: 20,
+            bookAgeMs: 50,
+            flowCombined: null,
+            flowStrength: null,
+            flowRegime: null,
+        });
         const result = await executor.placeOffer({
             side: 'buy',
             price: 1,
@@ -241,7 +252,7 @@ describe.sequential('OfferExecutor depth-aware repricing', () => {
         expect(Number(txFromAutofill?.TakerGets?.value ?? 0)).toBeCloseTo(10.002, 8);
 
         const recent = tradeHistory.getRecentTrades(1)[0];
-        expect(recent?.trace?.depth_reprice?.decision).toBe('applied');
+        expect(recent?.trace?.depth_reprice?.decision).toBe('reprice');
         expect(recent?.trace?.depth_reprice?.repriced_price).toBeCloseTo(1.0002, 8);
         expect(recent?.trace?.depth_reprice?.required_reprice_bps).toBeCloseTo(2, 8);
     });
@@ -280,6 +291,16 @@ describe.sequential('OfferExecutor depth-aware repricing', () => {
         };
 
         const executor = new OfferExecutor(client as any, wallet as any, risk as any, false, pair as any, undefined);
+        executor.setCurrentMarketContext({
+            midPrice: 1.0,
+            bestBid: 0.999,
+            bestAsk: 1.001,
+            spreadBps: 20,
+            bookAgeMs: 50,
+            flowCombined: null,
+            flowStrength: null,
+            flowRegime: null,
+        });
         const result = await executor.placeOffer({
             side: 'buy',
             price: 1,
@@ -290,13 +311,13 @@ describe.sequential('OfferExecutor depth-aware repricing', () => {
         });
 
         expect(result.accepted).toBe(false);
-        expect(result.reason).toBe('depth-reprice-over-budget');
+        expect(result.reason).toBe('SKIP_INSUFFICIENT_DEPTH');
         expect(client.autofill).not.toHaveBeenCalled();
         expect(client.submit).not.toHaveBeenCalled();
         expect(wallet.sign).not.toHaveBeenCalled();
 
         const recent = tradeHistory.getRecentTrades(1)[0];
-        expect(recent?.trace?.depth_reprice?.decision).toBe('skipped_over_budget');
-        expect(recent?.trace?.outcome_reason).toBe('depth-reprice-over-budget');
+        expect(recent?.trace?.depth_reprice?.decision).toBe('skip_too_far');
+        expect(recent?.trace?.outcome_reason).toBe('SKIP_INSUFFICIENT_DEPTH');
     });
 });

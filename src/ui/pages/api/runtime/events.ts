@@ -19,6 +19,7 @@
 
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { getRuntimeInstance } from '../../../lib/runtimeBridge';
 import type {
     ObservabilityEvent,
@@ -138,4 +139,4 @@ function handler(req: LocalRequest, res: NextApiResponse<EventsResponse>) {
     });
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

@@ -7,6 +7,7 @@
 
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../lib/localApi';
+import { withApiRouteContext } from '../../lib/localApi/withApiRouteContext';
 import { getPrometheusMetrics, BotMetrics } from '../../lib/metrics/collector';
 import { botController } from '../../lib/botController';
 
@@ -50,4 +51,4 @@ function handler(_req: LocalRequest, res: NextApiResponse): void {
     res.status(200).send(metrics);
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

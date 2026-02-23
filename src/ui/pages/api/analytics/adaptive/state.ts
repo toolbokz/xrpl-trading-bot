@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
+import { withApiRouteContext } from '../../../../lib/localApi/withApiRouteContext';
 import { getAdaptiveState, isAdaptiveEnabled } from '../../../../../analytics/adaptiveConfig';
 import { AdaptiveState } from '../../../../../analytics/adaptiveLearner';
 
@@ -51,4 +52,4 @@ function handler(req: LocalRequest, res: NextApiResponse<AdaptiveStateApiRespons
     }
 }
 
-export default withLocalApi(handler);
+export default withLocalApi(withApiRouteContext(handler));

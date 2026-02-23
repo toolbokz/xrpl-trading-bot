@@ -2,9 +2,13 @@
 
 This document describes the procedure for rotating API keys used in the XRPL Trading Bot's authentication system.
 
+> Status (2026-02-23): The `BOT_API_KEYS`/HMAC API auth path is not implemented in the current runtime.
+> Treat this file as legacy reference only.
+> For active API security controls, use `docs/security-api-auth.md`.
+
 ## Overview
 
-The bot uses HMAC-based API key authentication. Each API key consists of:
+Legacy design used HMAC-based API key authentication. Each API key consists of:
 - **ID**: A unique identifier (minimum 6 characters)
 - **Secret**: A hex-encoded secret key (minimum 32 characters, recommended 64)
 - **Role**: Permission level (`admin`, `operator`, or `readonly`)

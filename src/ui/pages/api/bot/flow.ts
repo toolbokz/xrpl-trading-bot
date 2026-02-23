@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
 import { FlowMetrics, FlowRegime, getRegimeDescription } from '../../../../market/flowMetrics';
 import { isSingleProcessMode, getFlowFromRuntime, initRuntimeBridge, getRuntimeInstance, getCacheSnapshot } from '../../../lib/runtimeBridge';
@@ -151,4 +152,4 @@ async function handler(req: LocalRequest, res: NextApiResponse<FlowResponse>) {
     }
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

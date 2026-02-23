@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { feedbackEngine } from '../../../../analytics/feedbackEngine';
 import { tradeHistory } from '../../../../analytics/tradeHistory';
 import { getRuntimeInstance } from '../../../lib/runtimeBridge';
@@ -310,4 +311,4 @@ function handler(req: LocalRequest, res: NextApiResponse<DataWiringResponse | { 
     }
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

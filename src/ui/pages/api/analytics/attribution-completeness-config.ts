@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 
 export const config = {
     api: { bodyParser: false },
@@ -69,4 +70,4 @@ function handler(req: LocalRequest, res: NextApiResponse<AttributionCompleteness
     });
 }
 
-export default withLocalApi(handler);
+export default withLocalApi(withApiRouteContext(handler));

@@ -104,6 +104,15 @@ export interface VolatilityStopCacheSnapshot extends VolatilityStopResolution {
     sampleCount: number;
 }
 
+export interface RuntimeHeartbeatSnapshot {
+    ts: number;
+    tickId: number;
+    inFlight: boolean;
+    lastError: string | null;
+    lastSubmitTs: number | null;
+    lastValidatedTs: number | null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified cache entry
 // ─────────────────────────────────────────────────────────────────────────────
@@ -126,6 +135,7 @@ export interface RuntimeCacheSnapshot {
     sequence: number;
     runtimeState: RuntimeState | null;
     executionAllowed: boolean;
+    heartbeat: RuntimeHeartbeatSnapshot | null;
     health: CacheEntry<HealthSnapshot> | null;
     flow: CacheEntry<FlowSnapshot> | null;
     tape: CacheEntry<TapeSnapshot> | null;
@@ -170,6 +180,7 @@ export class RuntimeCacheRegistry {
     private asOfMs = 0;
     private runtimeState: RuntimeState | null = null;
     private executionAllowed = false;
+    private heartbeat: RuntimeHeartbeatSnapshot | null = null;
 
     private health: CacheEntry<HealthSnapshot> | null = null;
     private flow: CacheEntry<FlowSnapshot> | null = null;
@@ -304,6 +315,19 @@ export class RuntimeCacheRegistry {
     }
 
     /**
+     * Update runtime heartbeat (tick liveness).
+     * Called by TradingRuntime on each tick start/end.
+     */
+    updateHeartbeat(pairKey: string, heartbeat: RuntimeHeartbeatSnapshot): void {
+        if (this.pairKey && pairKey !== this.pairKey) return; // reject cross-pair updates
+        if (!this.pairKey) {
+            this.pairKey = pairKey;
+        }
+        this.asOfMs = Date.now();
+        this.heartbeat = { ...heartbeat };
+    }
+
+    /**
      * Update strategy funnel counters (observability-only).
      */
     updateStrategyFunnel(pairKey: string, data: StrategyDecisionFunnelMap): void {
@@ -325,6 +349,7 @@ export class RuntimeCacheRegistry {
         this.asOfMs = 0;
         this.runtimeState = null;
         this.executionAllowed = false;
+        this.heartbeat = null;
         this.health = null;
         this.flow = null;
         this.tape = null;
@@ -352,6 +377,7 @@ export class RuntimeCacheRegistry {
             sequence: this.sequence,
             runtimeState: this.runtimeState,
             executionAllowed: this.executionAllowed,
+            heartbeat: this.heartbeat,
             health: this.health,
             flow: this.flow,
             tape: this.tape,

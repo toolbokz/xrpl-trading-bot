@@ -73,12 +73,16 @@ describe.sequential('OfferExecutor LastLedgerSequence slack feature flag', () =>
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'xrpl-lls-slack-'));
         process.chdir(tempDir);
         fs.writeFileSync(path.join(tempDir, 'trade_history.json'), '[]', 'utf8');
+        process.env.EXECUTION_MIN_BASE_XRP = '0';
+        process.env.EXECUTION_MIN_QUOTE_RLUSD = '0';
         vi.resetModules();
     });
 
     afterEach(async () => {
         delete process.env.FEATURE_EXECUTION_LLS_SLACK;
         delete process.env.EXECUTION_LAST_LEDGER_SLACK;
+        delete process.env.EXECUTION_MIN_BASE_XRP;
+        delete process.env.EXECUTION_MIN_QUOTE_RLUSD;
         try {
             const { tradeMarkoutScheduler } = await import('../../analytics/tradeMarkoutScheduler');
             tradeMarkoutScheduler.stop();

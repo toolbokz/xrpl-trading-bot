@@ -14,6 +14,7 @@
 
 import type { Client } from 'xrpl';
 import { logger } from '../analytics/logger';
+import { isAuditGuardsEnabled } from '../config/featureFlags';
 
 export interface ReserveRequirement {
     /** Base reserve in XRP (account activation cost) */
@@ -37,7 +38,93 @@ export interface ReserveConfig {
     bufferXRP?: number | undefined;
 }
 
+export type ReserveErrorCode =
+    | 'RESERVE_TIMEOUT'
+    | 'XRPL_DISCONNECTED'
+    | 'MALFORMED_RESPONSE'
+    | 'REQUEST_FAILED';
+
+export interface ReserveErrorClassification {
+    code: ReserveErrorCode;
+    retryable: boolean;
+    message: string;
+}
+
 const DROPS_PER_XRP = 1_000_000;
+
+function resolveReserveRequestTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+    const parsed = Number.parseInt(env.XRPL_RESERVE_REQUEST_TIMEOUT_MS ?? '', 10);
+    if (!Number.isFinite(parsed)) return 4_000;
+    return Math.max(500, parsed);
+}
+
+export function classifyReserveError(err: unknown): ReserveErrorClassification {
+    if (err instanceof Error) {
+        if (err.name === 'ReserveRequestTimeoutError' || err.message.includes('reserve-timeout')) {
+            return {
+                code: 'RESERVE_TIMEOUT',
+                retryable: true,
+                message: err.message,
+            };
+        }
+        if (err.message.includes('client not connected')) {
+            return {
+                code: 'XRPL_DISCONNECTED',
+                retryable: true,
+                message: err.message,
+            };
+        }
+        if (err.message.includes('Unable to fetch reserve values') || err.message.includes('Account not found')) {
+            return {
+                code: 'MALFORMED_RESPONSE',
+                retryable: false,
+                message: err.message,
+            };
+        }
+        return {
+            code: 'REQUEST_FAILED',
+            retryable: true,
+            message: err.message,
+        };
+    }
+
+    return {
+        code: 'REQUEST_FAILED',
+        retryable: true,
+        message: String(err),
+    };
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, command: string): Promise<T> {
+    let timer: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+            const timeoutError = new Error(`reserve-timeout:${command}:${timeoutMs}ms`);
+            timeoutError.name = 'ReserveRequestTimeoutError';
+            reject(timeoutError);
+        }, timeoutMs);
+    });
+
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+async function requestWithOptionalTimeout<T>(
+    client: Client,
+    request: Parameters<Client['request']>[0],
+    command: string,
+): Promise<T> {
+    const reqPromise = client.request(request) as Promise<T>;
+    if (!isAuditGuardsEnabled()) {
+        return reqPromise;
+    }
+
+    const timeoutMs = resolveReserveRequestTimeoutMs();
+    return withTimeout(reqPromise, timeoutMs, command);
+}
 
 /**
  * Fetch current network reserve requirements from server_state.
@@ -49,9 +136,9 @@ export async function getNetworkReserves(client: Client): Promise<{ baseReserveX
         return null;
     }
 
-    const response = await client.request({
+    const response = await requestWithOptionalTimeout<Awaited<ReturnType<Client['request']>>>(client, {
         command: 'server_state',
-    });
+    }, 'server_state');
 
     const state = response.result?.state;
     if (!state?.validated_ledger?.reserve_base || !state?.validated_ledger?.reserve_inc) {
@@ -80,11 +167,11 @@ export async function getAccountInfo(
         return null;
     }
 
-    const response = await client.request({
+    const response = await requestWithOptionalTimeout<Awaited<ReturnType<Client['request']>>>(client, {
         command: 'account_info',
         account,
         ledger_index: 'validated',
-    });
+    }, 'account_info');
 
     const accountData = response.result?.account_data;
     if (!accountData) {

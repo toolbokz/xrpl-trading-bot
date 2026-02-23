@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
+import { withApiRouteContext } from '../../../../lib/localApi/withApiRouteContext';
 import { tradeHistory, Trade } from '../../../../lib/tradeHistory';
 import { explainOfferOutcome } from '../../../../../analytics/offerOutcomeExplainer';
 
@@ -145,7 +146,7 @@ function handler(req: LocalRequest, res: NextApiResponse<BucketsResponse | Error
         for (const trade of trades) {
             const bucket = buildBucket(trade);
             buckets[bucket] = (buckets[bucket] ?? 0) + 1;
-            if (trade.trace?.depth_reprice?.decision === 'applied') {
+            if (trade.trace?.depth_reprice?.decision === 'applied' || trade.trace?.depth_reprice?.decision === 'reprice') {
                 repriceAppliedByBucket[bucket] = (repriceAppliedByBucket[bucket] ?? 0) + 1;
             }
 
@@ -187,4 +188,4 @@ function handler(req: LocalRequest, res: NextApiResponse<BucketsResponse | Error
     }
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

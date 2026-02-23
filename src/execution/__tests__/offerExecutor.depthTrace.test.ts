@@ -19,13 +19,20 @@ describe.sequential('OfferExecutor depth trace persistence', () => {
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'xrpl-depth-trace-'));
         process.chdir(tempDir);
         fs.writeFileSync(path.join(tempDir, 'trade_history.json'), '[]', 'utf8');
+        process.env.EXECUTION_MIN_BASE_XRP = '0';
+        process.env.EXECUTION_MIN_QUOTE_RLUSD = '0';
         vi.resetModules();
     });
 
     afterEach(async () => {
         delete process.env.EXECUTION_DEPTH_LEVELS;
         delete process.env.EXECUTION_IOC_MIN_FILL_RATIO;
+        delete process.env.EXECUTION_MIN_FILL_RATIO;
         delete process.env.FEATURE_EXECUTION_DEPTH_LEDGER_CURRENT;
+        delete process.env.EXECUTION_SLIPPAGE_BPS_DEFAULT;
+        delete process.env.EXECUTION_MAX_SLIPPAGE_BPS_VS_MID;
+        delete process.env.EXECUTION_MIN_BASE_XRP;
+        delete process.env.EXECUTION_MIN_QUOTE_RLUSD;
         try {
             const { tradeMarkoutScheduler } = await import('../../analytics/tradeMarkoutScheduler');
             tradeMarkoutScheduler.stop();
@@ -40,7 +47,7 @@ describe.sequential('OfferExecutor depth trace persistence', () => {
 
     it('persists depth_check snapshot for insufficient-depth OfferCreate rejects', async () => {
         process.env.EXECUTION_DEPTH_LEVELS = '3';
-        process.env.EXECUTION_IOC_MIN_FILL_RATIO = '1';
+        process.env.EXECUTION_MIN_FILL_RATIO = '1';
         process.env.FEATURE_EXECUTION_DEPTH_LEDGER_CURRENT = 'false';
 
         const { OfferExecutor } = await import('../offerExecutor');
@@ -49,6 +56,7 @@ describe.sequential('OfferExecutor depth trace persistence', () => {
         const client = {
             request: vi.fn().mockResolvedValue({
                 result: {
+                    ledger_index: 123456,
                     offers: [
                         { TakerGets: '200000', TakerPays: { currency: 'RLUSD', issuer: pair.quoteIssuer, value: '0.204' } },
                     ],
@@ -66,6 +74,16 @@ describe.sequential('OfferExecutor depth trace persistence', () => {
 
         const risk = {} as any;
         const executor = new OfferExecutor(client as any, wallet as any, risk as any, false, pair as any, undefined);
+        executor.setCurrentMarketContext({
+            midPrice: 1.02,
+            bestBid: 1.019,
+            bestAsk: 1.021,
+            spreadBps: 20,
+            bookAgeMs: 50,
+            flowCombined: null,
+            flowStrength: null,
+            flowRegime: null,
+        });
 
         const result = await executor.placeOffer({
             side: 'buy',
@@ -76,7 +94,7 @@ describe.sequential('OfferExecutor depth trace persistence', () => {
         });
 
         expect(result.accepted).toBe(false);
-        expect(result.reason).toBe('insufficient-depth-at-price');
+        expect(result.reason).toBe('INSUFFICIENT_DEPTH');
         expect(client.autofill).not.toHaveBeenCalled();
         expect(client.submit).not.toHaveBeenCalled();
 
@@ -89,15 +107,22 @@ describe.sequential('OfferExecutor depth trace persistence', () => {
             required_base: 0.5,
             min_required_base: 0.5,
             has_depth: false,
-            ioc_min_fill_ratio: 1,
+            min_fill_ratio: 1,
             depth_check_levels: 3,
-            order_type: 'FOK',
+            order_type: 'IOC',
+            side_used: 'BUY',
+            snapshot_age_ms: 50,
+            ledger_index: 123456,
             ledger_index_mode: 'validated',
             request_taker_gets_currency: 'XRP',
             request_taker_pays_currency: 'RLUSD',
             error: null,
         }));
-        expect(recent?.trace?.depth_check?.fillable_base).toBe(0);
-        expect(recent?.trace?.submit_result?.engine_result_message).toBe('insufficient-depth-at-price');
+        expect(typeof recent?.trace?.depth_check?.fetched_at).toBe('number');
+        expect(recent?.trace?.depth_check?.vwap).toBeCloseTo(1.02, 8);
+        expect(recent?.trace?.depth_check?.worst_price).toBeCloseTo(1.02, 8);
+        expect(recent?.trace?.depth_check?.limit_price).toBeCloseTo(1.02, 8);
+        expect(recent?.trace?.depth_check?.fillable_base).toBeCloseTo(0.2, 8);
+        expect(recent?.trace?.submit_result?.engine_result_message).toBe('INSUFFICIENT_DEPTH');
     });
 });

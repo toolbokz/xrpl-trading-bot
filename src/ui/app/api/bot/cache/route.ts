@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getCacheSnapshot } from '../../../../../runtime/runtimeSingleton';
+import { isAuditGuardsEnabled } from '../../../../../config/featureFlags';
+import { evaluateAppRouteGuard } from '../../../../lib/localApi/appRouteGuard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,7 +40,19 @@ interface LightRuntimeCacheSnapshot {
     } | null;
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
+    if (isAuditGuardsEnabled()) {
+        const guardResult = evaluateAppRouteGuard(request.headers, process.env);
+        if (!guardResult.allowed) {
+            return NextResponse.json({
+                error: guardResult.error,
+                reason: guardResult.reason,
+            }, {
+                status: guardResult.status,
+            });
+        }
+    }
+
     const snapshot = getCacheSnapshot();
 
     if (!snapshot) {

@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { computeAdverseSelectionRate } from '../../../../analytics/feedbackEngine';
 import { querySnapshots } from '../../../../analytics/feedbackDb';
 import { canonicalizePairKey } from '../../../../xrpl/currency';
@@ -112,4 +113,4 @@ function handler(
     }
 }
 
-export default withLocalApi(handler, { methods: ['GET'] });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'] });

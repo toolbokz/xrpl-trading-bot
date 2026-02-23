@@ -2,7 +2,8 @@ import { Client } from 'xrpl';
 import { RiskConfig, TradingPair } from '../config';
 import { ExposureTracker } from './exposureTracker';
 import { riskLog as logger } from '../analytics/logger';
-import { hasAdequateReserves, loadReserveConfig, type ReserveConfig } from '../xrpl/reserve';
+import { hasAdequateReserves, loadReserveConfig, type ReserveConfig, classifyReserveError } from '../xrpl/reserve';
+import { isAuditGuardsEnabled } from '../config/featureFlags';
 
 export interface TradeIntent {
     issuer: string;
@@ -87,13 +88,30 @@ export class RiskEngine {
     }
 
     async checkReserves(account: string): Promise<boolean> {
-        // Use dynamic reserve calculation accounting for owner count
-        const { adequate, requirement, skipped } = await hasAdequateReserves(
-            this.client,
-            account,
-            this.risk.reserveFloorXRP, // Use config value as minimum available balance
-            this.reserveConfig
-        );
+        let reserveResult: Awaited<ReturnType<typeof hasAdequateReserves>>;
+        try {
+            // Use dynamic reserve calculation accounting for owner count
+            reserveResult = await hasAdequateReserves(
+                this.client,
+                account,
+                this.risk.reserveFloorXRP, // Use config value as minimum available balance
+                this.reserveConfig
+            );
+        } catch (err) {
+            if (!isAuditGuardsEnabled()) {
+                throw err;
+            }
+            const classification = classifyReserveError(err);
+            logger.warn({
+                account,
+                reserveErrorCode: classification.code,
+                retryable: classification.retryable,
+                message: classification.message,
+            }, 'Reserve check failed under audit guard; failing closed for this tick');
+            return false;
+        }
+
+        const { adequate, requirement, skipped } = reserveResult;
 
         // If check was skipped (client not connected), allow tick to continue
         // The reconnection logic will handle restoring the connection
