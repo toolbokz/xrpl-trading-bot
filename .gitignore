@@ -84,3 +84,4 @@ out/
 # Circuit breaker persistence data
 data/
 *.json.bak
+trade_history.json

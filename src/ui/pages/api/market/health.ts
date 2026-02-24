@@ -115,6 +115,13 @@ export function setOrderBookLastUpdate(ts: number, _pairKey?: string): void {
 }
 
 /**
+ * Mark order book as unavailable (clears last known timestamp).
+ */
+export function setOrderBookUnavailable(_pairKey?: string): void {
+    lastOrderBookUpdate = null;
+}
+
+/**
  * Update candles info (called from candles API)
  */
 export function setCandlesInfo(ts: number, source: 'live' | 'historical' | 'empty', _pairKey?: string): void {

@@ -122,6 +122,8 @@ export function useOrderBook(
             // Pair-truth validation: response must match the requested pairKey
             const currentPairKey = pairKeyRef.current;
             if (currentPairKey && result.pair && result.pair !== currentPairKey) {
+                setData(EMPTY_ORDER_BOOK);
+                setError('Order book response pair mismatch');
                 setRejected(true);
                 return;
             }
@@ -130,6 +132,8 @@ export function useOrderBook(
             const responseTs = result.lastUpdated || Date.now();
             const age = Date.now() - responseTs;
             if (age > maxStalenessMs) {
+                setData(EMPTY_ORDER_BOOK);
+                setError('Order book data is stale');
                 setRejected(true);
                 return;
             }
@@ -162,7 +166,9 @@ export function useOrderBook(
             if (err instanceof Error && err.name === 'AbortError') return;
 
             const message = err instanceof Error ? err.message : 'Failed to fetch order book';
+            setData(EMPTY_ORDER_BOOK);
             setError(message);
+            setRejected(true);
             console.error('[useOrderBook] Error:', message);
         } finally {
             if (isMountedRef.current) {

@@ -67,6 +67,10 @@ export class OrderBookTracker extends EventEmitter {
                     this.lastSourceLedgerIndex = sourceLedgerIndex;
                     this.lastSourceLedgerAdvanceMs = now;
                 } else if (this.lastSourceLedgerAdvanceMs > 0 && now - this.lastSourceLedgerAdvanceMs > this.sourceLedgerStaleMs) {
+                    // Warn but do NOT return false — the book data is still valid
+                    // even when the validated ledger hasn't advanced. XRPL ledgers
+                    // close every 3-5s but can pause longer; blocking here causes
+                    // a permanent stale spiral because lastBookUpdateMs never advances.
                     logger.warn(
                         {
                             sourceLedgerIndex,
@@ -74,9 +78,8 @@ export class OrderBookTracker extends EventEmitter {
                             thresholdMs: this.sourceLedgerStaleMs,
                             pair: this.pair,
                         },
-                        'Order book source ledger index stalled',
+                        'Order book source ledger index stalled (continuing with current data)',
                     );
-                    return false;
                 }
             }
             const bids: NormalizedOffer[] = [];

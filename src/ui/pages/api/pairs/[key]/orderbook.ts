@@ -28,6 +28,8 @@ export const config = {
     api: { bodyParser: false },
 };
 
+const MAX_RUNTIME_ORDERBOOK_AGE_MS = 30_000;
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -261,6 +263,32 @@ async function handler(
 
             // Return runtime data if available
             if (orderBook) {
+                const ageMs = Date.now() - orderBook.lastUpdated;
+                if (ageMs > MAX_RUNTIME_ORDERBOOK_AGE_MS) {
+                    logger.warn(
+                        {
+                            pairKey,
+                            ageMs,
+                            maxAgeMs: MAX_RUNTIME_ORDERBOOK_AGE_MS,
+                        },
+                        '[OrderBook] Runtime snapshot stale, returning unavailable response'
+                    );
+
+                    const staleResponse: OrderBookResponse = {
+                        pair: pairKey,
+                        bids: [],
+                        asks: [],
+                        lastUpdated: Date.now(),
+                        network: currentNetwork,
+                        availableOnNetwork: false,
+                        warmingUp,
+                        fromRuntime: true,
+                    };
+
+                    res.setHeader('Cache-Control', 'private, max-age=1');
+                    return res.status(200).json(staleResponse);
+                }
+
                 const bids: OrderBookLevel[] = orderBook.bids.slice(0, depth).map((b, idx, arr) => {
                     const total = arr.slice(0, idx + 1).reduce((sum, x) => sum + x.quantity, 0);
                     return { price: b.price, size: b.quantity, total };
@@ -285,8 +313,22 @@ async function handler(
                 return res.status(200).json(response);
             }
 
-            // Fallback: no runtime data for this pair — query XRPL directly
-            logger.debug({ pairKey }, '[OrderBook] Pair not active in runtime, falling back to direct XRPL query');
+            // Single-process safety: never fall back to direct XRPL calls from API routes
+            logger.debug({ pairKey }, '[OrderBook] Pair not active in runtime, returning unavailable response in single-process mode');
+
+            const response: OrderBookResponse = {
+                pair: pairKey,
+                bids: [],
+                asks: [],
+                lastUpdated: Date.now(),
+                network: currentNetwork,
+                availableOnNetwork: false,
+                warmingUp: false,
+                fromRuntime: true,
+            };
+
+            res.setHeader('Cache-Control', 'private, max-age=1');
+            return res.status(200).json(response);
         }
 
         // =====================================================================

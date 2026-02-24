@@ -21,7 +21,8 @@
         "test:discover": "node scripts/test-discovery-check.js",
         "clean": "rm -rf dist src/ui/.next .next",
         "reinstall": "npm run clean && npm install",
-        "reset:first-run": "node scripts/reset-first-run.js"
+        "reset:first-run": "node scripts/reset-first-run.js",
+        "lint:env": "ts-node scripts/lint-env.ts .env"
     },
     "engines": {
         "node": ">=20"

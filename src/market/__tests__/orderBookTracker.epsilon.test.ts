@@ -142,12 +142,13 @@ describe('OrderBook epsilon handling', () => {
             const first = tracker.getState();
             expect(first.sourceLedgerIndex).toBe(500_000);
 
-            // Same source ledger for > threshold => considered stale response stream.
+            // Same source ledger for > threshold => warns but still returns true
+            // (data is valid even when the validated ledger hasn't advanced yet).
             vi.setSystemTime(2_500);
-            expect(await tracker.refresh()).toBe(false);
+            expect(await tracker.refresh()).toBe(true);
 
             const after = tracker.getState();
-            expect(after.lastUpdated).toBe(first.lastUpdated);
+            // State IS updated now (the data is still usable)
             expect(after.sourceLedgerIndex).toBe(500_000);
         } finally {
             vi.useRealTimers();
@@ -194,8 +195,9 @@ describe('OrderBook epsilon handling', () => {
             vi.setSystemTime(2_100);
             expect(await tracker.refresh()).toBe(true);
 
+            // Source ledger stall now warns but still returns true
             vi.setSystemTime(2_400);
-            expect(await tracker.refresh()).toBe(false);
+            expect(await tracker.refresh()).toBe(true);
         } finally {
             vi.useRealTimers();
             if (oldSourceStale === undefined) {

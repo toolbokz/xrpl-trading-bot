@@ -677,16 +677,24 @@ export class TradingRuntime {
                     await this.xrpl?.subscribe(this.baseConfig.tradingPair);
                 },
                 hardResubscribe: async () => {
-                    logger.info('Feed stall recovery: hard resubscribe — reconnecting WebSocket');
+                    // Stage 2: force endpoint rotation to escape zombie connections.
+                    // The previous approach only detached handlers and re-connected
+                    // via getXrplClient(), which returned the SAME broken connection
+                    // if isConnected() still reported true.
+                    logger.info('Feed stall recovery: hard resubscribe — rotating endpoint');
                     await this.xrpl?.disconnect();
+                    const { rotateEndpoint: rotate } = await import('../xrpl/sharedClient');
+                    await rotate();
                     await this.xrpl?.connect();
                     await this.xrpl?.subscribe(this.baseConfig.tradingPair);
                 },
                 fullClientRebuild: async () => {
-                    logger.warn('Feed stall recovery: full client rebuild');
+                    // Stage 3: full tear-down with endpoint rotation.
+                    logger.warn('Feed stall recovery: full client rebuild — rotating endpoint');
                     await this.xrpl?.disconnect();
-                    const { disconnectXrplClient } = await import('../xrpl/sharedClient');
+                    const { disconnectXrplClient, rotateEndpoint: rotate } = await import('../xrpl/sharedClient');
                     await disconnectXrplClient();
+                    await rotate();
                     await this.xrpl?.connect();
                     await this.xrpl?.subscribe(this.baseConfig.tradingPair);
                 },
@@ -796,10 +804,19 @@ export class TradingRuntime {
         }
         if (this.tickInFlight) return; // avoid overlapping ticks
 
-        // Skip tick if XRPL client is disconnected (will reconnect automatically)
+        // If XRPL client is disconnected, attempt to re-establish before skipping.
+        // The previous "just skip" approach could leave the bot idle indefinitely
+        // if auto-reconnect failed and no other code path triggered establish().
         if (!this.xrpl.isConnected()) {
-            logger.debug('Skipping tick - XRPL client reconnecting');
-            return;
+            logger.info('XRPL client disconnected — attempting re-establish before skipping tick');
+            try {
+                await this.xrpl.connect();
+            } catch (err) {
+                logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'XRPL re-establish failed, skipping tick');
+            }
+            if (!this.xrpl.isConnected()) {
+                return;
+            }
         }
 
         // CPU safety: skip tick if CPU is overloaded
