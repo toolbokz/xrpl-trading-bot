@@ -20,6 +20,7 @@ export class AMMArbitrageStrategy implements Strategy {
     private lastLedger = 0;
     private flowConfig: Partial<FlowConfig>;
     private lastLoggedRegime: string | null = null;
+    private lastExecutionMs = 0;
 
     constructor(
         private readonly amm: AMMService,
@@ -52,6 +53,23 @@ export class AMMArbitrageStrategy implements Strategy {
             return;
         }
         this.lastLedger = ctx.ledgerIndex;
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Cooldown gate (AMM_ARB_COOLDOWN_MS, falls back to shared COOLDOWN_MS)
+        // ─────────────────────────────────────────────────────────────────────
+        const cooldownMs = this.config.ammArbCooldownMs > 0
+            ? this.config.ammArbCooldownMs
+            : this.config.cooldownMs;
+        const elapsed = Date.now() - this.lastExecutionMs;
+        if (cooldownMs > 0 && this.lastExecutionMs > 0 && elapsed < cooldownMs) {
+            reject('cooldown', {
+                reason: 'amm-arb-cooldown',
+                cooldownMs,
+                elapsedMs: elapsed,
+            });
+            return;
+        }
+
         const { orderBook, flow } = ctx;
         if (!orderBook.bids.length || !orderBook.asks.length) {
             reject('routeUnavailable', {
@@ -107,6 +125,25 @@ export class AMMArbitrageStrategy implements Strategy {
         const bestBid = firstBid.price;
         const bestAsk = firstAsk.price;
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Spread gate (AMM_ARB_MAX_SPREAD_BPS)
+        // ─────────────────────────────────────────────────────────────────────
+        if (this.config.ammArbMaxSpreadBps > 0 && bestAsk > 0 && bestBid > 0) {
+            const mid = (bestBid + bestAsk) / 2;
+            const spreadBps = ((bestAsk - bestBid) / mid) * 10_000;
+            if (spreadBps > this.config.ammArbMaxSpreadBps) {
+                logger.debug({
+                    spreadBps: spreadBps.toFixed(2),
+                    maxSpreadBps: this.config.ammArbMaxSpreadBps,
+                }, 'AMM Arb: ⚠️ Spread too wide');
+                reject('spreadTooWide', {
+                    spreadBps,
+                    maxSpreadBps: this.config.ammArbMaxSpreadBps,
+                });
+                return;
+            }
+        }
+
         // Resolve legs via ExecutionPairResolver (replaces legacy issuer cascade)
         const resolvedLegs = resolveLegsForApi(this.pair);
 
@@ -136,10 +173,13 @@ export class AMMArbitrageStrategy implements Strategy {
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Position Sizing (scale based on regime)
+        // Position Sizing (AMM_ARB_POSITION_SIZE or shared, then regime-scale)
         // ─────────────────────────────────────────────────────────────────────
+        const basePositionSize = this.config.ammArbPositionSize > 0
+            ? this.config.ammArbPositionSize
+            : this.config.positionSize;
         const sizeMultiplier = flow ? getRegimeSizeMultiplier(flow) : 1.0;
-        const adjustedPositionSize = this.config.positionSize * sizeMultiplier;
+        const adjustedPositionSize = basePositionSize * sizeMultiplier;
 
         if (adjustedPositionSize <= 0) {
             logger.debug({ sizeMultiplier, regime: flow?.regime }, 'AMM Arb: ⚠️ Position size zero after regime adjustment');
@@ -150,12 +190,15 @@ export class AMMArbitrageStrategy implements Strategy {
         // ─────────────────────────────────────────────────────────────────────
         // Risk Engine Approval
         // ─────────────────────────────────────────────────────────────────────
+        const effectiveStopLossBps = this.config.ammArbStopLossBps > 0
+            ? this.config.ammArbStopLossBps
+            : this.config.stopLossBps;
         const issuer = resolveIssuerForRisk(this.pair);
         if (issuer) {
             const riskIntent = {
                 issuer,
                 size: adjustedPositionSize,
-                potentialLoss: adjustedPositionSize * (this.config.stopLossBps / 10_000)
+                potentialLoss: adjustedPositionSize * (effectiveStopLossBps / 10_000)
             };
             if (this.risk.approveIntent(riskIntent, this.pair) === false) {
                 logger.info({
@@ -171,7 +214,18 @@ export class AMMArbitrageStrategy implements Strategy {
         }
 
         const side: 'buy' | 'sell' = diffBps > 0 ? 'buy' : 'sell';
-        const price = side === 'buy' ? bestBid : bestAsk;
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Entry cross (AMM_ARB_ENTRY_CROSS_BPS, falls back to shared SCALPER_ENTRY_CROSS_BPS)
+        // Crosses toward the opposite side for better fill probability.
+        // ─────────────────────────────────────────────────────────────────────
+        const entryCrossBps = this.config.ammArbEntryCrossBps > 0
+            ? this.config.ammArbEntryCrossBps
+            : this.config.entryCrossBps;
+        const entryCrossFactor = 1 + (entryCrossBps / 10_000);
+        const price = side === 'buy'
+            ? Math.min(bestAsk, bestBid * entryCrossFactor)   // cross up from bid, cap at ask
+            : Math.max(bestBid, bestAsk / entryCrossFactor);  // cross down from ask, floor at bid
 
         logger.info({
             side,
@@ -179,6 +233,7 @@ export class AMMArbitrageStrategy implements Strategy {
             diffBps: diffBps.toFixed(2),
             positionSize: adjustedPositionSize.toFixed(4),
             orderType: getExecutionOrderType(),
+            entryCrossBps,
             sizeMultiplier: sizeMultiplier.toFixed(2),
             regime: flow?.regime ?? 'unknown',
         }, 'AMM Arb: 🎯 Executing arbitrage opportunity');
@@ -192,6 +247,7 @@ export class AMMArbitrageStrategy implements Strategy {
             strategy: this.name,
             flags: getExecutionOrderFlags(),
         });
+        this.lastExecutionMs = Date.now();
         if (res.accepted) {
             logger.info({
                 side,

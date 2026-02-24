@@ -94,6 +94,16 @@ export interface StrategyConfig {
     stopLossBps: number;
     cooldownMs: number;
     ammArbMinProfitBps: number;
+    /** AMM arb: skip when book spread exceeds this (0 = disabled). */
+    ammArbMaxSpreadBps: number;
+    /** AMM arb: independent position size (0 = use shared positionSize). */
+    ammArbPositionSize: number;
+    /** AMM arb: independent stop-loss bps (0 = use shared stopLossBps). */
+    ammArbStopLossBps: number;
+    /** AMM arb: minimum ms between executions (0 = use shared cooldownMs). */
+    ammArbCooldownMs: number;
+    /** AMM arb: entry cross aggressiveness in bps (0 = use shared entryCrossBps). */
+    ammArbEntryCrossBps: number;
     pathArbMinProfitBps: number;
     maxSlippageBps: number;
 
@@ -256,6 +266,11 @@ export const loadConfig = (): AppConfig => {
         stopLossBps: toNumber(process.env.STOP_LOSS_BPS, 50),
         cooldownMs: toNumber(process.env.COOLDOWN_MS, 60_000),
         ammArbMinProfitBps: toNumber(process.env.AMM_ARB_MIN_PROFIT_BPS, 15),
+        ammArbMaxSpreadBps: toNumber(process.env.AMM_ARB_MAX_SPREAD_BPS, 0),
+        ammArbPositionSize: toNumber(process.env.AMM_ARB_POSITION_SIZE, 0),
+        ammArbStopLossBps: toNumber(process.env.AMM_ARB_STOP_LOSS_BPS, 0),
+        ammArbCooldownMs: toNumber(process.env.AMM_ARB_COOLDOWN_MS, 0),
+        ammArbEntryCrossBps: Math.max(0, toNumber(process.env.AMM_ARB_ENTRY_CROSS_BPS, 0)),
         pathArbMinProfitBps: toNumber(process.env.PATH_ARB_MIN_PROFIT_BPS, 20),
         maxSlippageBps: toNumber(process.env.MAX_SLIPPAGE_BPS, 50),
 

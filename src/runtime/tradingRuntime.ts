@@ -1110,6 +1110,29 @@ export class TradingRuntime {
             this.perfTracer?.phaseEnd(5); // healthQuorum (includes gate + FSM)
             this.perfTracer?.phaseEnd(6); // fsmTransitions
 
+            // ─────────────────────────────────────────────────────────────────
+            // Flow metrics + analytics snapshot — run BEFORE the execution gate
+            // so that observational data (adverse selection, regime, etc.) is
+            // always recorded regardless of whether trading is allowed.
+            // ─────────────────────────────────────────────────────────────────
+            const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
+            this.currentFlowMetrics = flowMetrics;
+            this.perfTracer?.phaseEnd(7); // flowMetrics
+
+            // Record market snapshot for analytics (non-blocking, best-effort).
+            // This feeds the adverse-selection panel and regime analytics.
+            try {
+                feedbackEngine.recordSnapshot({
+                    pairKey,
+                    ledgerIndex: this.xrpl.getLedgerIndex(),
+                    orderBook: orderBookState,
+                    flow: flowMetrics,
+                });
+            } catch {
+                // Feedback recording should never crash trading
+            }
+            this.perfTracer?.phaseEnd(9); // feedbackRecord
+
             if (gateResult.verdict === 'BLOCK') {
                 const isBadData = gateResult.reasons.some(r => r === 'snapshot-invalid' || r.startsWith('data:'));
                 logger.info({
@@ -1123,14 +1146,9 @@ export class TradingRuntime {
                     ? 'EXECUTION_BLOCKED_BAD_DATA: gate denied tick — snapshot structural validation failed'
                     : 'EXECUTION_BLOCKED: gate denied tick execution');
                 // Update cache even on BLOCK so API reflects latest state
-                this.updateCacheSnapshot(pairKey, gateResult, null, spreadDistribution);
+                this.updateCacheSnapshot(pairKey, gateResult, flowMetrics, spreadDistribution);
                 return;
             }
-
-            // Compute flow metrics from trade tape and order book
-            const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
-            this.currentFlowMetrics = flowMetrics;
-            this.perfTracer?.phaseEnd(7); // flowMetrics
 
             this.entryGate.ingestTick(orderBookState, flowMetrics);
 
@@ -1184,18 +1202,7 @@ export class TradingRuntime {
 
             this.perfTracer?.phaseEnd(8); // cacheUpdate
 
-            // Record market snapshot for analytics (non-blocking, best-effort)
-            try {
-                feedbackEngine.recordSnapshot({
-                    pairKey,
-                    ledgerIndex: this.xrpl.getLedgerIndex(),
-                    orderBook: orderBookState,
-                    flow: flowMetrics,
-                });
-            } catch {
-                // Feedback recording should never crash trading
-            }
-            this.perfTracer?.phaseEnd(9); // feedbackRecord
+            // (Snapshot recording moved before execution gate — see above)
 
             // ─────────────────────────────────────────────────────────────────
             // Hard Risk Guard — deterministic capital safety gate
