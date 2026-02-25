@@ -46,6 +46,14 @@ import { getExecutionMode, type ExecutionOrderType } from './orderType';
 import type { TradeToastEvent } from '../observability/tradeToastEvents';
 import type { StrategySubmitTelemetryEvent } from '../observability/strategyDecisionFunnel';
 
+// ---------------------------------------------------------------------------
+// TODO(metrics-consistency): All trade recording sites in this file emit
+// pnl: 0, deferring PnL computation to strategy-level or read-time derivation
+// via resolveEffectivePnl().  A future improvement should populate trade.pnl
+// at source to avoid derived-vs-stored divergence.  See line 4132 (main live
+// fill) for details.
+// ---------------------------------------------------------------------------
+
 export interface OfferParams {
     side: 'buy' | 'sell';
     price: number;
@@ -1186,24 +1194,24 @@ export class OfferExecutor {
                     : null;
 
             // Record feedback event for paper trades
-                try {
-                    feedbackEngine.recordTradeEvent({
-                        pairKey: pairSymbol,
-                        strategy: this.currentStrategy,
-                        action: 'fill',
-                        side,
-                        intentPrice: normalizedIntent.expectedPrice ?? normalizedIntent.price,
-                        intentSizeBase: normalizedIntent.amount,
-                        fillPrice: normalizedIntent.price,
+            try {
+                feedbackEngine.recordTradeEvent({
+                    pairKey: pairSymbol,
+                    strategy: this.currentStrategy,
+                    action: 'fill',
+                    side,
+                    intentPrice: normalizedIntent.expectedPrice ?? normalizedIntent.price,
+                    intentSizeBase: normalizedIntent.amount,
+                    fillPrice: normalizedIntent.price,
                     fillSizeBase: normalizedIntent.amount,
                     resultCode: 'paper-mode',
                     isBotTrade: true,
                     midPriceAtDecision: this.currentMidPrice ?? undefined,
                     // Cost realism fields
-                        slippageBpsVsIntent: costMetrics.slippageBpsVsIntent,
-                        slippageBpsVsMid: costMetrics.slippageBpsVsMid,
-                        slippageBpsVsBbo,
-                        expectedPriceSource: expectedBaseline.expectedPriceSource,
+                    slippageBpsVsIntent: costMetrics.slippageBpsVsIntent,
+                    slippageBpsVsMid: costMetrics.slippageBpsVsMid,
+                    slippageBpsVsBbo,
+                    expectedPriceSource: expectedBaseline.expectedPriceSource,
                     decisionMidPrice: this.currentMidPrice,
                     decisionBestBid: this.currentBestBid,
                     decisionBestAsk: this.currentBestAsk,
@@ -4125,6 +4133,10 @@ export class OfferExecutor {
                         filledBase,
                         filledQuote,
                         fee: 0.000012, // Typical XRPL transaction fee
+                        // TODO(metrics-consistency): populate trade.pnl at source to avoid
+                        // derived-vs-stored divergence.  Currently the dashboard derives PnL
+                        // on read via resolveEffectivePnl(); computing it here at fill time
+                        // would eliminate the need for that fallback.
                         pnl: 0, // P&L calculated separately by strategy
                         hash: responseTxHash,
                         paper: false,
@@ -4431,80 +4443,80 @@ export class OfferExecutor {
                 // Record feedback for successful fill
                 if (integrity.ok) {
                     try {
-                    const eventId = feedbackEngine.recordTradeEvent({
-                        pairKey: canonicalPair,
-                        strategy: this.currentStrategy,
-                        action: 'fill',
-                        side,
-                        intentPrice: intentBaselinePrice ?? intent.price,
-                        intentSizeBase: intent.amount,
-                        fillPrice: actualFillPrice,
-                        fillSizeBase: fillResult.baseFilled || intent.amount,
-                        fillSizeQuote: fillResult.quoteFilled || ((fillResult.baseFilled || intent.amount) * actualFillPrice),
-                        txHash: responseTxHash,
-                        ledgerIndex: validatedLedgerIndex ?? ((res.result as any).ledger_index ?? null),
-                        resultCode: txResult ?? 'tesSUCCESS',
-                        isBotTrade: true,
-                        midPriceAtDecision: this.currentMidPrice ?? undefined,
-                        // Cost realism fields
-                        slippageBpsVsIntent: slippageBpsVsIntent ?? costMetrics.slippageBpsVsIntent,
-                        slippageBpsVsMid: slippageBpsVsMid ?? costMetrics.slippageBpsVsMid,
-                        slippageBpsVsBbo,
-                        expectedPriceSource,
-                        decisionMidPrice: this.currentMidPrice,
-                        decisionBestBid: this.currentBestBid,
-                        decisionBestAsk: this.currentBestAsk,
-                        spreadPaidBps: costMetrics.spreadPaidBps,
-                        edgeBpsVsMid: costMetrics.edgeBpsVsMid,
-                        netEdgeBpsVsMid: costMetrics.netEdgeBpsVsMid,
-                        txFeeXrp,
-                        ammFeeBps: null, // AMM fee detection requires pool-specific data
-                        fillRatio: fillResult.fillRatio,
-                        isPartial: fillResult.fillRatio < 1,
-                        executionSource: fillExecutionSource,
-                        entrySpreadBps: this.currentSpreadBps,
-                        entryFlowCombined: this.currentFlowCombined,
-                        entryFlowStrength: this.currentFlowStrength,
-                        entryFlowRegime: this.currentFlowRegime,
-                        entryMid: this.currentMidPrice,
-                        entrySignalStrength: this.currentFlowStrength,
-                        entryLocalExtreme: this.currentLocalExtreme == null ? null : (this.currentLocalExtreme ? 1 : 0),
-                    });
-
-                    if (eventId) {
-                        schedulePostFillSnapshots({
-                            eventId,
-                            getSnapshot: () => ({
-                                mid: this.currentMidPrice,
-                                spreadBps: this.currentSpreadBps,
-                                flowCombined: this.currentFlowCombined,
-                                flowStrength: this.currentFlowStrength,
-                                flowRegime: this.currentFlowRegime,
-                            }),
-                            record1s: (snapshot) => {
-                                feedbackEngine.recordPostFillSnapshot1s({
-                                    id: eventId,
-                                    postMid1s: snapshot.mid,
-                                    postSpread1s: snapshot.spreadBps,
-                                    postFlowCombined1s: snapshot.flowCombined,
-                                    postFlowStrength1s: snapshot.flowStrength,
-                                    postFlowRegime1s: snapshot.flowRegime,
-                                    postSignal1s: snapshot.flowStrength,
-                                });
-                            },
-                            record3s: (snapshot) => {
-                                feedbackEngine.recordPostFillSnapshot3s({
-                                    id: eventId,
-                                    postMid3s: snapshot.mid,
-                                    postSpread3s: snapshot.spreadBps,
-                                    postFlowCombined3s: snapshot.flowCombined,
-                                    postFlowStrength3s: snapshot.flowStrength,
-                                    postFlowRegime3s: snapshot.flowRegime,
-                                    postSignal3s: snapshot.flowStrength,
-                                });
-                            },
+                        const eventId = feedbackEngine.recordTradeEvent({
+                            pairKey: canonicalPair,
+                            strategy: this.currentStrategy,
+                            action: 'fill',
+                            side,
+                            intentPrice: intentBaselinePrice ?? intent.price,
+                            intentSizeBase: intent.amount,
+                            fillPrice: actualFillPrice,
+                            fillSizeBase: fillResult.baseFilled || intent.amount,
+                            fillSizeQuote: fillResult.quoteFilled || ((fillResult.baseFilled || intent.amount) * actualFillPrice),
+                            txHash: responseTxHash,
+                            ledgerIndex: validatedLedgerIndex ?? ((res.result as any).ledger_index ?? null),
+                            resultCode: txResult ?? 'tesSUCCESS',
+                            isBotTrade: true,
+                            midPriceAtDecision: this.currentMidPrice ?? undefined,
+                            // Cost realism fields
+                            slippageBpsVsIntent: slippageBpsVsIntent ?? costMetrics.slippageBpsVsIntent,
+                            slippageBpsVsMid: slippageBpsVsMid ?? costMetrics.slippageBpsVsMid,
+                            slippageBpsVsBbo,
+                            expectedPriceSource,
+                            decisionMidPrice: this.currentMidPrice,
+                            decisionBestBid: this.currentBestBid,
+                            decisionBestAsk: this.currentBestAsk,
+                            spreadPaidBps: costMetrics.spreadPaidBps,
+                            edgeBpsVsMid: costMetrics.edgeBpsVsMid,
+                            netEdgeBpsVsMid: costMetrics.netEdgeBpsVsMid,
+                            txFeeXrp,
+                            ammFeeBps: null, // AMM fee detection requires pool-specific data
+                            fillRatio: fillResult.fillRatio,
+                            isPartial: fillResult.fillRatio < 1,
+                            executionSource: fillExecutionSource,
+                            entrySpreadBps: this.currentSpreadBps,
+                            entryFlowCombined: this.currentFlowCombined,
+                            entryFlowStrength: this.currentFlowStrength,
+                            entryFlowRegime: this.currentFlowRegime,
+                            entryMid: this.currentMidPrice,
+                            entrySignalStrength: this.currentFlowStrength,
+                            entryLocalExtreme: this.currentLocalExtreme == null ? null : (this.currentLocalExtreme ? 1 : 0),
                         });
-                    }
+
+                        if (eventId) {
+                            schedulePostFillSnapshots({
+                                eventId,
+                                getSnapshot: () => ({
+                                    mid: this.currentMidPrice,
+                                    spreadBps: this.currentSpreadBps,
+                                    flowCombined: this.currentFlowCombined,
+                                    flowStrength: this.currentFlowStrength,
+                                    flowRegime: this.currentFlowRegime,
+                                }),
+                                record1s: (snapshot) => {
+                                    feedbackEngine.recordPostFillSnapshot1s({
+                                        id: eventId,
+                                        postMid1s: snapshot.mid,
+                                        postSpread1s: snapshot.spreadBps,
+                                        postFlowCombined1s: snapshot.flowCombined,
+                                        postFlowStrength1s: snapshot.flowStrength,
+                                        postFlowRegime1s: snapshot.flowRegime,
+                                        postSignal1s: snapshot.flowStrength,
+                                    });
+                                },
+                                record3s: (snapshot) => {
+                                    feedbackEngine.recordPostFillSnapshot3s({
+                                        id: eventId,
+                                        postMid3s: snapshot.mid,
+                                        postSpread3s: snapshot.spreadBps,
+                                        postFlowCombined3s: snapshot.flowCombined,
+                                        postFlowStrength3s: snapshot.flowStrength,
+                                        postFlowRegime3s: snapshot.flowRegime,
+                                        postSignal3s: snapshot.flowStrength,
+                                    });
+                                },
+                            });
+                        }
                     } catch { /* feedback should never crash trading */ }
                 }
             }

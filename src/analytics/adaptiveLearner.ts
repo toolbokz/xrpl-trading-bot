@@ -60,6 +60,11 @@ export interface PerformanceRow {
     avgSlippageBpsVsMid: number;
     avgSpreadPaidBps: number;
     partialFillRate: number;
+    /**
+     * Gross edge win rate proxy: fraction of trades with positive netEdgeBpsVsMid.
+     * Does NOT include tx/AMM fees. Intentionally different from feedbackEngine
+     * net PnL win rate. See Fix G documentation.
+     */
     winRateProxy: number;
     score: number;
 }
@@ -336,6 +341,13 @@ function computeGroupMetrics(points: LearningDataPoint[]): Omit<PerformanceRow, 
     const avgSlippageBpsVsMid = countSlippage > 0 ? sumSlippage / countSlippage : 0;
     const avgSpreadPaidBps = countSpread > 0 ? sumSpread / countSpread : 0;
     const partialFillRate = fills > 0 ? partialCount / fills : 0;
+
+    // Fix G: winRateProxy is intentionally a GROSS edge metric
+    // (fraction of trades with positive netEdgeBpsVsMid).
+    // It does NOT include tx fees or AMM fees.
+    // This is by design: the adaptive learner evaluates execution-edge
+    // quality, while feedbackEngine computes fee-inclusive net PnL WR.
+    // See: feedbackEngine.computeEventPnl() for fee-aware classification.
     const winRateProxy = countNetEdge > 0 ? positiveEdgeCount / countNetEdge : 0;
 
     // Composite score formula:

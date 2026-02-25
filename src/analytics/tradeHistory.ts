@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { logger } from './logger';
 import { canonicalizePairKey } from '../xrpl/currency';
+import { classifyPnl, warnOnPoorClassifiability, type ClassifiabilityReport } from './metricUtils';
+import { resolveEffectivePnl } from './resolveEffectivePnl';
 
 export interface Trade {
     id: string;
@@ -740,6 +742,10 @@ export function normalizeTradeUnits(trade: TradeInput): TradeInput {
     return normalized;
 }
 
+// Re-export resolveEffectivePnl from the shared module so existing callers
+// (tests, etc.) that import from tradeHistory continue to work.
+export { resolveEffectivePnl } from './resolveEffectivePnl';
+
 class TradeHistoryService {
     private trades: Trade[] = [];
     private filePath: string;
@@ -1007,39 +1013,91 @@ class TradeHistoryService {
         todayStart.setHours(0, 0, 0, 0);
         const todayTimestamp = todayStart.getTime();
 
-        const completedTrades = this.trades.filter(t => t.status === 'FILLED' && t.pnl !== 0);
-        const winningTrades = completedTrades.filter(t => t.pnl > 0);
-        const losingTrades = completedTrades.filter(t => t.pnl < 0);
-        const todayTrades = completedTrades.filter(t => t.timestamp >= todayTimestamp);
+        // Include both FILLED and PARTIAL executions (Fix A).
+        // Exclude REJECTED/PENDING — those are non-executions.
+        const executed = this.trades.filter(
+            (t) => t.status === 'FILLED' || t.status === 'PARTIAL',
+        );
 
-        let totalPnl = completedTrades.reduce((sum, t) => sum + t.pnl, 0);
-        let todayPnl = todayTrades.reduce((sum, t) => sum + t.pnl, 0);
-        if (completedTrades.length === 0) {
+        // Resolve effective PnL for each executed trade.
+        // When trade.pnl is zero/missing (OfferExecutor emits pnl:0),
+        // compute a fallback from trace/fill data.
+        const withPnl = executed.map((t) => ({
+            trade: t,
+            effectivePnl: resolveEffectivePnl(t),
+        }));
+
+        // Epsilon-aware classification
+        const wins: typeof withPnl = [];
+        const losses: typeof withPnl = [];
+        let breakeven = 0;
+        let unclassifiable = 0;
+
+        for (const entry of withPnl) {
+            if (entry.effectivePnl === null) {
+                unclassifiable++;
+                continue;
+            }
+            const cls = classifyPnl(entry.effectivePnl);
+            if (cls === 'win') wins.push(entry);
+            else if (cls === 'loss') losses.push(entry);
+            else breakeven++;
+        }
+
+        const classifiable = wins.length + losses.length;
+
+        // Diagnostics (Fix E)
+        if (executed.length > 0) {
+            const report: ClassifiabilityReport = {
+                total: executed.length,
+                classifiable,
+                breakeven,
+                unclassifiableReasons: {
+                    missingMidPrice: 0,
+                    zeroFillSize: 0,
+                    missingFeeConversion: 0,
+                    breakeven,
+                    nonFillEvent: 0,
+                },
+                ratio: executed.length > 0 ? classifiable / executed.length : 0,
+            };
+            warnOnPoorClassifiability('tradeHistory.getStats', report);
+        }
+
+        // PnL totals — use execute-aware fallback when no pnl field is usable
+        const todayExecuted = withPnl.filter((e) => e.trade.timestamp >= todayTimestamp);
+        const pnlSum = (items: typeof withPnl) =>
+            items.reduce((sum, e) => sum + (e.effectivePnl ?? 0), 0);
+
+        let totalPnl = pnlSum(withPnl);
+        let todayPnl = pnlSum(todayExecuted);
+
+        // If no trade has a non-zero effective PnL, use the lot-based fallback
+        if (classifiable === 0 && breakeven === 0 && unclassifiable === executed.length) {
             const fallback = computeFallbackRealizedPnl(this.trades, todayTimestamp);
             totalPnl = fallback.total;
             todayPnl = fallback.today;
         }
 
-        const avgWin = winningTrades.length > 0
-            ? winningTrades.reduce((sum, t) => sum + t.pnl, 0) / winningTrades.length
+        const winPnls = wins.map((w) => w.effectivePnl!);
+        const lossPnls = losses.map((l) => l.effectivePnl!);
+
+        const avgWin = winPnls.length > 0
+            ? winPnls.reduce((a, b) => a + b, 0) / winPnls.length
             : 0;
-        const avgLoss = losingTrades.length > 0
-            ? losingTrades.reduce((sum, t) => sum + t.pnl, 0) / losingTrades.length
+        const avgLoss = lossPnls.length > 0
+            ? lossPnls.reduce((a, b) => a + b, 0) / lossPnls.length
             : 0;
 
-        const largestWin = winningTrades.length > 0
-            ? Math.max(...winningTrades.map(t => t.pnl))
-            : 0;
-        const largestLoss = losingTrades.length > 0
-            ? Math.min(...losingTrades.map(t => t.pnl))
-            : 0;
+        const largestWin = winPnls.length > 0 ? Math.max(...winPnls) : 0;
+        const largestLoss = lossPnls.length > 0 ? Math.min(...lossPnls) : 0;
 
         return {
             totalTrades: this.trades.length,
-            winningTrades: winningTrades.length,
-            losingTrades: losingTrades.length,
-            winRate: completedTrades.length > 0
-                ? (winningTrades.length / completedTrades.length) * 100
+            winningTrades: wins.length,
+            losingTrades: losses.length,
+            winRate: classifiable > 0
+                ? (wins.length / classifiable) * 100
                 : 0,
             totalPnl,
             todayPnl,

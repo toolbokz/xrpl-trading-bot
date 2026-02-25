@@ -45,6 +45,13 @@ import {
 import { FlowMetrics, FlowRegime, hasAdverseSelectionRisk } from '../market/flowMetrics';
 import { OrderBookState } from '../utils/types';
 import { logger } from './logger';
+import {
+    classifyPnl,
+    computeProfitFactorCanonical,
+    pfToFinite,
+    warnOnPoorClassifiability,
+    type ClassifiabilityReport,
+} from './metricUtils';
 import { canonicalizePairKey, getPairKeyAliases } from '../xrpl/currency';
 import {
     buildExecutionQualityMetrics,
@@ -249,12 +256,12 @@ export interface ExecutionQualityRealismDiagnostic {
     pairKey: string;
     side: 'buy' | 'sell' | null;
     reason:
-        | 'missing_baseline'
-        | 'missing_fill_ts'
-        | 'invalid_baseline'
-        | 'invalid_fill_price'
-        | 'invalid_side'
-        | 'stale_snapshot';
+    | 'missing_baseline'
+    | 'missing_fill_ts'
+    | 'invalid_baseline'
+    | 'invalid_fill_price'
+    | 'invalid_side'
+    | 'stale_snapshot';
     slippage_baseline_used: 'best_bid' | 'best_ask' | 'mid' | 'vwap' | 'intent' | 'unknown';
     baseline_ts_ms: number | null;
     fill_ts_ms: number | null;
@@ -1477,14 +1484,15 @@ class FeedbackEngine {
                 const edge = this.computeEdgeBps(event);
                 const slippage = event.slippageBpsVsIntent ?? this.computeSlippageBps(event);
 
-                if (pnl > 0) {
+                const cls = classifyPnl(pnl);
+                if (cls === 'win') {
                     wins++;
                     totalGain += pnl;
-                } else if (pnl < 0) {
+                } else if (cls === 'loss') {
                     losses++;
                     totalLoss += Math.abs(pnl);
                 }
-                // pnl === 0: skip — neither win nor loss
+                // breakeven: excluded from win/loss counts
 
                 if (edge !== null) {
                     sumEdgeBps += edge;
@@ -1513,7 +1521,10 @@ class FeedbackEngine {
             const classifiable = wins + losses;
             const winRate = classifiable > 0 ? wins / classifiable : 0;
             const avgTradeSize = trades > 0 ? totalTradeSize / trades : 1;
-            const profitFactor = totalLoss > 0 ? totalGain / totalLoss : (totalGain > 0 ? 10 : 1);
+            // Fix C: canonical PF with display cap of 10 for heatmap visualization.
+            // computeProfitFactorCanonical already applies displayCap, so no
+            // additional pfToFinite wrapping is needed.
+            const profitFactor = computeProfitFactorCanonical(totalGain, totalLoss, { displayCap: 10 });
 
             // Expectancy in bps
             const avgWin = wins > 0 ? totalGain / wins : 0;
@@ -1537,7 +1548,7 @@ class FeedbackEngine {
                 regime,
                 trades,
                 winRate,
-                profitFactor: Number.isFinite(profitFactor) ? profitFactor : 10,
+                profitFactor,
                 expectancyBps: Number.isFinite(expectancyBps) ? expectancyBps : 0,
                 avgEdgeBps,
                 avgSlippageBps,
@@ -2485,6 +2496,8 @@ class FeedbackEngine {
         avgSlippageBps: number;
         partialFillRate: number;
         winRate: number;
+        /** Fraction of lookback window consumed by non-classifiable (breakeven/unclassifiable) events. */
+        breakevenDisplacementRatio: number;
     } {
         if (!this.ensureInitialized()) {
             return this.emptyRollingRiskMetrics();
@@ -2513,28 +2526,36 @@ class FeedbackEngine {
                 return this.emptyRollingRiskMetrics();
             }
 
-            // Compute win/loss stats
+            // Compute win/loss stats (Fix C/D: canonical PF + epsilon classification)
             let wins = 0;
             let losses = 0;
+            let breakeven = 0;
             let totalGain = 0;
             let totalLoss = 0;
             let totalSlippageBps = 0;
             let slippageCount = 0;
             let partialCount = 0;
             let totalTradeSize = 0;
+            let missingMidPrice = 0;
+            let zeroFillSize = 0;
 
             for (const event of lookback) {
                 const pnl = this.computeEventPnl(event);
                 const slippage = event.slippageBpsVsIntent ?? this.computeSlippageBps(event);
 
-                if (pnl > 0) {
+                const cls = classifyPnl(pnl);
+                if (cls === 'win') {
                     wins++;
                     totalGain += pnl;
-                } else if (pnl < 0) {
+                } else if (cls === 'loss') {
                     losses++;
                     totalLoss += Math.abs(pnl);
+                } else {
+                    breakeven++;
+                    // Track unclassifiable reasons for diagnostics
+                    if (!event.midPriceAtDecision) missingMidPrice++;
+                    if (!event.fillSizeBase || event.fillSizeBase <= 0) zeroFillSize++;
                 }
-                // pnl === 0: skip — neither win nor loss (no price data to classify)
 
                 if (slippage !== null) {
                     totalSlippageBps += Math.abs(slippage);
@@ -2555,8 +2576,8 @@ class FeedbackEngine {
             const winRate = classifiable > 0 ? wins / classifiable : 0;
             const avgTradeSize = tradesCount > 0 ? totalTradeSize / tradesCount : 1;
 
-            // Profit factor
-            const profitFactor = totalLoss > 0 ? totalGain / totalLoss : (totalGain > 0 ? Infinity : 1);
+            // Profit factor (Fix C: canonical utility)
+            const profitFactor = computeProfitFactorCanonical(totalGain, totalLoss);
 
             // Expectancy in bps
             const avgWin = wins > 0 ? totalGain / wins : 0;
@@ -2570,6 +2591,30 @@ class FeedbackEngine {
             // Partial fill rate
             const partialFillRate = tradesCount > 0 ? partialCount / tradesCount : 0;
 
+            // Diagnostics (Fix E)
+            const diagReport: ClassifiabilityReport = {
+                total: tradesCount,
+                classifiable,
+                breakeven,
+                unclassifiableReasons: {
+                    missingMidPrice,
+                    zeroFillSize,
+                    missingFeeConversion: 0,
+                    breakeven,
+                    nonFillEvent: 0,
+                },
+                ratio: tradesCount > 0 ? classifiable / tradesCount : 0,
+            };
+            warnOnPoorClassifiability('getRollingRiskMetrics', diagReport);
+
+            // Breakeven displacement: when breakeven/unclassifiable events consume
+            // lookback slots, the effective time window for classifiable trades
+            // shrinks.  Report this ratio so consumers can decide whether the window
+            // is representative.
+            const breakevenDisplacementRatio = tradesCount > 0
+                ? (tradesCount - classifiable) / tradesCount
+                : 0;
+
             // Compute drawdown from equity curve (chronological order)
             const pnlSeriesChronological: number[] = [];
             for (let i = lookback.length - 1; i >= 0; i--) {
@@ -2581,7 +2626,7 @@ class FeedbackEngine {
 
             return {
                 tradesCount,
-                profitFactor: Number.isFinite(profitFactor) ? profitFactor : 100,
+                profitFactor: pfToFinite(profitFactor, 100),
                 expectancyBps: Number.isFinite(expectancyBps) ? expectancyBps : 0,
                 drawdownPct: drawdown.drawdownPct,
                 drawdownConfidence: drawdown.drawdownConfidence,
@@ -2590,6 +2635,7 @@ class FeedbackEngine {
                 avgSlippageBps,
                 partialFillRate,
                 winRate,
+                breakevenDisplacementRatio,
             };
         } catch (err) {
             logger.warn({ err }, 'Failed to get rolling risk metrics');
@@ -2611,6 +2657,7 @@ class FeedbackEngine {
         avgSlippageBps: number;
         partialFillRate: number;
         winRate: number;
+        breakevenDisplacementRatio: number;
     } {
         return {
             tradesCount: 0,
@@ -2623,6 +2670,7 @@ class FeedbackEngine {
             avgSlippageBps: 0,
             partialFillRate: 0,
             winRate: 0,
+            breakevenDisplacementRatio: 0,
         };
     }
 
@@ -2785,7 +2833,7 @@ class FeedbackEngine {
     }
 
     /**
-     * Compute summary statistics from events
+     * Compute summary statistics from events (Fix C/D: canonical PF + epsilon)
      */
     private computeSummary(events: TradeEventRecord[]): AnalyticsSummary {
         // Filter to fills and executed orders only
@@ -2809,14 +2857,15 @@ class FeedbackEngine {
             const slippage = this.computeSlippageBps(event);
             const edge = this.computeEdgeBps(event);
 
-            if (pnl > 0) {
+            const cls = classifyPnl(pnl);
+            if (cls === 'win') {
                 wins++;
                 totalGain += pnl;
-            } else if (pnl < 0) {
+            } else if (cls === 'loss') {
                 losses++;
                 totalLoss += Math.abs(pnl);
             }
-            // pnl === 0: skip — neither win nor loss
+            // breakeven: excluded from win/loss counts
 
             if (slippage !== null) {
                 totalSlippageBps += slippage;
@@ -2834,7 +2883,7 @@ class FeedbackEngine {
         const avgWin = wins > 0 ? totalGain / wins : 0;
         const avgLoss = losses > 0 ? totalLoss / losses : 0;
         const expectancy = (winRate * avgWin) - ((1 - winRate) * avgLoss);
-        const profitFactor = totalLoss > 0 ? totalGain / totalLoss : (totalGain > 0 ? Infinity : 0);
+        const profitFactor = computeProfitFactorCanonical(totalGain, totalLoss);
         const avgSlippageBps = slippageCount > 0 ? totalSlippageBps / slippageCount : 0;
         const avgEdgeBps = edgeCount > 0 ? totalEdgeBps / edgeCount : 0;
 
@@ -2862,27 +2911,60 @@ class FeedbackEngine {
     }
 
     /**
-     * Compute approximate PnL for an event
-     * Uses edge relative to mid-price as a proxy when actual PnL unavailable
+     * Compute approximate PnL for an event.
+     *
+     * Uses edge relative to mid-price as a proxy when actual PnL unavailable,
+     * then subtracts available fee components (Fix B):
+     *   - txFeeXrp: on-ledger transaction fee (converted to quote units)
+     *   - ammFeeBps: AMM fee as basis points of notional
+     *
+     * Units: result is in quote currency (e.g. RLUSD).
+     *
+     * Sign convention:
+     *   - positive = profit (buy below mid or sell above mid, net of fees)
+     *   - negative = loss
      */
     private computeEventPnl(event: TradeEventRecord): number {
+        let grossPnl = 0;
+
         // If we have fill info, compute edge-based PnL approximation
         if (event.fillPrice && event.fillSizeBase && event.midPriceAtDecision) {
             const edgeBps = this.computeEdgeBps(event);
             if (edgeBps !== null) {
                 // Convert edge bps to quote currency PnL
                 // Positive edge = profit, negative = loss
-                return (edgeBps / 10000) * event.fillPrice * event.fillSizeBase;
+                grossPnl = (edgeBps / 10000) * event.fillPrice * event.fillSizeBase;
+            }
+        } else {
+            // Fallback: use slippage as negative PnL proxy
+            const slippage = this.computeSlippageBps(event);
+            if (slippage !== null && event.fillPrice && event.fillSizeBase) {
+                grossPnl = -(slippage / 10000) * event.fillPrice * event.fillSizeBase;
+            } else {
+                return 0;
             }
         }
 
-        // Fallback: use slippage as negative PnL proxy
-        const slippage = this.computeSlippageBps(event);
-        if (slippage !== null && event.fillPrice && event.fillSizeBase) {
-            return -(slippage / 10000) * event.fillPrice * event.fillSizeBase;
+        // ── Fee deductions (Fix B) ──────────────────────────────────────
+        let feeCostQuote = 0;
+
+        // 1. Transaction fee (txFeeXrp is in XRP).
+        //    Convert to quote units using fillPrice as approximate XRP→quote rate.
+        //    For XRP-base pairs (e.g., XRP/RLUSD), fillPrice ≈ RLUSD per XRP.
+        //    For non-XRP-base pairs, this is an approximation.
+        //    TODO: use an explicit XRP→quote conversion when available.
+        if (event.txFeeXrp != null && event.txFeeXrp > 0 && event.fillPrice) {
+            feeCostQuote += event.txFeeXrp * event.fillPrice;
         }
 
-        return 0;
+        // 2. AMM fee (ammFeeBps is bps of notional).
+        //    Notional = fillPrice * fillSizeBase (in quote currency).
+        if (event.ammFeeBps != null && event.ammFeeBps > 0 && event.fillPrice && event.fillSizeBase) {
+            const notional = event.fillPrice * event.fillSizeBase;
+            feeCostQuote += (event.ammFeeBps / 10000) * notional;
+        }
+
+        return grossPnl - feeCostQuote;
     }
 
     private resolveExpectedPriceForEvent(event: TradeEventRecord): number | null {
@@ -2979,7 +3061,8 @@ class FeedbackEngine {
     }
 
     /**
-     * Return empty summary for error cases
+     * Return empty summary for error cases.
+     * PF = 1 (neutral, consistent with canonical no-data policy).
      */
     private emptySummary(): AnalyticsSummary {
         return {
@@ -2987,7 +3070,7 @@ class FeedbackEngine {
             wins: 0,
             losses: 0,
             winRate: 0,
-            profitFactor: 0,
+            profitFactor: 1,
             expectancy: 0,
             avgSlippageBps: 0,
             totalPnlApprox: 0,
@@ -3046,6 +3129,9 @@ class FeedbackEngine {
     /**
      * Compute rolling cumulative profit factor series aligned with
      * drawdown time buckets.
+     *
+     * Fix F: restrict to fill-like events only (excludes rejects/errors).
+     * Fix C: use canonical PF with display cap of 10 for chart output.
      */
     private computeProfitFactorSeries(
         filters: QueryFilters = {},
@@ -3057,7 +3143,14 @@ class FeedbackEngine {
             const events = queryTradeEvents(filters);
             if (events.length === 0) return [];
 
-            const sorted = [...events].sort((a, b) => a.ts - b.ts);
+            // Fix F: only include fill-like events
+            const fills = events.filter(e =>
+                (e.action === 'fill' || (e.action === 'offer_create' && e.fillPrice)) &&
+                e.isBotTrade === 1
+            );
+            if (fills.length === 0) return [];
+
+            const sorted = [...fills].sort((a, b) => a.ts - b.ts);
             const firstEvent = sorted[0];
             if (!firstEvent) return [];
 
@@ -3071,36 +3164,34 @@ class FeedbackEngine {
 
             for (const event of sorted) {
                 const pnl = this.computeEventPnl(event);
+                const cls = classifyPnl(pnl);
                 const eventBucket = Math.floor(event.ts / bucketMs) * bucketMs;
 
                 if (eventBucket > currentBucket) {
                     // Emit point for completed bucket
                     cumulativeGain += bucketGain;
                     cumulativeLoss += bucketLoss;
-                    const pf = cumulativeLoss > 0
-                        ? cumulativeGain / cumulativeLoss
-                        : (cumulativeGain > 0 ? 10 : 1);
+                    const pf = computeProfitFactorCanonical(cumulativeGain, cumulativeLoss, { displayCap: 10 });
                     points.push({ ts: currentBucket, profitFactor: pf });
 
                     // Start new bucket
                     currentBucket = eventBucket;
-                    bucketGain = pnl > 0 ? pnl : 0;
-                    bucketLoss = pnl <= 0 ? Math.abs(pnl) : 0;
+                    bucketGain = cls === 'win' ? pnl : 0;
+                    bucketLoss = cls === 'loss' ? Math.abs(pnl) : 0;
                 } else {
-                    if (pnl > 0) {
+                    if (cls === 'win') {
                         bucketGain += pnl;
-                    } else {
+                    } else if (cls === 'loss') {
                         bucketLoss += Math.abs(pnl);
                     }
+                    // breakeven: excluded from PF computation
                 }
             }
 
             // Emit final bucket
             cumulativeGain += bucketGain;
             cumulativeLoss += bucketLoss;
-            const pf = cumulativeLoss > 0
-                ? cumulativeGain / cumulativeLoss
-                : (cumulativeGain > 0 ? 10 : 1);
+            const pf = computeProfitFactorCanonical(cumulativeGain, cumulativeLoss, { displayCap: 10 });
             points.push({ ts: currentBucket, profitFactor: pf });
 
             return points;
