@@ -14,6 +14,7 @@ import {
 import { resolveIssuerForRisk } from '../market/executionPairResolver';
 import { getExecutionOrderFlags, getExecutionOrderType } from '../execution/orderType';
 import { resolveAdaptiveStopLossBps, type VolatilityStopResolution } from '../market/volatilityEstimator';
+import { computeFinalOrderSizeXrp, loadOrderSizingConfig, type CpMode } from '../execution/orderSizing';
 
 interface PositionState {
     side: 'flat' | 'long' | 'short';
@@ -165,17 +166,34 @@ export class ScalperStrategy implements Strategy {
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Position Sizing (scale based on regime)
+        // Unified Position Sizing (one-knob sizing pipeline)
         // ─────────────────────────────────────────────────────────────────────
-        const basePositionSize = this.config.positionSize;
-        const sizeMultiplier = flow ? getRegimeSizeMultiplier(flow) : 1.0;
-        const adjustedPositionSize = basePositionSize * sizeMultiplier;
+        const flowRegimeMult = flow ? getRegimeSizeMultiplier(flow) : 1.0;
+        const regimePolicyMult = ctx.regimePolicy?.regimeSizeMultiplier ?? 1.0;
+        const combinedRegimeMult = Math.min(flowRegimeMult, regimePolicyMult);
+        const cpMode: CpMode = (ctx.governance?.mode === 'THROTTLE'
+            ? 'THROTTLE' : ctx.governance?.mode === 'PAUSE'
+                ? 'PAUSE' : ctx.governance?.mode === 'SHUTDOWN'
+                    ? 'SHUTDOWN' : 'NORMAL') as CpMode;
+        const sizingCfg = ctx.orderSizingConfig ?? loadOrderSizingConfig();
+        const sizingResult = computeFinalOrderSizeXrp({
+            cpMode,
+            cpSizeMult: ctx.globalSizeMultiplier ?? 1.0,
+            regimeSizeMult: combinedRegimeMult,
+            adaptiveSizeMult: ctx.adaptiveSizeMultiplier ?? 1.0,
+            strategy: this.name,
+        }, sizingCfg);
 
-        if (adjustedPositionSize <= 0) {
-            logger.debug({ sizeMultiplier, regime: flow?.regime }, 'Scalper: ⚠️ Position size zero after regime adjustment');
-            reject('unknown', { reason: 'position-size-zero', sizeMultiplier, regime: flow?.regime });
+        if (sizingResult.skip) {
+            reject('unknown', {
+                reason: 'size-skip',
+                detail: sizingResult.reason,
+                finalSize: sizingResult.finalSize,
+                minSize: sizingResult.minSize,
+            });
             return;
         }
+        const adjustedPositionSize = sizingResult.finalSize;
 
         const riskIntent = {
             issuer,
@@ -234,7 +252,10 @@ export class ScalperStrategy implements Strategy {
             maxSpreadBps: this.config.maxSpreadBps,
             position: this.position.side,
             positionSize: adjustedPositionSize.toFixed(4),
-            sizeMultiplier: sizeMultiplier.toFixed(2),
+            sizingBase: sizingResult.baseSize,
+            sizingCp: sizingResult.cpMult,
+            sizingRegime: sizingResult.regimeMult,
+            sizingAdaptive: sizingResult.adaptiveMult,
             skewBps: skewBps.toFixed(2),
             regime: flow?.regime ?? 'unknown',
             imbalance: flow?.imbalance?.toFixed(3) ?? 'N/A',
@@ -299,6 +320,7 @@ export class ScalperStrategy implements Strategy {
                 amount: adjustedPositionSize,
                 strategy: this.name,
                 flags: getExecutionOrderFlags(),
+                sizePreComposed: true,
             });
             if (res.accepted) {
                 this.position = { side: 'long', entryPrice: price };
@@ -384,6 +406,7 @@ export class ScalperStrategy implements Strategy {
                     amount: adjustedPositionSize,
                     strategy: this.name,
                     flags: getExecutionOrderFlags(),
+                    sizePreComposed: true,
                 });
                 if (res.accepted) {
                     const shouldCooldown = isStopLoss || enhancedStopLoss;

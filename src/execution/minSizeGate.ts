@@ -1,9 +1,8 @@
 import type { TradingPair } from '../config';
 import { canonicalizePairKey } from '../xrpl/currency';
 import type { TradeSide } from './offerBuilder';
+import { loadOrderSizingConfig, deriveMinBaseXrp, deriveMinQuoteRlusd } from './orderSizing';
 
-const DEFAULT_MIN_BASE_XRP = 5;
-const DEFAULT_MIN_QUOTE_RLUSD = 5;
 const EPSILON = 1e-12;
 
 export type MinSizeGateReason =
@@ -51,10 +50,19 @@ const normalizeSide = (side: TradeSide | 'buy' | 'sell'): TradeSide | null => {
     return null;
 };
 
-export const getMinSizeGateConfig = (env: NodeJS.ProcessEnv = process.env): MinSizeGateConfig => ({
-    minBaseXrp: normalizeNonNegative(env.EXECUTION_MIN_BASE_XRP, DEFAULT_MIN_BASE_XRP),
-    minQuoteRlusd: normalizeNonNegative(env.EXECUTION_MIN_QUOTE_RLUSD, DEFAULT_MIN_QUOTE_RLUSD),
-});
+export const getMinSizeGateConfig = (env: NodeJS.ProcessEnv = process.env): MinSizeGateConfig => {
+    // When env vars are explicitly set, use them directly.
+    // When absent, derive from BASE_ORDER_SIZE_XRP × EXECUTION_MIN_BASE_FRAC
+    // via the one-knob sizing module (instead of the old hardcoded 5/5 defaults).
+    const sizingCfg = loadOrderSizingConfig(env);
+    const derivedBase = deriveMinBaseXrp(sizingCfg);
+    const derivedQuote = deriveMinQuoteRlusd(sizingCfg, null);
+
+    return {
+        minBaseXrp: normalizeNonNegative(env.EXECUTION_MIN_BASE_XRP, derivedBase),
+        minQuoteRlusd: normalizeNonNegative(env.EXECUTION_MIN_QUOTE_RLUSD, derivedQuote),
+    };
+};
 
 export const enforceMinSize = (
     input: EnforceMinSizeInput,

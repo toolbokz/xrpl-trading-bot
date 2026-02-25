@@ -132,6 +132,7 @@ import type { BackgroundScannerSnapshot } from '../market/backgroundScanner/type
 import { AccountTradeIngestionService } from '../analytics/accountTradeIngestion';
 import { VolatilityEstimator, resolveAdaptiveStopLossBps } from '../market/volatilityEstimator';
 import { initFirstRun } from './firstRunInit';
+import { loadOrderSizingConfig, logSizingConfigSummary, type OrderSizingConfig } from '../execution/orderSizing';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -281,6 +282,8 @@ export class TradingRuntime {
     private lastDataValid = true;
     /** Reasons the last snapshot failed validation (empty when valid). */
     private lastDataInvalidReasons: string[] = [];
+    /** Unified order-sizing config (one-knob sizing). */
+    readonly orderSizingConfig: OrderSizingConfig;
     /** Runtime lifecycle FSM — replaces the old `started`/`shutdownInProgress` booleans. */
     private readonly fsm: RuntimeFSM;
     /** Whether the first tick with market data has completed (triggers WARMING→READY). */
@@ -315,6 +318,8 @@ export class TradingRuntime {
         }
 
         this.baseConfig = config ?? loadConfig();
+        this.orderSizingConfig = loadOrderSizingConfig();
+        logSizingConfigSummary(this.orderSizingConfig);
         const volatilityEstimatorConfig = {
             ...(Number.isFinite(this.baseConfig.strategy.volatilityStop?.alpha)
                 ? { alpha: this.baseConfig.strategy.volatilityStop!.alpha }
@@ -1315,6 +1320,7 @@ export class TradingRuntime {
                 globalCooldownMs,
                 entryGate: this.entryGate,
                 volatilityStop: this.currentVolatilityStop ?? undefined,
+                orderSizingConfig: this.orderSizingConfig,
                 // regimePolicy will be set per-strategy below
             };
 
@@ -1326,6 +1332,9 @@ export class TradingRuntime {
             for (const strategy of this.strategies) {
                 // Rate limit strategy execution to prevent CPU spikes
                 await throttleStrategy();
+
+                // Adaptive size multiplier for this strategy (set below if adaptive is enabled)
+                let adaptiveSizeMultiplier: number = 1.0;
 
                 const strategyEventContext: StrategyEventContext = {
                     pairKey,
@@ -1467,6 +1476,9 @@ export class TradingRuntime {
                         this.executor.setAdaptiveSizeMultiplier(tuning.sizeMultiplier);
                         this.executor.setAdaptiveMinEdgeBps(tuning.minEdgeBpsToTrade);
 
+                        // Expose adaptive size multiplier for unified sizing pipeline
+                        adaptiveSizeMultiplier = tuning.sizeMultiplier;
+
                         // Apply cooldown if set
                         if (tuning.coolDownMs > 0) {
                             await sleep(tuning.coolDownMs);
@@ -1474,6 +1486,7 @@ export class TradingRuntime {
                     } else {
                         // No tuning - clear overrides
                         this.executor.clearAdaptiveOverrides();
+                        adaptiveSizeMultiplier = 1.0;
                     }
                 }
 
@@ -1481,6 +1494,7 @@ export class TradingRuntime {
                 const strategyCtx = {
                     ...ctx,
                     regimePolicy: regimePolicyContext,
+                    adaptiveSizeMultiplier,
                     pairKey,
                     runtimeState: this.fsm.getState(),
                     healthScore: gateResult.healthScore,

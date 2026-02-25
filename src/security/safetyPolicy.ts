@@ -182,13 +182,15 @@ export function evaluateSafetyPolicy(config?: Partial<SafetyPolicyConfig>): Poli
 
     // Rule 4: Mainnet with default position size (likely forgot to configure)
     if (isMainnet && !isPaper) {
-        const posSize = parseFloat(process.env.POSITION_SIZE_XRP || '5');
+        const posSize = parseFloat(
+            process.env.BASE_ORDER_SIZE_XRP || process.env.POSITION_SIZE_XRP || '5',
+        );
         const maxTrade = parseFloat(process.env.MAX_TRADE_SIZE || '1000');
         if (posSize >= maxTrade) {
             violations.push({
                 rule: 'POSITION_SIZE_EXCEEDS_MAX',
                 message:
-                    `POSITION_SIZE_XRP (${posSize}) >= MAX_TRADE_SIZE (${maxTrade}). ` +
+                    `BASE_ORDER_SIZE_XRP/POSITION_SIZE_XRP (${posSize}) >= MAX_TRADE_SIZE (${maxTrade}). ` +
                     'Check risk configuration.',
                 severity: 'WARN',
             });

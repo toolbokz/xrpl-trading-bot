@@ -7,6 +7,7 @@ import { logger } from '../analytics/logger';
 import { getBreakerStore, BreakerState, BreakerStore } from '../persistence/breakerStore';
 import { extractPrimaryIssuer, resolvePair } from '../market/executionPairResolver';
 import { isRegimeSafeForArb, getRegimeDescription, getRegimeSizeMultiplier } from '../market/flowMetrics';
+import { computeFinalOrderSizeXrp, loadOrderSizingConfig, type CpMode } from '../execution/orderSizing';
 
 /**
  * Environment-based feature flags for path arbitrage.
@@ -278,16 +279,34 @@ export class PathArbitrageStrategy implements Strategy {
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Position Sizing (scale based on regime)
+        // Unified Position Sizing (one-knob sizing pipeline)
         // ─────────────────────────────────────────────────────────────────────
-        const sizeMultiplier = flow ? getRegimeSizeMultiplier(flow) : 1.0;
-        const adjustedPositionSize = this.config.positionSize * sizeMultiplier;
+        const flowRegimeMult = flow ? getRegimeSizeMultiplier(flow) : 1.0;
+        const regimePolicyMult = ctx.regimePolicy?.regimeSizeMultiplier ?? 1.0;
+        const combinedRegimeMult = Math.min(flowRegimeMult, regimePolicyMult);
+        const cpMode: CpMode = (ctx.governance?.mode === 'THROTTLE'
+            ? 'THROTTLE' : ctx.governance?.mode === 'PAUSE'
+                ? 'PAUSE' : ctx.governance?.mode === 'SHUTDOWN'
+                    ? 'SHUTDOWN' : 'NORMAL') as CpMode;
+        const sizingCfg = ctx.orderSizingConfig ?? loadOrderSizingConfig();
+        const sizingResult = computeFinalOrderSizeXrp({
+            cpMode,
+            cpSizeMult: ctx.globalSizeMultiplier ?? 1.0,
+            regimeSizeMult: combinedRegimeMult,
+            adaptiveSizeMult: ctx.adaptiveSizeMultiplier ?? 1.0,
+            strategy: this.name,
+        }, sizingCfg);
 
-        if (adjustedPositionSize <= 0) {
-            logger.debug({ sizeMultiplier, regime: flow?.regime }, 'Path Arb: ⚠️ Position size zero after regime adjustment');
-            reject('cooldown', { reason: 'position-size-zero', sizeMultiplier, regime: flow?.regime });
+        if (sizingResult.skip) {
+            reject('cooldown', {
+                reason: 'size-skip',
+                detail: sizingResult.reason,
+                finalSize: sizingResult.finalSize,
+                minSize: sizingResult.minSize,
+            });
             return;
         }
+        const adjustedPositionSize = sizingResult.finalSize;
 
         // ─────────────────────────────────────────────────────────────────────
         // Resolve pair via ExecutionPairResolver (replaces legacy issuer cascade)
@@ -390,7 +409,10 @@ export class PathArbitrageStrategy implements Strategy {
                     price: price.toFixed(6),
                     edgeBps: edgeBps.toFixed(2),
                     positionSize: adjustedPositionSize.toFixed(4),
-                    sizeMultiplier: sizeMultiplier.toFixed(2),
+                    sizingBase: sizingResult.baseSize,
+                    sizingCp: sizingResult.cpMult,
+                    sizingRegime: sizingResult.regimeMult,
+                    sizingAdaptive: sizingResult.adaptiveMult,
                     regime: flow?.regime ?? 'unknown',
                     dryRun: true,
                     circuitBreaker: this.circuitBreaker.getStatus()
@@ -411,7 +433,8 @@ export class PathArbitrageStrategy implements Strategy {
                 price,
                 amount: adjustedPositionSize,
                 strategy: this.name,
-                flags: { immediateOrCancel: true }
+                flags: { immediateOrCancel: true },
+                sizePreComposed: true,
             });
             if (res.accepted) {
                 logger.info({
@@ -444,7 +467,8 @@ export class PathArbitrageStrategy implements Strategy {
                 price,
                 amount: adjustedPositionSize,
                 strategy: this.name,
-                flags: { immediateOrCancel: true }
+                flags: { immediateOrCancel: true },
+                sizePreComposed: true,
             });
             if (res.accepted) {
                 logger.info({

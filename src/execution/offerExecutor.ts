@@ -67,6 +67,12 @@ export interface OfferParams {
         fillOrKill?: boolean;
         passive?: boolean;
     };
+    /**
+     * When true, `amount` is the final pre-composed size from
+     * `computeFinalOrderSizeXrp()` and the executor MUST NOT re-apply
+     * adaptive / governance / regime-policy multipliers.
+     */
+    sizePreComposed?: boolean;
 }
 
 export interface SlippageCheckResult {
@@ -943,48 +949,54 @@ export class OfferExecutor {
             return { accepted: false, reason: edgeCheck.reason };
         }
 
-        // Apply adaptive size multiplier
-        const sizeResult = this.applyAdaptiveSizeMultiplier(params.amount);
-        if (sizeResult.rejected) {
-            logger.info({
-                strategy: this.currentStrategy,
-                side: params.side,
-                originalAmount: params.amount,
-                reason: sizeResult.reason,
-            }, 'Order rejected by adaptive size gate');
-
-            try {
-                feedbackEngine.recordTradeEvent({
-                    pairKey: pairSymbol,
+        // ── Size multiplier application ──
+        // If sizePreComposed=true, the caller already ran computeFinalOrderSizeXrp()
+        // which baked in adaptive/governance/regime multipliers. Skip re-applying.
+        let adjustedParams = params;
+        if (!params.sizePreComposed) {
+            // Legacy path: apply adaptive size multiplier
+            const sizeResult = this.applyAdaptiveSizeMultiplier(params.amount);
+            if (sizeResult.rejected) {
+                logger.info({
                     strategy: this.currentStrategy,
-                    action: 'reject',
                     side: params.side,
-                    intentPrice: params.price,
-                    intentSizeBase: params.amount,
-                    error: sizeResult.reason,
-                    midPriceAtDecision: this.currentMidPrice ?? undefined,
-                    isBotTrade: true,
-                });
-            } catch { /* feedback should never crash trading */ }
+                    originalAmount: params.amount,
+                    reason: sizeResult.reason,
+                }, 'Order rejected by adaptive size gate');
 
-            return { accepted: false, reason: sizeResult.reason };
+                try {
+                    feedbackEngine.recordTradeEvent({
+                        pairKey: pairSymbol,
+                        strategy: this.currentStrategy,
+                        action: 'reject',
+                        side: params.side,
+                        intentPrice: params.price,
+                        intentSizeBase: params.amount,
+                        error: sizeResult.reason,
+                        midPriceAtDecision: this.currentMidPrice ?? undefined,
+                        isBotTrade: true,
+                    });
+                } catch { /* feedback should never crash trading */ }
+
+                return { accepted: false, reason: sizeResult.reason };
+            }
+
+            // Apply governance size multiplier (Capital Protection throttling)
+            // This is applied AFTER adaptive multiplier as an additional hard cap
+            let governanceAdjustedAmount = sizeResult.adjustedAmount;
+            if (this.governanceMode === 'THROTTLE' && this.governanceSizeMultiplier < 1.0) {
+                governanceAdjustedAmount = sizeResult.adjustedAmount * this.governanceSizeMultiplier;
+                logger.debug({
+                    strategy: this.currentStrategy,
+                    originalAmount: sizeResult.adjustedAmount,
+                    governanceMultiplier: this.governanceSizeMultiplier,
+                    adjustedAmount: governanceAdjustedAmount,
+                }, 'Order size reduced by governance throttle');
+            }
+
+            // Use adjusted amount
+            adjustedParams = { ...params, amount: governanceAdjustedAmount };
         }
-
-        // Apply governance size multiplier (Capital Protection throttling)
-        // This is applied AFTER adaptive multiplier as an additional hard cap
-        let governanceAdjustedAmount = sizeResult.adjustedAmount;
-        if (this.governanceMode === 'THROTTLE' && this.governanceSizeMultiplier < 1.0) {
-            governanceAdjustedAmount = sizeResult.adjustedAmount * this.governanceSizeMultiplier;
-            logger.debug({
-                strategy: this.currentStrategy,
-                originalAmount: sizeResult.adjustedAmount,
-                governanceMultiplier: this.governanceSizeMultiplier,
-                adjustedAmount: governanceAdjustedAmount,
-            }, 'Order size reduced by governance throttle');
-        }
-
-        // Use adjusted amount
-        const adjustedParams = { ...params, amount: governanceAdjustedAmount };
 
         // Check slippage if expected price provided
         if (adjustedParams.expectedPrice) {

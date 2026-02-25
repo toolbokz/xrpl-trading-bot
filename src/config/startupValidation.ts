@@ -170,8 +170,8 @@ function buildIssues(
         issues.push({
             code: 'POSITION_GT_MAX_TRADE',
             severity: 'warning',
-            envVar: 'POSITION_SIZE_XRP/MAX_TRADE_SIZE',
-            message: `POSITION_SIZE_XRP (${positionSize}) exceeds MAX_TRADE_SIZE (${maxTradeSize})`,
+            envVar: 'BASE_ORDER_SIZE_XRP/MAX_TRADE_SIZE',
+            message: `BASE_ORDER_SIZE_XRP (${positionSize}) exceeds MAX_TRADE_SIZE (${maxTradeSize})`,
         });
     }
 

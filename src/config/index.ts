@@ -254,15 +254,22 @@ export const loadConfig = (): AppConfig => {
         reserveFloorXRP: toNumber(process.env.RESERVE_FLOOR_XRP, 25),
     };
 
+    // ── One-knob sizing: BASE_ORDER_SIZE_XRP takes precedence over POSITION_SIZE_XRP ──
+    const baseOrderSizeXrp = (() => {
+        const raw = process.env.BASE_ORDER_SIZE_XRP;
+        if (raw !== undefined) return toNumber(raw, 5);
+        return toNumber(process.env.POSITION_SIZE_XRP, 5);
+    })();
+
     const strategy: StrategyConfig = {
-        // Legacy (kept so other components/tests don’t break immediately)
+        // Legacy (kept so other components/tests don't break immediately)
         minSpreadBps: toNumber(process.env.MIN_SPREAD_BPS, 10),
 
         // New: IOC taker scalper prefers max-spread gating
         maxSpreadBps: toNumber(process.env.SCALPER_MAX_SPREAD_BPS, 12),
         maxExitSpreadBps: toNumber(process.env.SCALPER_MAX_EXIT_SPREAD_BPS, 15),
 
-        positionSize: toNumber(process.env.POSITION_SIZE_XRP, 5),
+        positionSize: baseOrderSizeXrp,
         stopLossBps: toNumber(process.env.STOP_LOSS_BPS, 50),
         cooldownMs: toNumber(process.env.COOLDOWN_MS, 60_000),
         ammArbMinProfitBps: toNumber(process.env.AMM_ARB_MIN_PROFIT_BPS, 15),

@@ -7,6 +7,7 @@ import { logger } from '../analytics/logger';
 import { isRegimeSafeForArb, getRegimeDescription, getRegimeSizeMultiplier } from '../market/flowMetrics';
 import { resolveIssuerForRisk, resolveLegsForApi } from '../market/executionPairResolver';
 import { getExecutionOrderFlags, getExecutionOrderType } from '../execution/orderType';
+import { computeFinalOrderSizeXrp, loadOrderSizingConfig, type CpMode } from '../execution/orderSizing';
 
 /**
  * Default flow config when not provided (should be passed from TradingRuntime)
@@ -173,19 +174,38 @@ export class AMMArbitrageStrategy implements Strategy {
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Position Sizing (AMM_ARB_POSITION_SIZE or shared, then regime-scale)
+        // Unified Position Sizing (one-knob sizing pipeline)
         // ─────────────────────────────────────────────────────────────────────
-        const basePositionSize = this.config.ammArbPositionSize > 0
-            ? this.config.ammArbPositionSize
-            : this.config.positionSize;
-        const sizeMultiplier = flow ? getRegimeSizeMultiplier(flow) : 1.0;
-        const adjustedPositionSize = basePositionSize * sizeMultiplier;
+        const flowRegimeMult = flow ? getRegimeSizeMultiplier(flow) : 1.0;
+        const regimePolicyMult = ctx.regimePolicy?.regimeSizeMultiplier ?? 1.0;
+        const combinedRegimeMult = Math.min(flowRegimeMult, regimePolicyMult);
+        const cpMode: CpMode = (ctx.governance?.mode === 'THROTTLE'
+            ? 'THROTTLE' : ctx.governance?.mode === 'PAUSE'
+                ? 'PAUSE' : ctx.governance?.mode === 'SHUTDOWN'
+                    ? 'SHUTDOWN' : 'NORMAL') as CpMode;
+        const sizingCfg = ctx.orderSizingConfig ?? loadOrderSizingConfig();
+        // If AMM has its own base position size, override in the config copy
+        const ammSizingCfg = this.config.ammArbPositionSize > 0
+            ? { ...sizingCfg, baseOrderSizeXrp: this.config.ammArbPositionSize }
+            : sizingCfg;
+        const sizingResult = computeFinalOrderSizeXrp({
+            cpMode,
+            cpSizeMult: ctx.globalSizeMultiplier ?? 1.0,
+            regimeSizeMult: combinedRegimeMult,
+            adaptiveSizeMult: ctx.adaptiveSizeMultiplier ?? 1.0,
+            strategy: this.name,
+        }, ammSizingCfg);
 
-        if (adjustedPositionSize <= 0) {
-            logger.debug({ sizeMultiplier, regime: flow?.regime }, 'AMM Arb: ⚠️ Position size zero after regime adjustment');
-            reject('cooldown', { reason: 'position-size-zero', sizeMultiplier, regime: flow?.regime });
+        if (sizingResult.skip) {
+            reject('cooldown', {
+                reason: 'size-skip',
+                detail: sizingResult.reason,
+                finalSize: sizingResult.finalSize,
+                minSize: sizingResult.minSize,
+            });
             return;
         }
+        const adjustedPositionSize = sizingResult.finalSize;
 
         // ─────────────────────────────────────────────────────────────────────
         // Risk Engine Approval
@@ -234,7 +254,12 @@ export class AMMArbitrageStrategy implements Strategy {
             positionSize: adjustedPositionSize.toFixed(4),
             orderType: getExecutionOrderType(),
             entryCrossBps,
-            sizeMultiplier: sizeMultiplier.toFixed(2),
+            sizingResult: {
+                base: sizingResult.baseSize,
+                cp: sizingResult.cpMult,
+                regime: sizingResult.regimeMult,
+                adaptive: sizingResult.adaptiveMult,
+            },
             regime: flow?.regime ?? 'unknown',
         }, 'AMM Arb: 🎯 Executing arbitrage opportunity');
         markCandidateBuilt();
@@ -246,6 +271,7 @@ export class AMMArbitrageStrategy implements Strategy {
             amount: adjustedPositionSize,
             strategy: this.name,
             flags: getExecutionOrderFlags(),
+            sizePreComposed: true,
         });
         this.lastExecutionMs = Date.now();
         if (res.accepted) {
