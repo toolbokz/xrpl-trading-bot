@@ -7,6 +7,7 @@
 
 import { TradeAggression, TradeTape } from './tradeTape';
 import { OrderBookState } from '../utils/types';
+import type { TrendSignal } from './midPriceTrend';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -99,6 +100,13 @@ export interface FlowMetrics {
 
     /** Timestamp when metrics were computed */
     computedAt: number;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Mid-Price Trend (longer-horizon direction detection)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Mid-price trend signal from EMA tracker (null when tracker not wired) */
+    trend: TrendSignal | null;
 }
 
 /**
@@ -266,6 +274,7 @@ export function computeFlowMetrics(
         combinedSignal,
         signalStrength,
         computedAt: now,
+        trend: null, // populated by runtime via MidPriceTrendTracker
     };
 }
 

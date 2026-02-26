@@ -798,7 +798,7 @@ function DashboardPageContent() {
     const mainContent = (
         <div className="space-y-4">
             {/* Z1 STATUS STRIP */}
-            <section className="card p-3">
+            <section className="card px-3 py-[2px]">
                 {(() => {
                     const sessionChip = statusChips.find(c => c.key === 'session');
                     const regularChips = statusChips.filter(c => c.key !== 'session');
@@ -868,7 +868,7 @@ function DashboardPageContent() {
                         drawerOpen ? 'grid-cols-[minmax(0,1fr)_610px]' : 'grid-cols-[minmax(0,1fr)_56px]'
                     )}
                 >
-                    <div className="grid h-[716px] min-h-[716px] min-w-0 grid-rows-2 gap-4">
+                    <div className="grid h-[721px] min-h-[721px] min-w-0 grid-rows-2 gap-4">
                         {/* Z2 PRIMARY DECISION PANEL (top half) */}
                         <section className="card min-h-0 p-4">
                             <div className="mb-3 flex items-center justify-between">

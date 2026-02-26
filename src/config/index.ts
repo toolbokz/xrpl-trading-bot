@@ -68,6 +68,22 @@ export interface FlowConfig {
     enableAdverseSelectionProtection: boolean;
     /** Maximum quote skew in bps based on imbalance (default: 10) */
     maxQuoteSkewBps: number;
+
+    // ── Mid-price trend detection ────────────────────────────────────────
+    /** Enable mid-price trend detection for entry gating (default: true) */
+    enableTrendDetection: boolean;
+    /** Fast EMA half-life in ms for trend tracker (default: 60000) */
+    trendFastHalfLifeMs: number;
+    /** Slow EMA half-life in ms for trend tracker (default: 300000) */
+    trendSlowHalfLifeMs: number;
+    /** Trend magnitude threshold in bps to classify as trending (default: 5) */
+    trendFlatThresholdBps: number;
+    /** Minimum samples before trend tracker emits signal (default: 10) */
+    trendMinSamples: number;
+    /** Max staleness before trend signal is ignored (default: 30000) */
+    trendStaleAfterMs: number;
+    /** Block long entry when trend is down beyond this bps (default: 8) */
+    trendEntryBlockBps: number;
 }
 
 export interface StrategyConfig {
@@ -127,6 +143,41 @@ export interface StrategyConfig {
      * Defaults preserve legacy fixed-stop behavior (`enabled=false`).
      */
     volatilityStop?: VolatilityStopConfig | undefined;
+
+    // ── Flow-Alpha Entry Filter ──────────────────────────────────────────
+
+    /**
+     * Enable flow-alpha directional filter for scalper BUY entries.
+     * When enabled, the scalper only enters long when order-flow imbalance
+     * and depth imbalance confirm buy-side pressure. (default: false)
+     */
+    flowAlphaEnabled: boolean;
+
+    /**
+     * Minimum flow imbalance (buyVol-sellVol)/(buyVol+sellVol) to allow entry.
+     * Range [0, 1]. Higher = more selective. (default: 0.15)
+     */
+    flowAlphaMinImbalance: number;
+
+    /**
+     * Minimum combined signal (avg of flow + depth imbalance) to allow entry.
+     * Range [0, 1]. Higher = more selective. (default: 0.10)
+     */
+    flowAlphaMinCombinedSignal: number;
+
+    /**
+     * Minimum VWAP deviation (in bps, negative = price below VWAP = oversold)
+     * to allow entry. Set to a negative value to require "buy the dip".
+     * (default: 0 = disabled)
+     */
+    flowAlphaMaxVwapDeviationBps: number;
+
+    /**
+     * Minimum profit in bps above entry price before a take-profit exit is allowed.
+     * Prevents the scalper from exiting at a microscopic "profit" that doesn't
+     * cover the cost of the round-trip spread + fees. (default: 2)
+     */
+    minTakeProfitBps: number;
 }
 
 export interface VolatilityStopConfig {
@@ -297,6 +348,15 @@ export const loadConfig = (): AppConfig => {
             maxBps: Math.max(1, toNumber(process.env.VOL_STOP_MAX_BPS, 250)),
             useForEnhanced: toBool(process.env.VOL_STOP_USE_FOR_ENHANCED as EnvBool, true),
         },
+
+        // Flow-alpha directional entry filter
+        flowAlphaEnabled: toBool(process.env.FLOW_ALPHA_ENABLED as EnvBool, false),
+        flowAlphaMinImbalance: clamp(toNumber(process.env.FLOW_ALPHA_MIN_IMBALANCE, 0.15), 0, 1),
+        flowAlphaMinCombinedSignal: clamp(toNumber(process.env.FLOW_ALPHA_MIN_COMBINED_SIGNAL, 0.10), 0, 1),
+        flowAlphaMaxVwapDeviationBps: toNumber(process.env.FLOW_ALPHA_MAX_VWAP_DEVIATION_BPS, 0),
+
+        // Minimum profit gate for take-profit exits
+        minTakeProfitBps: clamp(toNumber(process.env.SCALPER_MIN_TAKE_PROFIT_BPS, 2), 0, 100),
     };
 
     const flow: FlowConfig = {
@@ -311,6 +371,14 @@ export const loadConfig = (): AppConfig => {
         enableRegimeFilter: toBool(process.env.FLOW_ENABLE_REGIME_FILTER as EnvBool, true),
         enableAdverseSelectionProtection: toBool(process.env.FLOW_ENABLE_ADVERSE_SELECTION as EnvBool, true),
         maxQuoteSkewBps: toNumber(process.env.FLOW_MAX_QUOTE_SKEW_BPS, 10),
+        // Mid-price trend detection
+        enableTrendDetection: toBool(process.env.TREND_DETECTION_ENABLED as EnvBool, true),
+        trendFastHalfLifeMs: toNumber(process.env.TREND_FAST_HALF_LIFE_MS, 60_000),
+        trendSlowHalfLifeMs: toNumber(process.env.TREND_SLOW_HALF_LIFE_MS, 300_000),
+        trendFlatThresholdBps: toNumber(process.env.TREND_FLAT_THRESHOLD_BPS, 5),
+        trendMinSamples: toNumber(process.env.TREND_MIN_SAMPLES, 10),
+        trendStaleAfterMs: toNumber(process.env.TREND_STALE_AFTER_MS, 30_000),
+        trendEntryBlockBps: toNumber(process.env.TREND_ENTRY_BLOCK_BPS, 8),
     };
 
     const xrpl: XRPLConfig = {

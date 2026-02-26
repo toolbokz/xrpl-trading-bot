@@ -131,6 +131,7 @@ import { BackgroundMarketScanner } from '../market/backgroundScanner/backgroundM
 import type { BackgroundScannerSnapshot } from '../market/backgroundScanner/types';
 import { AccountTradeIngestionService } from '../analytics/accountTradeIngestion';
 import { VolatilityEstimator, resolveAdaptiveStopLossBps } from '../market/volatilityEstimator';
+import { MidPriceTrendTracker } from '../market/midPriceTrend';
 import { initFirstRun } from './firstRunInit';
 import { loadOrderSizingConfig, logSizingConfigSummary, type OrderSizingConfig } from '../execution/orderSizing';
 
@@ -278,6 +279,8 @@ export class TradingRuntime {
     private currentVolatilityStop: VolatilityStopCacheSnapshot | null = null;
     /** Edge-detection flag: emit VOL_STOP_READY once per pair session. */
     private volatilityStopReadyEmitted = false;
+    /** Mid-price trend tracker for longer-horizon direction detection. */
+    private midPriceTrendTracker: MidPriceTrendTracker | null = null;
     /** Whether the last snapshot passed structural validation. */
     private lastDataValid = true;
     /** Reasons the last snapshot failed validation (empty when valid). */
@@ -333,6 +336,17 @@ export class TradingRuntime {
         };
         this.volatilityEstimator = new VolatilityEstimator(volatilityEstimatorConfig);
         this.currentVolatilityStop = this.buildVolatilityStopSnapshot(Date.now());
+
+        // Mid-price trend tracker (EMA-based direction detection)
+        this.midPriceTrendTracker = new MidPriceTrendTracker({
+            enabled: this.baseConfig.flow.enableTrendDetection !== false,
+            fastHalfLifeMs: this.baseConfig.flow.trendFastHalfLifeMs,
+            slowHalfLifeMs: this.baseConfig.flow.trendSlowHalfLifeMs,
+            flatThresholdBps: this.baseConfig.flow.trendFlatThresholdBps,
+            minSamples: this.baseConfig.flow.trendMinSamples,
+            staleAfterMs: this.baseConfig.flow.trendStaleAfterMs,
+        });
+
         this.fsm = new RuntimeFSM();
         this.pairResolver = new ExecutionPairResolver(loadExecutionPairResolverConfig());
         this.spreadDistributionSampler.setPairKey(this.getActivePair());
@@ -443,6 +457,8 @@ export class TradingRuntime {
         this.volatilityEstimator.reset(Date.now());
         this.currentVolatilityStop = this.buildVolatilityStopSnapshot(Date.now());
         this.volatilityStopReadyEmitted = false;
+        // Reset mid-price trend tracker for new pair
+        this.midPriceTrendTracker?.reset();
         // Invalidate pair resolver cache to force re-resolution for new pair
         this.pairResolver.invalidate();
         this.strategyDecisionFunnels = {};
@@ -1121,6 +1137,13 @@ export class TradingRuntime {
             // always recorded regardless of whether trading is allowed.
             // ─────────────────────────────────────────────────────────────────
             const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
+
+            // Feed mid-price trend tracker and overlay trend signal
+            if (this.midPriceTrendTracker && flowMetrics.midPrice > 0) {
+                this.midPriceTrendTracker.update(flowMetrics.midPrice, nowMs);
+                flowMetrics.trend = this.midPriceTrendTracker.getSignal(nowMs);
+            }
+
             this.currentFlowMetrics = flowMetrics;
             this.perfTracer?.phaseEnd(7); // flowMetrics
 
@@ -1315,6 +1338,7 @@ export class TradingRuntime {
                 tradeStats: this.tradeTape?.getAggression(10_000),
                 vwap: this.tradeTape?.getVWAP(60_000),
                 flow: flowMetrics,
+                trend: flowMetrics.trend ?? undefined,
                 governance: governanceDecision,
                 globalSizeMultiplier,
                 globalCooldownMs,
@@ -2818,6 +2842,7 @@ export class TradingRuntime {
         this.executionQualityCollector.reset();
         this.hardRiskGuard.reset();
         this.exposureTracker.reset();
+        this.midPriceTrendTracker?.reset();
         this.observabilityBus.clear();
         this.strategyDecisionFunnels = {};
 

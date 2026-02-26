@@ -814,6 +814,35 @@ class TradeHistoryService {
                             };
                         }) as Trade[];
                     this.trades = dedupeTradesByHash(normalized);
+
+                    // ── Backfill PnL for trades loaded with pnl:0 ───────────
+                    // Older records may have been saved before PnL persistence
+                    // was implemented.  Recompute from trace data if available.
+                    let backfilled = 0;
+                    for (const t of this.trades) {
+                        if (
+                            (t.status === 'FILLED' || t.status === 'PARTIAL') &&
+                            Math.abs(t.pnl) < 1e-12 &&
+                            t.trace
+                        ) {
+                            const computedPnl = resolveEffectivePnl(t);
+                            if (computedPnl !== null && Number.isFinite(computedPnl)) {
+                                t.pnl = computedPnl;
+                                backfilled++;
+                            }
+                        }
+                    }
+                    if (backfilled > 0) {
+                        logger.info(
+                            { backfilled },
+                            '[tradeHistory] Backfilled PnL for trades loaded with pnl=0',
+                        );
+                        // Persist the backfilled values immediately
+                        try {
+                            fs.writeFileSync(this.filePath, JSON.stringify(this.trades, null, 2), 'utf8');
+                        } catch { /* saveToDisk will retry later */ }
+                    }
+
                     logger.info({ count: this.trades.length }, 'Loaded trade history from disk');
                 }
             }
@@ -921,6 +950,27 @@ class TradeHistoryService {
             ...(current.hash ? {} : (mergedTrace.tx_hash ? { hash: mergedTrace.tx_hash } : {})),
             trace: mergedTrace,
         };
+
+        // ── Persist computed PnL ────────────────────────────────────────
+        // OfferExecutor records pnl:0 at fill time because trace data is
+        // not yet available.  Now that the trace (with fill_snapshot and
+        // baseline_mid) has been merged, we can derive the real PnL and
+        // write it back so downstream consumers (adaptive learner, capital
+        // protection, JSON on disk) see an accurate number.
+        if (
+            (updated.status === 'FILLED' || updated.status === 'PARTIAL') &&
+            Math.abs(updated.pnl) < 1e-12
+        ) {
+            const computedPnl = resolveEffectivePnl(updated);
+            if (computedPnl !== null && Number.isFinite(computedPnl)) {
+                updated.pnl = computedPnl;
+                logger.debug(
+                    { hash: updated.hash, pnl: computedPnl },
+                    '[tradeHistory] Persisted computed PnL on trace upsert',
+                );
+            }
+        }
+
         this.trades[index] = updated;
         this.saveToDisk();
         return updated;

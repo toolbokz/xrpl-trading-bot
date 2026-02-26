@@ -7,6 +7,7 @@ import { EntryGate } from './entryGate';
 import { StrategyFunnelRecorder } from '../observability/strategyDecisionFunnel';
 import type { VolatilityStopSource } from '../market/volatilityEstimator';
 import type { OrderSizingConfig } from '../execution/orderSizing';
+import type { TrendSignal } from '../market/midPriceTrend';
 
 /**
  * Regime policy context for a specific strategy
@@ -72,6 +73,8 @@ export interface StrategyContext {
     healthScore?: number | undefined;
     /** Strategy decision funnel recorder (observability-only). */
     strategyFunnel?: StrategyFunnelRecorder | undefined;
+    /** Mid-price trend signal from EMA tracker (longer-horizon than flow regime). */
+    trend?: TrendSignal | undefined;
 }
 
 import { TradingPair } from '../config';

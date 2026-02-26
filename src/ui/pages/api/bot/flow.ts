@@ -48,6 +48,14 @@ export interface FlowResponse {
         askDepthBase: number;
         totalDepth: number;
     } | null;
+    trend: {
+        direction: 'up' | 'down' | 'flat' | 'unknown';
+        trendBps: number;
+        velocityBpsPerMin: number | null;
+        ready: boolean;
+        sampleCount: number;
+        entryBlocked: boolean;
+    } | null;
 }
 
 /**
@@ -123,6 +131,14 @@ async function handler(req: LocalRequest, res: NextApiResponse<FlowResponse>) {
                 askDepthBase: flowMetrics.askDepthBase,
                 totalDepth: flowMetrics.bidDepthBase + flowMetrics.askDepthBase,
             } : null,
+            trend: flowMetrics?.trend ? {
+                direction: flowMetrics.trend.direction,
+                trendBps: flowMetrics.trend.trendBps,
+                velocityBpsPerMin: flowMetrics.trend.velocityBpsPerMin ?? null,
+                ready: flowMetrics.trend.ready,
+                sampleCount: flowMetrics.trend.sampleCount,
+                entryBlocked: flowMetrics.trend.direction === 'down' && Math.abs(flowMetrics.trend.trendBps) >= 8,
+            } : null,
         };
 
         res.status(200).json(response);
@@ -148,6 +164,7 @@ async function handler(req: LocalRequest, res: NextApiResponse<FlowResponse>) {
             signals: null,
             prices: null,
             depth: null,
+            trend: null,
         });
     }
 }

@@ -158,6 +158,28 @@ export class ScalperStrategy implements Strategy {
             }
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Mid-Price Trend Filter (block BUY entry during confirmed downtrend)
+        // Only gates new entries (flat → long); exits are unaffected.
+        // ─────────────────────────────────────────────────────────────────────
+        if (this.position.side === 'flat' && ctx.trend?.ready) {
+            const trendBlockBps = this.flowConfig.trendEntryBlockBps ?? 8;
+            if (ctx.trend.direction === 'down' && Math.abs(ctx.trend.trendBps) >= trendBlockBps) {
+                logger.info({
+                    trendDirection: ctx.trend.direction,
+                    trendBps: ctx.trend.trendBps.toFixed(2),
+                    velocityBpsPerMin: ctx.trend.velocityBpsPerMin?.toFixed(2) ?? 'N/A',
+                    trendBlockBps,
+                }, 'Scalper: 📉 Trend down — blocking BUY entry');
+                reject('trendDown', {
+                    direction: ctx.trend.direction,
+                    trendBps: ctx.trend.trendBps,
+                    trendBlockBps,
+                });
+                return;
+            }
+        }
+
         const issuer = resolveIssuerForRisk(this.pair);
         if (!issuer) {
             logger.info({ pair: this.pair }, 'Scalper: ❌ No issuer resolved for trading pair');
@@ -298,6 +320,49 @@ export class ScalperStrategy implements Strategy {
         }, 'Scalper: ✅ Spread acceptable, evaluating trade');
 
         if (this.position.side === 'flat') {
+            // ─────────────────────────────────────────────────────────────────
+            // Flow-Alpha Directional Entry Filter
+            // Only enter long when order flow confirms buy-side pressure.
+            // This prevents random entries that statistically lose the spread.
+            // ─────────────────────────────────────────────────────────────────
+            if (this.config.flowAlphaEnabled && flow) {
+                const minImbalance = this.config.flowAlphaMinImbalance ?? 0.15;
+                const minCombined = this.config.flowAlphaMinCombinedSignal ?? 0.10;
+                const maxVwapDevBps = this.config.flowAlphaMaxVwapDeviationBps ?? 0;
+
+                const imbalanceOk = flow.imbalance >= minImbalance;
+                const combinedOk = flow.combinedSignal >= minCombined;
+                const vwapOk = maxVwapDevBps === 0 || flow.vwapDeviationBps <= maxVwapDevBps;
+
+                if (!imbalanceOk || !combinedOk || !vwapOk) {
+                    logger.info({
+                        imbalance: flow.imbalance.toFixed(3),
+                        minImbalance,
+                        imbalanceOk,
+                        combinedSignal: flow.combinedSignal.toFixed(3),
+                        minCombined,
+                        combinedOk,
+                        vwapDeviationBps: flow.vwapDeviationBps.toFixed(2),
+                        maxVwapDevBps,
+                        vwapOk,
+                    }, 'Scalper: 🔬 Flow-alpha filter BLOCKED entry — no directional edge');
+                    reject('flowAlpha', {
+                        imbalance: flow.imbalance,
+                        combinedSignal: flow.combinedSignal,
+                        vwapDeviationBps: flow.vwapDeviationBps,
+                    });
+                    return;
+                }
+
+                logger.info({
+                    imbalance: flow.imbalance.toFixed(3),
+                    combinedSignal: flow.combinedSignal.toFixed(3),
+                    vwapDeviationBps: flow.vwapDeviationBps.toFixed(2),
+                    depthImbalance: flow.depthImbalance.toFixed(3),
+                    buyAggressionRatio: flow.buyAggressionRatio.toFixed(3),
+                }, 'Scalper: 🔬 Flow-alpha filter PASSED — directional edge confirmed');
+            }
+
             // Apply skew to entry price: positive imbalance → bid less aggressively
             const entryBasePrice = bestBid * (1.0001 - skewFactor);
             const entryCrossFactor = 1 + ((this.config.entryCrossBps ?? 0) / 10_000);
@@ -323,9 +388,17 @@ export class ScalperStrategy implements Strategy {
                 sizePreComposed: true,
             });
             if (res.accepted) {
-                this.position = { side: 'long', entryPrice: price };
+                // Use actual fill price from executor (post depth-reprice), not the intended price.
+                // The depth reprice system may silently move the price 10-20 bps higher;
+                // using the intended price causes false take-profit exits.
+                const actualEntryPrice = res.fillResult?.effectivePrice ?? price;
+                this.position = { side: 'long', entryPrice: actualEntryPrice };
                 logger.info({
-                    price: price.toFixed(6),
+                    intendedPrice: price.toFixed(6),
+                    actualEntryPrice: actualEntryPrice.toFixed(6),
+                    repricedBps: actualEntryPrice !== price
+                        ? (((actualEntryPrice - price) / price) * 10_000).toFixed(2)
+                        : '0.00',
                     spreadBps: spreadBps.toFixed(2),
                     regime: flow?.regime ?? 'unknown',
                 }, 'Scalper: ✅ Entered LONG position');
@@ -344,7 +417,11 @@ export class ScalperStrategy implements Strategy {
             const targetExitBase = bestAsk * (0.9999 + skewFactor);
             const exitCrossFactor = 1 - ((this.config.exitCrossBps ?? 0) / 10_000);
             const targetExit = Math.max(bestBid, targetExitBase * exitCrossFactor);
-            const takeProfit = targetExit > this.position.entryPrice;
+            // Require exit price to exceed entry by at least minTakeProfitBps to
+            // avoid exiting at a microscopic "profit" that doesn't cover fees/spread.
+            const minTakeProfitBps = this.config.minTakeProfitBps ?? 0;
+            const minProfitThreshold = this.position.entryPrice * (1 + minTakeProfitBps / 10_000);
+            const takeProfit = targetExit > minProfitThreshold;
             const stopLossResolution = resolveScalperStopLossBps({
                 fixedStopLossBps: this.config.stopLossBps,
                 volatilityStopConfig: this.config.volatilityStop,
@@ -360,6 +437,8 @@ export class ScalperStrategy implements Strategy {
             logger.info({
                 entryPrice: this.position.entryPrice.toFixed(6),
                 targetExit: targetExit.toFixed(6),
+                minProfitThreshold: minProfitThreshold.toFixed(6),
+                minTakeProfitBps,
                 stopLossLevel: stopLossLevel.toFixed(6),
                 stopLossBpsUsed: stopLossResolution.stopLossBpsUsed.toFixed(2),
                 enhancedStopBpsUsed: stopLossResolution.enhancedStopBpsUsed.toFixed(2),

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Activity, TrendingUp, TrendingDown, AlertTriangle, Pause, Waves, Zap } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, AlertTriangle, Pause, Waves, Zap, Minus, ShieldAlert } from 'lucide-react';
 import clsx from 'clsx';
 import { FlowResponse } from '../pages/api/bot/flow';
 
@@ -400,6 +400,115 @@ const MicroSparkline = ({ data, color }: { data: number[]; color: string }) => {
     );
 };
 
+/** Mid-price trend indicator — EMA direction with entry gate status */
+const TrendIndicator = ({ trend }: { trend: FlowResponse['trend'] }) => {
+    if (!trend) {
+        return (
+            <div className="space-y-1">
+                <div className="flex justify-between items-baseline">
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider">Trend</span>
+                    <span className="text-[10px] text-slate-600">—</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-slate-600">
+                    <Minus size={10} /> Warming up…
+                </div>
+            </div>
+        );
+    }
+
+    const dirConfig = {
+        up: {
+            icon: TrendingUp,
+            label: 'Up',
+            color: 'text-emerald-400',
+            bg: 'bg-emerald-500/10',
+            border: 'border-emerald-500/20',
+            barColor: 'bg-emerald-500/60',
+        },
+        down: {
+            icon: TrendingDown,
+            label: 'Down',
+            color: 'text-red-400',
+            bg: 'bg-red-500/10',
+            border: 'border-red-500/20',
+            barColor: 'bg-red-500/60',
+        },
+        flat: {
+            icon: Minus,
+            label: 'Flat',
+            color: 'text-slate-400',
+            bg: 'bg-slate-500/10',
+            border: 'border-slate-500/20',
+            barColor: 'bg-slate-400/40',
+        },
+        unknown: {
+            icon: AlertTriangle,
+            label: 'Unknown',
+            color: 'text-slate-500',
+            bg: 'bg-slate-500/8',
+            border: 'border-slate-500/15',
+            barColor: 'bg-slate-500/30',
+        },
+    } as const;
+
+    const cfg = dirConfig[trend.direction];
+    const Icon = cfg.icon;
+
+    // Normalize trendBps for gauge display (cap at ±30 bps)
+    const maxBps = 30;
+    const clampedBps = Math.max(-maxBps, Math.min(maxBps, trend.trendBps));
+    const position = ((clampedBps + maxBps) / (2 * maxBps)) * 100;
+
+    return (
+        <div className="space-y-1.5">
+            <div className="flex justify-between items-center">
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider">Trend</span>
+                <div className="flex items-center gap-1.5">
+                    {trend.entryBlocked && (
+                        <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-red-400 font-medium">
+                            <ShieldAlert size={8} /> Entry Blocked
+                        </span>
+                    )}
+                    <span className={clsx(
+                        'inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-medium',
+                        cfg.bg, cfg.border, cfg.color
+                    )}>
+                        <Icon size={10} /> {cfg.label}
+                    </span>
+                </div>
+            </div>
+
+            {/* Trend magnitude gauge */}
+            {trend.ready && (
+                <div className="space-y-0.5">
+                    <div className="relative h-[6px] bg-white/[0.04] rounded-full overflow-hidden">
+                        <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/10" />
+                        <div
+                            className={clsx(
+                                'absolute top-0 h-full rounded-full transition-all duration-300',
+                                cfg.barColor
+                            )}
+                            style={{
+                                left: clampedBps >= 0 ? '50%' : `${position}%`,
+                                width: `${(Math.abs(clampedBps) / maxBps) * 50}%`,
+                            }}
+                        />
+                        <div
+                            className="absolute top-1/2 w-[3px] h-[10px] bg-white/80 rounded-full transition-all duration-300"
+                            style={{ left: `${position}%`, transform: 'translate(-50%, -50%)' }}
+                        />
+                    </div>
+                    <div className="flex justify-between text-[8px] text-slate-600">
+                        <span>−{maxBps}</span>
+                        <span className="font-mono tabular-nums">{trend.trendBps >= 0 ? '+' : ''}{trend.trendBps.toFixed(1)} bps</span>
+                        <span>+{maxBps}</span>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Panel
 // ─────────────────────────────────────────────────────────────────────────────
@@ -585,6 +694,9 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
                     {data?.signals && (
                         <SignalBlocks strength={data.signals.signalStrength} />
                     )}
+
+                    {/* Mid-Price Trend */}
+                    <TrendIndicator trend={data?.trend ?? null} />
                 </div>
 
                 {/* RIGHT COLUMN — Chart Zone (~70%) */}
@@ -689,6 +801,24 @@ export function FlowMetricsPanel({ pollInterval = 1000, compact = false }: FlowM
                         unit="%"
                         color={data.signals.signalStrength > 0.6 ? 'text-amber-400' : 'text-slate-300'}
                     />
+                )}
+                {data?.trend?.ready && (
+                    <>
+                        <MicroMetric
+                            label="Trend"
+                            value={`${data.trend.trendBps >= 0 ? '+' : ''}${data.trend.trendBps.toFixed(1)}`}
+                            unit="bps"
+                            color={data.trend.direction === 'up' ? 'text-emerald-400' : data.trend.direction === 'down' ? 'text-red-400' : 'text-slate-300'}
+                        />
+                        {data.trend.velocityBpsPerMin != null && (
+                            <MicroMetric
+                                label="Velocity"
+                                value={`${data.trend.velocityBpsPerMin >= 0 ? '+' : ''}${data.trend.velocityBpsPerMin.toFixed(1)}`}
+                                unit="bps/m"
+                                color={data.trend.velocityBpsPerMin > 2 ? 'text-emerald-400' : data.trend.velocityBpsPerMin < -2 ? 'text-red-400' : 'text-slate-300'}
+                            />
+                        )}
+                    </>
                 )}
             </div>
         </div>
