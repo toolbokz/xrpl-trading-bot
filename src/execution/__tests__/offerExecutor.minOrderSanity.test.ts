@@ -117,6 +117,11 @@ describe.sequential('OfferExecutor min-order sanity feature flag', () => {
         const feedbackSpy = vi.spyOn(feedbackEngine, 'recordTradeEvent').mockReturnValue('event-1');
 
         const executor = new OfferExecutor(client as any, wallet as any, risk as any, false, pair as any, undefined);
+        executor.setCurrentMarketContext({
+            midPrice: 1.39, bestBid: 1.38, bestAsk: 1.40,
+            spreadBps: 14, bookAgeMs: 100,
+            flowCombined: null, flowStrength: null, flowRegime: null,
+        });
         const result = await executor.placeOffer({
             side: 'buy',
             price: 1.4,
@@ -174,6 +179,11 @@ describe.sequential('OfferExecutor min-order sanity feature flag', () => {
         const feedbackSpy = vi.spyOn(feedbackEngine, 'recordTradeEvent').mockReturnValue('event-2');
 
         const executor = new OfferExecutor(client as any, wallet as any, risk as any, false, pair as any, undefined);
+        executor.setCurrentMarketContext({
+            midPrice: 1.39, bestBid: 1.38, bestAsk: 1.40,
+            spreadBps: 14, bookAgeMs: 100,
+            flowCombined: null, flowStrength: null, flowRegime: null,
+        });
         const result = await executor.placeOffer({
             side: 'buy',
             price: 1.4,
@@ -213,6 +223,11 @@ describe.sequential('OfferExecutor min-order sanity feature flag', () => {
         };
 
         const executor = new OfferExecutor(client as any, wallet as any, risk as any, false, pair as any, undefined);
+        executor.setCurrentMarketContext({
+            midPrice: 1.39, bestBid: 1.38, bestAsk: 1.40,
+            spreadBps: 14, bookAgeMs: 100,
+            flowCombined: null, flowStrength: null, flowRegime: null,
+        });
         const resultQuarter = await executor.placeOffer({
             side: 'buy',
             price: 1.4,

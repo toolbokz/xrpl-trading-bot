@@ -13,7 +13,6 @@ import { AppShell } from '../components/layout/AppShell';
 import { TerminalHeader } from '../components/TerminalHeader';
 import { OrderBookPanel } from '../components/OrderBookPanel';
 import { TradeTapePanel } from '../components/TradeTapePanel';
-import { BotOrdersPanel } from '../components/BotOrdersPanel';
 import { LogsPanel } from '../components/LogsPanel';
 import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
 import { GovernancePanel } from '../components/GovernancePanel';
@@ -39,7 +38,7 @@ import { useSpreadModel } from '../lib/hooks/useSpreadModel';
 
 type BotStatus = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
 type ToolTab = 'tape' | 'radar' | 'diagnostics';
-type DrawerTab = 'orders' | 'logs';
+type DrawerTab = 'logs';
 type DiagnosticsTab = 'execution' | 'risk' | 'policy' | 'latency' | 'trades';
 
 interface BotState {
@@ -103,7 +102,7 @@ function DashboardPageContent() {
     const [connected, setConnected] = useState<boolean>(false);
 
     const [activeToolTab, setActiveToolTab] = useState<ToolTab>('tape');
-    const [drawerTab, setDrawerTab] = useState<DrawerTab>('orders');
+    const [drawerTab, setDrawerTab] = useState<DrawerTab>('logs');
     const [activeDiagnosticsTab, setActiveDiagnosticsTab] = useState<DiagnosticsTab>('execution');
     const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
 
@@ -170,7 +169,7 @@ function DashboardPageContent() {
             setActiveToolTab(savedToolTab);
         }
         const savedDrawerTab = window.localStorage.getItem('xrpl.drawerTab') as DrawerTab | null;
-        if (savedDrawerTab && ['orders', 'logs'].includes(savedDrawerTab)) {
+        if (savedDrawerTab && ['logs'].includes(savedDrawerTab)) {
             setDrawerTab(savedDrawerTab);
         }
         const savedDiagnosticsTab = window.localStorage.getItem('xrpl.diagnosticsTab') as DiagnosticsTab | null;
@@ -529,7 +528,6 @@ function DashboardPageContent() {
     ];
 
     const drawerTabs: Array<{ id: DrawerTab; label: string; icon: typeof ListOrdered }> = [
-        { id: 'orders', label: 'Orders', icon: ListOrdered },
         { id: 'logs', label: 'Logs', icon: Logs },
     ];
     const diagnosticsTabs: Array<{ id: DiagnosticsTab; label: string }> = [
@@ -784,11 +782,6 @@ function DashboardPageContent() {
                 })}
             </div>
             <div className="min-h-0 flex-1 overflow-hidden px-2 pt-2 pb-0">
-                {drawerTab === 'orders' && (
-                    <div id="drawer-panel-orders" role="tabpanel" className="h-full">
-                        <BotOrdersPanel pollInterval={5000} />
-                    </div>
-                )}
                 {drawerTab === 'logs' && (
                     <div
                         id="drawer-panel-logs"
@@ -872,7 +865,7 @@ function DashboardPageContent() {
                 <section
                     className={clsx(
                         'grid gap-3 items-stretch',
-                        drawerOpen ? 'grid-cols-[minmax(0,1fr)_360px]' : 'grid-cols-[minmax(0,1fr)_56px]'
+                        drawerOpen ? 'grid-cols-[minmax(0,1fr)_610px]' : 'grid-cols-[minmax(0,1fr)_56px]'
                     )}
                 >
                     <div className="grid h-[716px] min-h-[716px] min-w-0 grid-rows-2 gap-4">
@@ -915,9 +908,6 @@ function DashboardPageContent() {
                                     aria-label="Open activity drawer"
                                 >
                                     <ChevronLeft size={16} />
-                                </button>
-                                <button onClick={() => { setDrawerOpen(true); setDrawerTab('orders'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open orders">
-                                    <ListOrdered size={14} />
                                 </button>
                                 <button onClick={() => { setDrawerOpen(true); setDrawerTab('logs'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open logs">
                                     <Logs size={14} />
@@ -1034,7 +1024,7 @@ function DashboardPageContent() {
                     {mainContent}
                     {drawerOpen && (
                         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setDrawerOpen(false)}>
-                            <div className="absolute bottom-0 right-0 h-[70vh] w-full max-w-[100vw] sm:top-0 sm:h-full sm:w-[360px] sm:max-w-[92vw]" onClick={(event) => event.stopPropagation()}>
+                            <div className="absolute bottom-0 right-0 h-[70vh] w-full max-w-[100vw] sm:top-0 sm:h-full sm:w-[610px] sm:max-w-[92vw]" onClick={(event) => event.stopPropagation()}>
                                 {drawerPanel}
                             </div>
                         </div>

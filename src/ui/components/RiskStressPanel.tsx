@@ -170,7 +170,7 @@ export function RiskStressPanel({ data, spread, loading = false, error = null }:
                                 value={data.drawdownPct == null ? '—' : `${data.drawdownPct.toFixed(2)}%`}
                                 tone={data.drawdownPct != null && data.drawdownPct >= 8 ? 'text-red-400' : 'text-slate-200'}
                                 sub={
-                                    data.thresholds.maxDrawdownPct != null
+                                    data.thresholds?.maxDrawdownPct != null
                                         ? `limit ${data.thresholds.maxDrawdownPct.toFixed(1)}% · max ${fmt(data.maxDrawdownPct, 2)}%`
                                         : data.maxDrawdownPct == null ? '' : `max ${data.maxDrawdownPct.toFixed(2)}%`
                                 }
@@ -197,7 +197,7 @@ export function RiskStressPanel({ data, spread, loading = false, error = null }:
                                 value={data.drawdownConfidence == null ? '—' : (data.drawdownConfidence ? 'qualified' : 'low')}
                                 tone={data.drawdownConfidence == null ? 'text-slate-400' : (data.drawdownConfidence ? 'text-emerald-300' : 'text-amber-300')}
                                 sub={
-                                    data.thresholds.minTradesForDrawdown != null
+                                    data.thresholds?.minTradesForDrawdown != null
                                         ? `${data.hardRiskTradesCount ?? 0}/${data.thresholds.minTradesForDrawdown} trades`
                                         : `trades ${data.hardRiskTradesCount ?? 0}`
                                 }
@@ -412,7 +412,7 @@ export function RiskStressPanel({ data, spread, loading = false, error = null }:
                                 value={data.exposure.notionalExposure == null ? '—' : data.exposure.notionalExposure.toFixed(2)}
                                 tone="text-slate-200"
                                 sub={
-                                    data.thresholds.maxExposureNotional != null
+                                    data.thresholds?.maxExposureNotional != null
                                         ? `limit ${data.thresholds.maxExposureNotional.toFixed(0)}`
                                         : 'quote currency'
                                 }
@@ -430,7 +430,7 @@ export function RiskStressPanel({ data, spread, loading = false, error = null }:
                                                 : 'text-emerald-300'
                                 }
                                 sub={
-                                    data.thresholds.maxInventorySkewPct != null
+                                    data.thresholds?.maxInventorySkewPct != null
                                         ? `limit ±${data.thresholds.maxInventorySkewPct.toFixed(0)}%`
                                         : 'balanced = 0%'
                                 }
@@ -444,7 +444,7 @@ export function RiskStressPanel({ data, spread, loading = false, error = null }:
                         </div>
 
                         {/* Exposure utilization bars */}
-                        {data.thresholds.maxExposureNotional != null && data.thresholds.maxExposureNotional > 0 && (
+                        {data.thresholds?.maxExposureNotional != null && data.thresholds.maxExposureNotional > 0 && (
                             <div className="rounded border border-white/10 bg-white/[0.02] p-2">
                                 <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500">
                                     <span>Exposure Utilization</span>

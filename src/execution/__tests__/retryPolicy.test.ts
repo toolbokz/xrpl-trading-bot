@@ -102,6 +102,11 @@ function createExecutor(submitResults: string[]): {
     };
 
     const executor = new OfferExecutor(client as any, wallet as any, risk as any, false, pair, undefined);
+    executor.setCurrentMarketContext({
+        midPrice: 1.0, bestBid: 0.99, bestAsk: 1.01,
+        spreadBps: 20, bookAgeMs: 100,
+        flowCombined: null, flowStrength: null, flowRegime: null,
+    });
     (executor as any).waitMs = vi.fn().mockResolvedValue(undefined);
 
     return { executor, client };

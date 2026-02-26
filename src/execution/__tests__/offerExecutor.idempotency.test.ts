@@ -86,6 +86,11 @@ describe('OfferExecutor idempotency guard', () => {
         const wallet = createWalletMock();
         const risk = createRiskMock();
         const executor = new OfferExecutor(client, wallet, risk, false, pair, undefined);
+        executor.setCurrentMarketContext({
+            midPrice: 1.0, bestBid: 0.99, bestAsk: 1.01,
+            spreadBps: 20, bookAgeMs: 100,
+            flowCombined: null, flowStrength: null, flowRegime: null,
+        });
 
         const first = await executor.placeOffer({
             side: 'buy',
@@ -118,6 +123,11 @@ describe('OfferExecutor idempotency guard', () => {
         const wallet = createWalletMock();
         const risk = createRiskMock();
         const executor = new OfferExecutor(client, wallet, risk, false, pair, undefined);
+        executor.setCurrentMarketContext({
+            midPrice: 1.0, bestBid: 0.99, bestAsk: 1.01,
+            spreadBps: 20, bookAgeMs: 100,
+            flowCombined: null, flowStrength: null, flowRegime: null,
+        });
 
         const first = await executor.placeOffer({
             side: 'buy',

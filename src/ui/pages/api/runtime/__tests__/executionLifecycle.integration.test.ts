@@ -231,6 +231,11 @@ describe.sequential('Execution lifecycle API integration', () => {
 
         const executor = new OfferExecutor(node as any, wallet as any, risk as any, false, pair as any, undefined);
         executor.setCurrentStrategy('integration-scalper');
+        executor.setCurrentMarketContext({
+            midPrice: 1.405, bestBid: 1.404, bestAsk: 1.406,
+            spreadBps: 14.23, bookAgeMs: 120,
+            flowCombined: 0.1, flowStrength: 0.2, flowRegime: 'quiet',
+        });
         executor.setSubmitTelemetrySink((event) => {
             const eventType = event.stage === 'attempt'
                 ? 'SUBMIT_ATTEMPT'
@@ -418,7 +423,7 @@ describe.sequential('Execution lifecycle API integration', () => {
             lastLedgerSequence: 900100,
         }));
         expect((trade.trace.offer_create?.takerGets as Record<string, unknown>).issuer).toBe('[redacted]');
-        expect(trade.trace.offer_create?.flags).toBe(0);
+        expect(trade.trace.offer_create?.flags).toBe(131072);
     });
 
     it('returns offer create intent from /api/debug/tx-intent queried by hash', async () => {
@@ -450,6 +455,11 @@ describe.sequential('Execution lifecycle API integration', () => {
 
         const executor = new OfferExecutor(node as any, wallet as any, risk as any, false, pair as any, undefined);
         executor.setCurrentStrategy('integration-scalper');
+        executor.setCurrentMarketContext({
+            midPrice: 1.41, bestBid: 1.40, bestAsk: 1.42,
+            spreadBps: 14, bookAgeMs: 100,
+            flowCombined: null, flowStrength: null, flowRegime: null,
+        });
         await executor.placeOffer({
             side: 'buy',
             price: 1.41,

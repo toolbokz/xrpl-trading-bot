@@ -49,7 +49,7 @@ async function handler(
 
     try {
         const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 10;
-        const limit = Math.max(1, Math.min(50, Number.isFinite(rawLimit) ? rawLimit : 10));
+        const limit = Math.max(1, Math.min(100, Number.isFinite(rawLimit) ? rawLimit : 10));
         const pair = typeof req.query.pair === 'string' ? req.query.pair : undefined;
 
         // Fetch more trades than limit to guarantee we have enough after filtering

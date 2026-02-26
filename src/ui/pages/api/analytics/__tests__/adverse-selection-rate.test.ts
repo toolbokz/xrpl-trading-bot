@@ -1,17 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invalidateAnalyticsCache } from '../_cache';
 
-const { mockQuerySnapshots, mockComputeAdverseSelectionRate } = vi.hoisted(() => ({
+const { mockQuerySnapshots, mockComputeAdverseSelectionRate, mockQueryTradeEvents, mockComputeAdverseSelectionRateFromTrades } = vi.hoisted(() => ({
     mockQuerySnapshots: vi.fn(),
     mockComputeAdverseSelectionRate: vi.fn(),
+    mockQueryTradeEvents: vi.fn(),
+    mockComputeAdverseSelectionRateFromTrades: vi.fn(),
 }));
 
 vi.mock('../../../../../analytics/feedbackDb', () => ({
     querySnapshots: mockQuerySnapshots,
+    queryTradeEvents: mockQueryTradeEvents,
 }));
 
 vi.mock('../../../../../analytics/feedbackEngine', () => ({
     computeAdverseSelectionRate: mockComputeAdverseSelectionRate,
+    computeAdverseSelectionRateFromTrades: mockComputeAdverseSelectionRateFromTrades,
 }));
 
 vi.mock('../../../../lib/localApi', () => ({
@@ -53,6 +57,12 @@ describe('GET /api/analytics/adverse-selection-rate', () => {
             sampleCount: 10,
             adverseCount: 3,
             adverseRate: 0.3,
+        });
+        mockQueryTradeEvents.mockReturnValue([]);
+        mockComputeAdverseSelectionRateFromTrades.mockReturnValue({
+            sampleCount: 0,
+            adverseCount: 0,
+            adverseRate: 0,
         });
     });
 

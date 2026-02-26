@@ -3239,6 +3239,65 @@ export function computeAdverseSelectionRate(
     };
 }
 
+/**
+ * Compute adverse selection rate from trade events as a fallback when
+ * market snapshots are unavailable. Uses the per-trade entry flow data
+ * (entryFlowStrength, entryFlowRegime) which mirrors the same
+ * hasAdverseSelectionRisk logic used for snapshot recording.
+ *
+ * A trade is counted as "adverse" if:
+ *  1. Entry flow showed adverse conditions (strong signal + trending), OR
+ *  2. Post-fill mid moved against the trade direction (1s or 3s markout)
+ */
+export function computeAdverseSelectionRateFromTrades(
+    trades: TradeEventRecord[],
+): { sampleCount: number; adverseCount: number; adverseRate: number } {
+    let sampleCount = 0;
+    let adverseCount = 0;
+
+    for (const t of trades) {
+        // Only count trades that have flow data or post-fill data
+        const hasFlowData = t.entryFlowStrength != null && t.entryFlowRegime != null;
+        const hasPostData = (t.postMid1s != null || t.postMid3s != null) && t.entryMid != null;
+
+        if (!hasFlowData && !hasPostData) continue;
+        sampleCount++;
+
+        let isAdverse = false;
+
+        // Check 1: Entry flow adverse conditions (mirrors hasAdverseSelectionRisk)
+        if (hasFlowData) {
+            const strength = t.entryFlowStrength!;
+            const regime = t.entryFlowRegime;
+            if (strength > 0.5 && (regime === 'trendingUp' || regime === 'trendingDown')) {
+                isAdverse = true;
+            }
+        }
+
+        // Check 2: Post-fill price moved against trade direction
+        if (!isAdverse && hasPostData && t.side != null) {
+            const entryMid = t.entryMid!;
+            const postMid = t.postMid1s ?? t.postMid3s;
+            if (postMid != null && entryMid > 0) {
+                const isBuy = t.side.toLowerCase() === 'buy';
+                // For a buy, adverse = price dropped after entry
+                // For a sell, adverse = price rose after entry
+                const moveBps = ((postMid - entryMid) / entryMid) * 10000;
+                if (isBuy && moveBps < -5) isAdverse = true;
+                if (!isBuy && moveBps > 5) isAdverse = true;
+            }
+        }
+
+        if (isAdverse) adverseCount++;
+    }
+
+    return {
+        sampleCount,
+        adverseCount,
+        adverseRate: sampleCount > 0 ? adverseCount / sampleCount : 0,
+    };
+}
+
 // Convenience re-exports
 export type {
     TradeEventRecord,

@@ -1,8 +1,8 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
-import { computeAdverseSelectionRate } from '../../../../analytics/feedbackEngine';
-import { querySnapshots } from '../../../../analytics/feedbackDb';
+import { computeAdverseSelectionRate, computeAdverseSelectionRateFromTrades } from '../../../../analytics/feedbackEngine';
+import { querySnapshots, queryTradeEvents } from '../../../../analytics/feedbackDb';
 import { canonicalizePairKey } from '../../../../xrpl/currency';
 import { buildAnalyticsCacheKey, getAnalyticsCacheTtlMs, getCachedAnalytics, setCachedAnalytics } from './_cache';
 
@@ -85,17 +85,23 @@ function handler(
 
         const snapshots = querySnapshots(filters);
 
-        const { sampleCount, adverseCount, adverseRate } =
-            computeAdverseSelectionRate(snapshots);
+        let result = computeAdverseSelectionRate(snapshots);
+
+        // Fallback: when no market snapshots have adverse data, derive
+        // adverse selection rate from trade events (entry flow + post-fill price).
+        if (result.sampleCount === 0) {
+            const trades = queryTradeEvents(filters);
+            result = computeAdverseSelectionRateFromTrades(trades);
+        }
 
         const payload: Omit<AdverseSelectionRateResponse, 'requestId' | 'timestamp'> = {
             filters: {
                 pairKey: canonicalPairKey,
                 windowMs: parsedWindowMs,
             },
-            sampleCount,
-            adverseCount,
-            adverseRate,
+            sampleCount: result.sampleCount,
+            adverseCount: result.adverseCount,
+            adverseRate: result.adverseRate,
         };
 
         setCachedAnalytics(cacheKey, payload, getAnalyticsCacheTtlMs());

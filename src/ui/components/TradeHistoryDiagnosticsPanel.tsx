@@ -15,10 +15,27 @@
  *   WebTradeHistoryService mtime-checks for cache invalidation
  */
 
-import { useCallback, useEffect, useMemo, useState, Fragment } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from 'react';
 import { Activity, ChevronDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import { Panel, PanelBadge } from './Panel';
+
+/* ────── tab types ────── */
+type TradeStatusTab = 'all' | 'filled' | 'partial' | 'rejected';
+
+const TAB_LABELS: Record<TradeStatusTab, string> = {
+    all: 'All',
+    filled: 'Filled',
+    partial: 'Partial',
+    rejected: 'Rejected',
+};
+
+/** Max trades to display per tab (scrollable). */
+const MAX_VISIBLE_PER_TAB = 100;
+/** Number of rows visible without scrolling (sets container height). */
+const ROWS_VISIBLE = 25;
+/** Approximate height per row in px (compact 10px font + 1px gap). */
+const ROW_HEIGHT_PX = 28;
 
 /* ────── types (mirrored from postTradeDiagnostic.ts, kept minimal) ────── */
 
@@ -170,10 +187,12 @@ export function TradeHistoryDiagnosticsPanel({
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [activeTab, setActiveTab] = useState<TradeStatusTab>('all');
+    const scrollRef = useRef<HTMLDivElement>(null);
 
     const fetchDiagnostics = useCallback(async () => {
         try {
-            const res = await fetch('/api/analytics/trade-diagnostics?limit=25', { cache: 'no-store' });
+            const res = await fetch('/api/analytics/trade-diagnostics?limit=100', { cache: 'no-store' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             if (data?.diagnostics) {
@@ -211,6 +230,29 @@ export function TradeHistoryDiagnosticsPanel({
         return 'neutral';
     }, [diagnostics]);
 
+    /* ────── Tab counts ────── */
+    const tabCounts = useMemo(() => {
+        const counts: Record<TradeStatusTab, number> = { all: 0, filled: 0, partial: 0, rejected: 0 };
+        for (const d of diagnostics) {
+            counts.all++;
+            switch (d.status?.toUpperCase()) {
+                case 'FILLED': counts.filled++; break;
+                case 'PARTIAL': counts.partial++; break;
+                case 'REJECTED': counts.rejected++; break;
+            }
+        }
+        return counts;
+    }, [diagnostics]);
+
+    /* ────── Filtered diagnostics per active tab (capped at MAX_VISIBLE_PER_TAB) ────── */
+    const filteredDiagnostics = useMemo(() => {
+        if (activeTab === 'all') return diagnostics.slice(0, MAX_VISIBLE_PER_TAB);
+        const statusKey = activeTab.toUpperCase();
+        return diagnostics
+            .filter(d => d.status?.toUpperCase() === statusKey)
+            .slice(0, MAX_VISIBLE_PER_TAB);
+    }, [diagnostics, activeTab]);
+
     const toggleExpand = (id: string) => {
         setExpandedId(prev => prev === id ? null : id);
     };
@@ -222,7 +264,6 @@ export function TradeHistoryDiagnosticsPanel({
             title="Trade History"
             icon={Activity}
             dense
-            scrollable
             fillHeight
             actions={
                 <PanelBadge tone={panelTone}>
@@ -230,6 +271,40 @@ export function TradeHistoryDiagnosticsPanel({
                 </PanelBadge>
             }
         >
+            {/* ────── Status filter tabs ────── */}
+            <div className="mb-1.5 flex items-center gap-0.5 rounded bg-white/5 p-0.5">
+                {(Object.keys(TAB_LABELS) as TradeStatusTab[]).map((tab) => {
+                    const count = tabCounts[tab];
+                    const isActive = activeTab === tab;
+                    const toneClass: Record<TradeStatusTab, string> = {
+                        all: 'text-slate-300',
+                        filled: 'text-emerald-400',
+                        partial: 'text-amber-400',
+                        rejected: 'text-red-400',
+                    };
+                    return (
+                        <button
+                            key={tab}
+                            onClick={() => { setActiveTab(tab); scrollRef.current?.scrollTo({ top: 0 }); }}
+                            className={clsx(
+                                'flex items-center gap-1 rounded px-2 py-0.5 text-[10px] transition-colors',
+                                isActive
+                                    ? 'bg-sky-500/30 text-sky-300'
+                                    : 'text-slate-500 hover:text-slate-300',
+                            )}
+                        >
+                            <span className="capitalize">{TAB_LABELS[tab]}</span>
+                            <span className={clsx(
+                                'rounded-full px-1.5 py-px text-[9px] font-semibold tabular-nums',
+                                isActive ? toneClass[tab] : 'text-slate-600',
+                            )}>
+                                {count}
+                            </span>
+                        </button>
+                    );
+                })}
+            </div>
+
             {loading && diagnostics.length === 0 && (
                 <div className="flex items-center justify-center py-8 text-xs text-slate-500">
                     Loading trade diagnostics…
@@ -251,7 +326,7 @@ export function TradeHistoryDiagnosticsPanel({
 
             {diagnostics.length > 0 && (
                 <div className="space-y-0.5">
-                    {/* Header row */}
+                    {/* Header row — sticky above scroll area */}
                     <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.7fr)_minmax(0,0.9fr)_minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,0.8fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.7fr)] gap-x-1.5 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-slate-500">
                         <span>Time</span>
                         <span>Pair</span>
@@ -267,141 +342,156 @@ export function TradeHistoryDiagnosticsPanel({
                         <span>Retry</span>
                     </div>
 
-                    {diagnostics.map((d) => {
-                        const tone = statusTone(d.status);
-                        const isExpanded = expandedId === d.tradeId;
+                    {/* Scrollable fixed-height trade list */}
+                    <div
+                        ref={scrollRef}
+                        className="overflow-y-auto"
+                        style={{ maxHeight: `${ROWS_VISIBLE * ROW_HEIGHT_PX}px` }}
+                    >
+                        {filteredDiagnostics.length === 0 ? (
+                            <div className="flex items-center justify-center py-6 text-[11px] text-slate-500">
+                                No {activeTab !== 'all' ? activeTab : ''} trades
+                            </div>
+                        ) : (
+                            <div className="space-y-0.5">
+                                {filteredDiagnostics.map((d) => {
+                                    const tone = statusTone(d.status);
+                                    const isExpanded = expandedId === d.tradeId;
 
-                        return (
-                            <Fragment key={d.tradeId}>
-                                {/* Summary row */}
-                                <button
-                                    onClick={() => toggleExpand(d.tradeId)}
-                                    className={clsx(
-                                        'grid w-full grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.7fr)_minmax(0,0.9fr)_minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,0.8fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.7fr)] gap-x-1.5 rounded px-1 py-1 text-left text-[10px] transition-colors',
-                                        isExpanded ? 'bg-sky-500/10' : `hover:${statusBgMap[tone]}`,
-                                        statusBgMap[tone],
-                                    )}
-                                >
-                                    <span className="text-slate-400 truncate" title={fmtDate(d.timestamp)}>
-                                        {fmtTime(d.timestamp)}
-                                    </span>
-                                    <span className="text-slate-300 truncate">{d.pair || '—'}</span>
-                                    <span className={d.side === 'BUY' ? 'text-emerald-400' : 'text-red-400'}>
-                                        {d.side}
-                                    </span>
-                                    <span className={statusColorMap[tone]}>
-                                        {d.status}
-                                    </span>
-                                    <span className="text-slate-300 truncate">{bucketLabel(d.eventBucket)}</span>
-                                    <span className="text-slate-400 truncate" title={d.primaryCause}>{causeLabel(d.primaryCause)}</span>
-                                    <span className="text-slate-300">{d.baselineSpreadBps != null ? `${d.baselineSpreadBps.toFixed(1)}` : '—'}</span>
-                                    <span className="text-slate-300">{fmtPct(d.predFillRatio)}</span>
-                                    <span className={clsx(
-                                        d.actualFillRatio != null && d.actualFillRatio >= 1 ? 'text-emerald-400'
-                                            : d.actualFillRatio != null && d.actualFillRatio > 0 ? 'text-amber-400'
-                                                : 'text-slate-400'
-                                    )}>
-                                        {fmtPct(d.actualFillRatio)}
-                                    </span>
-                                    <span className="text-slate-300 truncate">{fmtPrice(d.avgFillPriceQpb)}</span>
-                                    <span className={clsx(
-                                        'tabular-nums',
-                                        d.priceVsArrivalBps != null && d.priceVsArrivalBps <= 0 ? 'text-emerald-400'
-                                            : d.priceVsArrivalBps != null && d.priceVsArrivalBps > 3 ? 'text-red-400'
-                                                : 'text-slate-300'
-                                    )}>
-                                        {fmtBps(d.priceVsArrivalBps)}
-                                    </span>
-                                    <span className="flex items-center gap-0.5 text-slate-400">
-                                        {d.retryCount}
-                                        {isExpanded
-                                            ? <ChevronDown size={10} className="shrink-0" />
-                                            : <ChevronRight size={10} className="shrink-0" />}
-                                    </span>
-                                </button>
-
-                                {/* Expanded detail */}
-                                {isExpanded && (
-                                    <div className="mb-1 ml-2 rounded border border-white/5 bg-card/60 px-3 py-2 text-[10px] text-slate-300">
-                                        <div className="grid grid-cols-2 gap-x-6 gap-y-1 md:grid-cols-3 lg:grid-cols-4">
-                                            {/* Timing */}
-                                            <DetailSection title="Timing">
-                                                <DetailRow label="Decision→Submit" value={fmtMs(d.decisionToSubmitMs)} />
-                                                <DetailRow label="Submit→Ack" value={fmtMs(d.submitToAckMs)} />
-                                                <DetailRow label="Ack→Validated" value={fmtMs(d.ackToValidatedMs)} />
-                                                <DetailRow label="Total" value={fmtMs(d.decisionToValidatedMs)} />
-                                            </DetailSection>
-
-                                            {/* Execution quality */}
-                                            <DetailSection title="Quality">
-                                                <DetailRow label="vs Arrival" value={`${fmtBps(d.priceVsArrivalBps)} bps`} />
-                                                <DetailRow label="vs Mid" value={`${fmtBps(d.distanceFromMidBps)} bps`} />
-                                                <DetailRow label="vs Pred VWAP" value={`${fmtBps(d.fillVsPredVwapBps)} bps`} />
-                                                <DetailRow label="Fill Gap" value={d.predictedVsActualFillRatioGap != null ? d.predictedVsActualFillRatioGap.toFixed(3) : '—'} />
-                                                <DetailRow label="Slippage (logged)" value={d.slippageBpsLogged != null ? `${d.slippageBpsLogged.toFixed(1)} bps` : '—'} />
-                                            </DetailSection>
-
-                                            {/* Reprice */}
-                                            <DetailSection title="Reprice">
-                                                <DetailRow label="Decision" value={d.repriceDecision ?? '—'} />
-                                                <DetailRow label="Repriced Price" value={fmtPrice(d.repricedPrice)} />
-                                                <DetailRow label="Required bps" value={d.requiredRepriceBps != null ? d.requiredRepriceBps.toFixed(1) : '—'} />
-                                                <DetailRow label="Regime" value={d.spreadRegime ?? '—'} />
-                                            </DetailSection>
-
-                                            {/* XRPL */}
-                                            <DetailSection title="XRPL Result">
-                                                <DetailRow label="Engine" value={d.engineResult ?? '—'} />
-                                                <DetailRow label="Message" value={d.engineResultMessage ?? '—'} />
-                                                <DetailRow label="Outcome" value={d.outcome ?? '—'} />
-                                                {d.txHash && (
-                                                    <DetailRow label="TX" value={
-                                                        <a
-                                                            href={`https://livenet.xrpl.org/transactions/${d.txHash}`}
-                                                            target="_blank"
-                                                            rel="noreferrer"
-                                                            className="text-sky-400 hover:underline truncate max-w-[120px] inline-block"
-                                                            title={d.txHash}
-                                                        >
-                                                            {d.txHash.slice(0, 8)}…
-                                                        </a>
-                                                    } />
+                                    return (
+                                        <Fragment key={d.tradeId}>
+                                            {/* Summary row */}
+                                            <button
+                                                onClick={() => toggleExpand(d.tradeId)}
+                                                className={clsx(
+                                                    'grid w-full grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.7fr)_minmax(0,0.9fr)_minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,0.8fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.7fr)] gap-x-1.5 rounded px-1 py-1 text-left text-[10px] transition-colors',
+                                                    isExpanded ? 'bg-sky-500/10' : `hover:${statusBgMap[tone]}`,
+                                                    statusBgMap[tone],
                                                 )}
-                                            </DetailSection>
+                                            >
+                                                <span className="text-slate-400 truncate" title={fmtDate(d.timestamp)}>
+                                                    {fmtTime(d.timestamp)}
+                                                </span>
+                                                <span className="text-slate-300 truncate">{d.pair || '—'}</span>
+                                                <span className={d.side === 'BUY' ? 'text-emerald-400' : 'text-red-400'}>
+                                                    {d.side}
+                                                </span>
+                                                <span className={statusColorMap[tone]}>
+                                                    {d.status}
+                                                </span>
+                                                <span className="text-slate-300 truncate">{bucketLabel(d.eventBucket)}</span>
+                                                <span className="text-slate-400 truncate" title={d.primaryCause}>{causeLabel(d.primaryCause)}</span>
+                                                <span className="text-slate-300">{d.baselineSpreadBps != null ? `${d.baselineSpreadBps.toFixed(1)}` : '—'}</span>
+                                                <span className="text-slate-300">{fmtPct(d.predFillRatio)}</span>
+                                                <span className={clsx(
+                                                    d.actualFillRatio != null && d.actualFillRatio >= 1 ? 'text-emerald-400'
+                                                        : d.actualFillRatio != null && d.actualFillRatio > 0 ? 'text-amber-400'
+                                                            : 'text-slate-400'
+                                                )}>
+                                                    {fmtPct(d.actualFillRatio)}
+                                                </span>
+                                                <span className="text-slate-300 truncate">{fmtPrice(d.avgFillPriceQpb)}</span>
+                                                <span className={clsx(
+                                                    'tabular-nums',
+                                                    d.priceVsArrivalBps != null && d.priceVsArrivalBps <= 0 ? 'text-emerald-400'
+                                                        : d.priceVsArrivalBps != null && d.priceVsArrivalBps > 3 ? 'text-red-400'
+                                                            : 'text-slate-300'
+                                                )}>
+                                                    {fmtBps(d.priceVsArrivalBps)}
+                                                </span>
+                                                <span className="flex items-center gap-0.5 text-slate-400">
+                                                    {d.retryCount}
+                                                    {isExpanded
+                                                        ? <ChevronDown size={10} className="shrink-0" />
+                                                        : <ChevronRight size={10} className="shrink-0" />}
+                                                </span>
+                                            </button>
 
-                                            {/* Markouts */}
-                                            {(d.markout60sBps != null || d.markout300sBps != null) && (
-                                                <DetailSection title="Markouts">
-                                                    <DetailRow label="60s" value={d.markout60sBps != null ? `${fmtBps(d.markout60sBps)} bps (${d.markout60sStatus})` : '—'} />
-                                                    <DetailRow label="300s" value={d.markout300sBps != null ? `${fmtBps(d.markout300sBps)} bps (${d.markout300sStatus})` : '—'} />
-                                                </DetailSection>
+                                            {/* Expanded detail */}
+                                            {isExpanded && (
+                                                <div className="mb-1 ml-2 rounded border border-white/5 bg-card/60 px-3 py-2 text-[10px] text-slate-300">
+                                                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 md:grid-cols-3 lg:grid-cols-4">
+                                                        {/* Timing */}
+                                                        <DetailSection title="Timing">
+                                                            <DetailRow label="Decision→Submit" value={fmtMs(d.decisionToSubmitMs)} />
+                                                            <DetailRow label="Submit→Ack" value={fmtMs(d.submitToAckMs)} />
+                                                            <DetailRow label="Ack→Validated" value={fmtMs(d.ackToValidatedMs)} />
+                                                            <DetailRow label="Total" value={fmtMs(d.decisionToValidatedMs)} />
+                                                        </DetailSection>
+
+                                                        {/* Execution quality */}
+                                                        <DetailSection title="Quality">
+                                                            <DetailRow label="vs Arrival" value={`${fmtBps(d.priceVsArrivalBps)} bps`} />
+                                                            <DetailRow label="vs Mid" value={`${fmtBps(d.distanceFromMidBps)} bps`} />
+                                                            <DetailRow label="vs Pred VWAP" value={`${fmtBps(d.fillVsPredVwapBps)} bps`} />
+                                                            <DetailRow label="Fill Gap" value={d.predictedVsActualFillRatioGap != null ? d.predictedVsActualFillRatioGap.toFixed(3) : '—'} />
+                                                            <DetailRow label="Slippage (logged)" value={d.slippageBpsLogged != null ? `${d.slippageBpsLogged.toFixed(1)} bps` : '—'} />
+                                                        </DetailSection>
+
+                                                        {/* Reprice */}
+                                                        <DetailSection title="Reprice">
+                                                            <DetailRow label="Decision" value={d.repriceDecision ?? '—'} />
+                                                            <DetailRow label="Repriced Price" value={fmtPrice(d.repricedPrice)} />
+                                                            <DetailRow label="Required bps" value={d.requiredRepriceBps != null ? d.requiredRepriceBps.toFixed(1) : '—'} />
+                                                            <DetailRow label="Regime" value={d.spreadRegime ?? '—'} />
+                                                        </DetailSection>
+
+                                                        {/* XRPL */}
+                                                        <DetailSection title="XRPL Result">
+                                                            <DetailRow label="Engine" value={d.engineResult ?? '—'} />
+                                                            <DetailRow label="Message" value={d.engineResultMessage ?? '—'} />
+                                                            <DetailRow label="Outcome" value={d.outcome ?? '—'} />
+                                                            {d.txHash && (
+                                                                <DetailRow label="TX" value={
+                                                                    <a
+                                                                        href={`https://livenet.xrpl.org/transactions/${d.txHash}`}
+                                                                        target="_blank"
+                                                                        rel="noreferrer"
+                                                                        className="text-sky-400 hover:underline truncate max-w-[120px] inline-block"
+                                                                        title={d.txHash}
+                                                                    >
+                                                                        {d.txHash.slice(0, 8)}…
+                                                                    </a>
+                                                                } />
+                                                            )}
+                                                        </DetailSection>
+
+                                                        {/* Markouts */}
+                                                        {(d.markout60sBps != null || d.markout300sBps != null) && (
+                                                            <DetailSection title="Markouts">
+                                                                <DetailRow label="60s" value={d.markout60sBps != null ? `${fmtBps(d.markout60sBps)} bps (${d.markout60sStatus})` : '—'} />
+                                                                <DetailRow label="300s" value={d.markout300sBps != null ? `${fmtBps(d.markout300sBps)} bps (${d.markout300sStatus})` : '—'} />
+                                                            </DetailSection>
+                                                        )}
+
+                                                        {/* Precheck */}
+                                                        <DetailSection title="Precheck">
+                                                            <DetailRow label="Required" value={d.requiredBase != null ? d.requiredBase.toFixed(4) : '—'} />
+                                                            <DetailRow label="Pred Fillable" value={d.predFillableBase != null ? d.predFillableBase.toFixed(4) : '—'} />
+                                                            <DetailRow label="Has Depth" value={d.precheckHasDepth != null ? (d.precheckHasDepth ? 'Yes' : 'No') : '—'} />
+                                                            <DetailRow label="Pred VWAP" value={fmtPrice(d.predictedVwap)} />
+                                                        </DetailSection>
+                                                    </div>
+
+                                                    {/* Notes */}
+                                                    {d.notes.length > 0 && (
+                                                        <div className="mt-2 border-t border-white/5 pt-1.5">
+                                                            <span className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">Notes</span>
+                                                            <ul className="mt-0.5 space-y-0.5">
+                                                                {d.notes.map((note, i) => (
+                                                                    <li key={i} className="text-slate-400">• {note}</li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             )}
-
-                                            {/* Precheck */}
-                                            <DetailSection title="Precheck">
-                                                <DetailRow label="Required" value={d.requiredBase != null ? d.requiredBase.toFixed(4) : '—'} />
-                                                <DetailRow label="Pred Fillable" value={d.predFillableBase != null ? d.predFillableBase.toFixed(4) : '—'} />
-                                                <DetailRow label="Has Depth" value={d.precheckHasDepth != null ? (d.precheckHasDepth ? 'Yes' : 'No') : '—'} />
-                                                <DetailRow label="Pred VWAP" value={fmtPrice(d.predictedVwap)} />
-                                            </DetailSection>
-                                        </div>
-
-                                        {/* Notes */}
-                                        {d.notes.length > 0 && (
-                                            <div className="mt-2 border-t border-white/5 pt-1.5">
-                                                <span className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">Notes</span>
-                                                <ul className="mt-0.5 space-y-0.5">
-                                                    {d.notes.map((note, i) => (
-                                                        <li key={i} className="text-slate-400">• {note}</li>
-                                                    ))}
-                                                </ul>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </Fragment>
-                        );
-                    })}
+                                        </Fragment>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
         </Panel>

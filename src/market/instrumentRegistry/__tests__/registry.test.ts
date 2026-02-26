@@ -40,14 +40,14 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('Schema Types', () => {
-    it('SEED_INSTRUMENTS should have exactly 2 instruments', async () => {
+    it('SEED_INSTRUMENTS should match current seed count', async () => {
         const { SEED_INSTRUMENTS } = await import('../schema');
-        expect(SEED_INSTRUMENTS).toHaveLength(2);
+        expect(SEED_INSTRUMENTS).toHaveLength(11);
     });
 
-    it('SEED_ISSUERS should have exactly 2 issuers', async () => {
+    it('SEED_ISSUERS should match current seed count', async () => {
         const { SEED_ISSUERS } = await import('../schema');
-        expect(SEED_ISSUERS).toHaveLength(2);
+        expect(SEED_ISSUERS).toHaveLength(10);
     });
 
     it('seed instruments should have expected keys', async () => {
@@ -130,14 +130,14 @@ describe('Database Layer', () => {
         const { getRegistryDb } = await import('../db');
         const db = getRegistryDb();
         const count = (db.prepare('SELECT COUNT(*) as count FROM instruments').get() as { count: number }).count;
-        expect(count).toBe(2);
+        expect(count).toBe(10);
     });
 
     it('should auto-seed issuers on first access', async () => {
         const { getRegistryDb } = await import('../db');
         const db = getRegistryDb();
         const count = (db.prepare('SELECT COUNT(*) as count FROM issuers').get() as { count: number }).count;
-        expect(count).toBe(2);
+        expect(count).toBe(10);
     });
 
     it('should use WAL journal mode', async () => {
@@ -151,12 +151,12 @@ describe('Database Layer', () => {
         const { getRegistryDb, resetRegistryDb, dbListInstruments } = await import('../db');
         // First access: seeds
         getRegistryDb();
-        expect(dbListInstruments()).toHaveLength(2);
+        expect(dbListInstruments()).toHaveLength(10);
 
         // Reset and reopen — should not duplicate
         resetRegistryDb();
         getRegistryDb();
-        expect(dbListInstruments()).toHaveLength(2);
+        expect(dbListInstruments()).toHaveLength(10);
     });
 });
 
@@ -183,10 +183,10 @@ describe('Instrument CRUD', () => {
         const { getRegistryDb, dbListInstruments } = await import('../db');
         getRegistryDb();
         const instruments = dbListInstruments();
-        expect(instruments).toHaveLength(2);
+        expect(instruments).toHaveLength(10);
         // First should be XRP/RLUSD (sortOrder=1)
         expect(instruments[0]!.key).toBe('XRP/RLUSD');
-        expect(instruments[1]!.key).toBe('XRP/USDT');
+        expect(instruments[1]!.key).toBe('XRP/EUR');
     });
 
     it('should list active instruments only', async () => {
@@ -197,7 +197,7 @@ describe('Instrument CRUD', () => {
         dbUpdateInstrumentStatus('XRP/USDT', 'disabled');
 
         const active = dbListInstruments({ activeOnly: true });
-        expect(active).toHaveLength(1);
+        expect(active).toHaveLength(9);
         expect(active.find((i) => i.key === 'XRP/USDT')).toBeUndefined();
     });
 
@@ -205,7 +205,7 @@ describe('Instrument CRUD', () => {
         const { getRegistryDb, dbListInstruments } = await import('../db');
         getRegistryDb();
         const mainnet = dbListInstruments({ network: 'mainnet' });
-        expect(mainnet).toHaveLength(2);
+        expect(mainnet).toHaveLength(10);
 
         const testnet = dbListInstruments({ network: 'testnet' });
         expect(testnet).toHaveLength(0); // all pairs are mainnet
@@ -264,7 +264,7 @@ describe('Instrument CRUD', () => {
         const ok = dbDeleteInstrument('XRP/USDT');
         expect(ok).toBe(true);
         expect(dbGetInstrument('XRP/USDT')).toBeNull();
-        expect(dbListInstruments()).toHaveLength(1);
+        expect(dbListInstruments()).toHaveLength(9);
     });
 });
 
@@ -317,7 +317,7 @@ describe('Registry API', () => {
         it('should return all instruments', async () => {
             const { getInstruments } = await import('../registry');
             const instruments = getInstruments();
-            expect(instruments).toHaveLength(2);
+            expect(instruments).toHaveLength(10);
         });
 
         it('should return same reference on repeated calls (cached)', async () => {
@@ -365,7 +365,7 @@ describe('Registry API', () => {
     describe('listInstruments', () => {
         it('should return all when no filter', async () => {
             const { listInstruments } = await import('../registry');
-            expect(listInstruments()).toHaveLength(2);
+            expect(listInstruments()).toHaveLength(10);
         });
 
         it('should filter by network', async () => {
@@ -394,7 +394,7 @@ describe('Registry API', () => {
             });
 
             expect(findInstrument('XRP/NZD')).toBeDefined();
-            expect(getInstruments().length).toBe(3);
+            expect(getInstruments().length).toBe(11);
         });
 
         it('should reject invalid instrument structure', async () => {
@@ -431,7 +431,7 @@ describe('Registry API', () => {
             const ok = removeInstrument('XRP/USDT');
             expect(ok).toBe(true);
             expect(findInstrument('XRP/USDT')).toBeUndefined();
-            expect(getInstruments()).toHaveLength(1);
+            expect(getInstruments()).toHaveLength(9);
         });
     });
 
@@ -588,15 +588,15 @@ describe('Lifecycle', () => {
         initRegistry();
         initRegistry();
         initRegistry();
-        expect(getInstruments()).toHaveLength(2);
+        expect(getInstruments()).toHaveLength(10);
     });
 
     it('closeRegistry then reopen works', async () => {
         const { initRegistry, closeRegistry, getInstruments } = await import('../registry');
         initRegistry();
-        expect(getInstruments()).toHaveLength(2);
+        expect(getInstruments()).toHaveLength(10);
         closeRegistry();
         // Should lazily reopen
-        expect(getInstruments()).toHaveLength(2);
+        expect(getInstruments()).toHaveLength(10);
     });
 });
