@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { Client, Wallet } from 'xrpl';
 import { loadConfig } from '../../../../config';
 import { getSharedClient } from '../../../lib/xrplClient';
@@ -201,6 +202,21 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
                     });
                 }
             }
+
+            return res.status(200).json({
+                address: runtimeWallet?.address ?? null,
+                balance: 0,
+                reserve: cfg.risk.reserveFloorXRP || 10,
+                quoteCurrency: queryQuote || cfg.tradingPair.quoteCurrency || '',
+                quoteBalance: 0,
+                baseCurrency: queryBase || cfg.tradingPair.baseCurrency || 'XRP',
+                baseBalance: 0,
+                usdRate: null,
+                network,
+                trustLines: [],
+                fromRuntime: true,
+                warmingUp: true,
+            });
         }
 
         // Use shared client to avoid rate limiting
@@ -387,4 +403,4 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
     }
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

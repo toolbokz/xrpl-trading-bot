@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest, logSensitiveAction } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { tradeHistory, Trade, TradeStats } from '../../../lib/tradeHistory';
 import { logger } from '../../../../analytics/logger';
 
@@ -58,4 +59,4 @@ async function handler(
     return res.status(405).json({ error: 'Method not allowed', requestId: req.requestId });
 }
 
-export default withLocalApi(handler, { methods: ['GET', 'DELETE'] });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET', 'DELETE'] });

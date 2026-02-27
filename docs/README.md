@@ -16,11 +16,11 @@ This folder mixes **architecture references**, **operational runbooks**, and **s
 
 ## `docs/security-api-auth.md`
 - **Purpose:** Security architecture spec for bot API authentication and authorization.
-- **Function:** Documents HMAC request signing, header contract, RBAC permissions, configuration requirements, and operational security controls for `/api/bot/*` endpoints.
+- **Function:** Documents the implemented localhost-only model, optional `LOCAL_API_TOKEN`, operational hardening guidance, and explicit non-implemented status for HMAC/RBAC.
 
 ## `docs/security-key-rotation.md`
-- **Purpose:** Operational runbook for rotating `BOT_API_KEYS` safely.
-- **Function:** Provides zero-downtime and emergency rotation procedures, key generation guidance, migration validation steps, and audit-log checks for incident response/compliance hygiene.
+- **Purpose:** Legacy runbook for a previously planned `BOT_API_KEYS` model.
+- **Function:** Retained as historical/reference material only; current runtime authentication is documented in `security-api-auth.md`.
 
 ## `docs/small-balance-survival.md`
 - **Purpose:** Practical risk profile guide for micro accounts (≤30 XRP).

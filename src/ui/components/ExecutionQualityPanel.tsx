@@ -38,6 +38,14 @@ interface ExecutionQualitySummary {
     avgDecisionToSubmitMs: number | null;
     avgSubmitToValidatedMs: number | null;
     avgDecisionToValidatedMs: number | null;
+    missingFillSnapshotRate: number;
+    missingAckRate: number;
+    missingMarkoutRate: number;
+    repriceAppliedRate: number;
+    negSlippageRate: number;
+    staleFillSnapshotRate: number;
+    tooGoodRate: number;
+    tooBadRate: number;
 }
 
 interface ExecutionQualityBucket {
@@ -371,40 +379,74 @@ export function ExecutionQualityPanel({
 
                 {data && summary && (
                     <>
+                        {/* Primary metrics row */}
                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
                             <MetricCard label="Events" value={String(summary.events)} />
                             <MetricCard label="Fills / Rejects" value={`${summary.fills} / ${summary.rejects}`} />
+                            <MetricCard label="Partials" value={String(summary.partials)} />
                             <MetricCard label="Avg Slip (Intent)" value={`${fmt(summary.avgSlippageBpsVsIntent, 1)} bps`} tone={summary.avgSlippageBpsVsIntent} />
                             <MetricCard label="Eff Spread" value={`${fmt(summary.avgEffSpreadBps, 1)} bps`} tone={summary.avgEffSpreadBps} />
-                            <MetricCard label="Realized 1m" value={`${fmt(summary.avgRealizedSpreadBps1m, 1)} bps`} tone={summary.avgRealizedSpreadBps1m} />
                             <MetricCard label="Fill Ratio" value={fmtPct(summary.avgFillRatio)} />
                         </div>
 
+                        {/* Slippage benchmarks row */}
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+                            <MetricCard label="Slip vs Mid" value={`${fmt(summary.avgSlippageBpsVsMid, 1)} bps`} tone={summary.avgSlippageBpsVsMid} />
+                            <MetricCard label="Slip vs BBO" value={`${fmt(summary.avgSlippageBpsVsBbo, 1)} bps`} tone={summary.avgSlippageBpsVsBbo} />
+                            <MetricCard label="Realized 1m" value={`${fmt(summary.avgRealizedSpreadBps1m, 1)} bps`} tone={summary.avgRealizedSpreadBps1m} />
+                            <MetricCard label="Realized 5m" value={`${fmt(summary.avgRealizedSpreadBps5m, 1)} bps`} tone={summary.avgRealizedSpreadBps5m} />
+                            <MetricCard label="Impact 1m" value={`${fmt(summary.avgImpactBps1m, 1)} bps`} tone={summary.avgImpactBps1m} />
+                            <MetricCard label="Impact 5m" value={`${fmt(summary.avgImpactBps5m, 1)} bps`} tone={summary.avgImpactBps5m} />
+                        </div>
+
+                        {/* Latency + Coverage + Data Quality row */}
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+                            <MetricCard label="Decision→Submit" value={`${fmt(summary.avgDecisionToSubmitMs, 0)} ms`} />
+                            <MetricCard label="Submit→Validated" value={`${fmt(summary.avgSubmitToValidatedMs, 0)} ms`} />
+                            <MetricCard label="Decision→Validated" value={`${fmt(summary.avgDecisionToValidatedMs, 0)} ms`} />
+                            <MetricCard label="Coverage 1m / 5m" value={`${fmtPct(summary.coverage1m)} / ${fmtPct(summary.coverage5m)}`} />
+                            <MetricCard label="Reprice Applied" value={fmtPct(summary.repriceAppliedRate)} />
+                            <MetricCard label="Neg Slippage" value={fmtPct(summary.negSlippageRate)} />
+                        </div>
+
+                        {/* Data quality indicators */}
+                        <div className="flex flex-wrap gap-2">
+                            <QualityBadge label="Missing Fill Snap" rate={summary.missingFillSnapshotRate} />
+                            <QualityBadge label="Missing Ack" rate={summary.missingAckRate} />
+                            <QualityBadge label="Missing Markout" rate={summary.missingMarkoutRate} />
+                            <QualityBadge label="Stale Fill Snap" rate={summary.staleFillSnapshotRate} />
+                            <QualityBadge label="Too Good" rate={summary.tooGoodRate} />
+                            <QualityBadge label="Too Bad" rate={summary.tooBadRate} />
+                        </div>
+
                         <div className="grid gap-3 xl:grid-cols-2">
-                            <ChartCard title="Time Series (Slippage / Spread / Realized 1m)">
+                            <ChartCard title="Slippage / Spread / Realized 1m / Realized 5m">
                                 <ResponsiveContainer width="100%" height={210}>
                                     <LineChart data={series}>
                                         <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
                                         <XAxis dataKey="t" tick={{ fontSize: 10, fill: '#94a3b8' }} />
                                         <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} />
                                         <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155' }} />
-                                        <Line type="monotone" dataKey="avgSlippageBpsVsIntent" stroke="#f97316" dot={false} strokeWidth={1.8} />
-                                        <Line type="monotone" dataKey="avgEffSpreadBps" stroke="#22d3ee" dot={false} strokeWidth={1.8} />
-                                        <Line type="monotone" dataKey="avgRealizedSpreadBps1m" stroke="#a78bfa" dot={false} strokeWidth={1.8} />
+                                        <Line type="monotone" dataKey="avgSlippageBpsVsIntent" name="Slippage" stroke="#f97316" dot={false} strokeWidth={1.8} />
+                                        <Line type="monotone" dataKey="avgEffSpreadBps" name="Eff Spread" stroke="#22d3ee" dot={false} strokeWidth={1.8} />
+                                        <Line type="monotone" dataKey="avgRealizedSpreadBps1m" name="Realized 1m" stroke="#a78bfa" dot={false} strokeWidth={1.8} />
+                                        <Line type="monotone" dataKey="avgRealizedSpreadBps5m" name="Realized 5m" stroke="#c084fc" dot={false} strokeWidth={1.2} strokeDasharray="4 2" />
                                     </LineChart>
                                 </ResponsiveContainer>
                             </ChartCard>
 
-                            <ChartCard title="Time Series (Fill Ratio / Decision->Validated)">
+                            <ChartCard title="Impact 1m / 5m / Fill Ratio / Decision→Validated">
                                 <ResponsiveContainer width="100%" height={210}>
                                     <LineChart data={series}>
                                         <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
                                         <XAxis dataKey="t" tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                                        <YAxis yAxisId="pct" tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                                        <YAxis yAxisId="ms" orientation="right" tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                                        <YAxis yAxisId="bps" tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                                        <YAxis yAxisId="pct" orientation="right" tick={{ fontSize: 10, fill: '#94a3b8' }} />
                                         <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155' }} />
-                                        <Line yAxisId="pct" type="monotone" dataKey="fillRatioPct" stroke="#34d399" dot={false} strokeWidth={1.8} />
-                                        <Line yAxisId="ms" type="monotone" dataKey="avgDecisionToValidatedMs" stroke="#60a5fa" dot={false} strokeWidth={1.8} />
+                                        <Line yAxisId="bps" type="monotone" dataKey="avgImpactBps1m" name="Impact 1m" stroke="#fb923c" dot={false} strokeWidth={1.8} />
+                                        <Line yAxisId="bps" type="monotone" dataKey="avgImpactBps5m" name="Impact 5m" stroke="#fdba74" dot={false} strokeWidth={1.2} strokeDasharray="4 2" />
+                                        <Line yAxisId="pct" type="monotone" dataKey="fillRatioPct" name="Fill %" stroke="#34d399" dot={false} strokeWidth={1.8} />
+                                        <Line yAxisId="bps" type="monotone" dataKey="avgDecisionToValidatedMs" name="Latency ms" stroke="#60a5fa" dot={false} strokeWidth={1.2} />
                                     </LineChart>
                                 </ResponsiveContainer>
                             </ChartCard>
@@ -506,6 +548,25 @@ function AnomalyBadge({
         )}>
             <div className="text-[10px] uppercase tracking-wide opacity-80">{label}</div>
             <div className="font-mono text-base font-semibold">{value}</div>
+        </div>
+    );
+}
+
+function QualityBadge({ label, rate }: { label: string; rate: number | null | undefined }) {
+    const pct = rate != null && Number.isFinite(rate) ? rate * 100 : null;
+    const isHigh = pct != null && pct > 10;
+    const isMed = pct != null && pct > 5;
+    return (
+        <div className={clsx(
+            'rounded border px-2 py-1 text-[11px]',
+            isHigh
+                ? 'border-red-400/40 bg-red-500/10 text-red-200'
+                : isMed
+                    ? 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+                    : 'border-white/10 bg-white/[0.02] text-slate-300',
+        )}>
+            <span className="text-[10px] uppercase tracking-wide opacity-80">{label}:</span>{' '}
+            <span className="font-mono font-semibold">{pct != null ? `${pct.toFixed(1)}%` : '—'}</span>
         </div>
     );
 }

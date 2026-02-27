@@ -17,6 +17,7 @@ import { logger } from '../../../../analytics/logger';
 import { getClientHealth } from '../../../lib/xrplClient';
 import { getProcessModeInfo, getTapeFromRuntime, isSingleProcessMode, getState } from '../../../lib/runtimeBridge';
 import { withLocalApi } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import type { LocalRequest } from '../../../lib/localApi';
 
 export const config = {
@@ -111,6 +112,13 @@ let lastCandlesSource: 'live' | 'historical' | 'empty' | 'unknown' = 'unknown';
  */
 export function setOrderBookLastUpdate(ts: number, _pairKey?: string): void {
     lastOrderBookUpdate = ts;
+}
+
+/**
+ * Mark order book as unavailable (clears last known timestamp).
+ */
+export function setOrderBookUnavailable(_pairKey?: string): void {
+    lastOrderBookUpdate = null;
 }
 
 /**
@@ -307,4 +315,4 @@ async function handler(
     }
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

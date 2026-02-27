@@ -13,16 +13,20 @@ import { AppShell } from '../components/layout/AppShell';
 import { TerminalHeader } from '../components/TerminalHeader';
 import { OrderBookPanel } from '../components/OrderBookPanel';
 import { TradeTapePanel } from '../components/TradeTapePanel';
-import { BotOrdersPanel } from '../components/BotOrdersPanel';
 import { LogsPanel } from '../components/LogsPanel';
 import { FlowMetricsPanel } from '../components/FlowMetricsPanel';
 import { GovernancePanel } from '../components/GovernancePanel';
 import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
 import { AdaptivePanel } from '../components/AdaptivePanel';
-import { ScannerPanel } from '../components/ScannerPanel';
+import { VolatilityStopPanel } from '../components/VolatilityStopPanel';
+// ScannerPanel removed — scanner disabled
 import { RiskStressPanel } from '../components/RiskStressPanel';
 import { ExecutionQualityPanel } from '../components/ExecutionQualityPanel';
 import { EdgeAttributionPanel } from '../components/EdgeAttributionPanel';
+import { LatencyImpactPanel } from '../components/LatencyImpactPanel';
+import { SlippageRealismPanel } from '../components/SlippageRealismPanel';
+import { AttributionCompletenessPanel } from '../components/AttributionCompletenessPanel';
+import { TradeHistoryDiagnosticsPanel } from '../components/TradeHistoryDiagnosticsPanel';
 import { useOrderBook } from '../lib/hooks/useOrderBook';
 import { RuntimeCacheProvider, useRuntimeCache } from '../lib/hooks/useRuntimeCache';
 import { RuntimeEventsProvider, useRuntimeEvents } from '../lib/hooks/useRuntimeEvents';
@@ -33,8 +37,9 @@ import { useRiskStress } from '../lib/hooks/useRiskStress';
 import { useSpreadModel } from '../lib/hooks/useSpreadModel';
 
 type BotStatus = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
-type ToolTab = 'orderbook' | 'tape' | 'radar' | 'diagnostics';
-type DrawerTab = 'orders' | 'logs';
+type ToolTab = 'tape' | 'diagnostics';
+type DrawerTab = 'logs';
+type DiagnosticsTab = 'execution' | 'risk' | 'policy' | 'latency' | 'trades';
 
 interface BotState {
     status: BotStatus;
@@ -50,6 +55,9 @@ interface BotState {
     strategy: string;
     pnlTotal: number;
     pnlToday: number;
+    /** FIFO round-trip realized PnL (entry→exit, actual fill prices). */
+    roundTripPnl: number;
+    roundTripPnlToday: number;
     winRate: number;
     openPosition: string;
     spreadBps: number;
@@ -76,6 +84,8 @@ const createInitialBotState = (): BotState => ({
     strategy: 'orderbook-scalper',
     pnlTotal: 0,
     pnlToday: 0,
+    roundTripPnl: 0,
+    roundTripPnlToday: 0,
     winRate: 0,
     openPosition: 'Flat',
     spreadBps: 0,
@@ -96,8 +106,9 @@ function DashboardPageContent() {
     const [selectedPairKey, setSelectedPairKey] = useState<string>('');
     const [connected, setConnected] = useState<boolean>(false);
 
-    const [activeToolTab, setActiveToolTab] = useState<ToolTab>('orderbook');
-    const [drawerTab, setDrawerTab] = useState<DrawerTab>('orders');
+    const [activeToolTab, setActiveToolTab] = useState<ToolTab>('tape');
+    const [drawerTab, setDrawerTab] = useState<DrawerTab>('logs');
+    const [activeDiagnosticsTab, setActiveDiagnosticsTab] = useState<DiagnosticsTab>('execution');
     const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
 
     const [viewportWidth, setViewportWidth] = useState<number>(1600);
@@ -105,9 +116,32 @@ function DashboardPageContent() {
     const isCompact = viewportWidth <= 800;
 
     const [activePairPriceTrend, setActivePairPriceTrend] = useState<'up' | 'down' | 'neutral'>('neutral');
+    const [tradeRefreshSeq, setTradeRefreshSeq] = useState(0);
 
     const currentPair = useMemo(() => findPair(selectedPairKey), [selectedPairKey]);
     const diagnosticsVisible = activeToolTab === 'diagnostics';
+
+    // Live flow regime — polled from /api/bot/flow so AdaptivePanel shows the
+    // tuning bucket that actually matches current market conditions.
+    type FlowRegime = 'quiet' | 'normal' | 'trendingUp' | 'trendingDown' | 'chaotic' | 'illiquid';
+    const [liveRegime, setLiveRegime] = useState<FlowRegime | null>(null);
+    useEffect(() => {
+        if (!diagnosticsVisible) return;
+        let cancelled = false;
+        const poll = async () => {
+            try {
+                const res = await fetch('/api/bot/flow');
+                if (!res.ok) return;
+                const json = await res.json();
+                if (!cancelled && json?.regime?.current) {
+                    setLiveRegime(json.regime.current as FlowRegime);
+                }
+            } catch { /* swallow */ }
+        };
+        poll();
+        const id = setInterval(poll, 5_000);
+        return () => { cancelled = true; clearInterval(id); };
+    }, [diagnosticsVisible]);
 
     const {
         data: orderBookData,
@@ -136,12 +170,16 @@ function DashboardPageContent() {
 
     useEffect(() => {
         const savedToolTab = window.localStorage.getItem('xrpl.toolTab') as ToolTab | null;
-        if (savedToolTab && ['orderbook', 'tape', 'radar', 'diagnostics'].includes(savedToolTab)) {
+        if (savedToolTab && ['tape', 'radar', 'diagnostics'].includes(savedToolTab)) {
             setActiveToolTab(savedToolTab);
         }
         const savedDrawerTab = window.localStorage.getItem('xrpl.drawerTab') as DrawerTab | null;
-        if (savedDrawerTab && ['orders', 'logs'].includes(savedDrawerTab)) {
+        if (savedDrawerTab && ['logs'].includes(savedDrawerTab)) {
             setDrawerTab(savedDrawerTab);
+        }
+        const savedDiagnosticsTab = window.localStorage.getItem('xrpl.diagnosticsTab') as DiagnosticsTab | null;
+        if (savedDiagnosticsTab && ['execution', 'risk', 'policy', 'latency', 'trades'].includes(savedDiagnosticsTab)) {
+            setActiveDiagnosticsTab(savedDiagnosticsTab);
         }
 
         const onResize = () => setViewportWidth(window.innerWidth);
@@ -157,6 +195,10 @@ function DashboardPageContent() {
     useEffect(() => {
         window.localStorage.setItem('xrpl.drawerTab', drawerTab);
     }, [drawerTab]);
+
+    useEffect(() => {
+        window.localStorage.setItem('xrpl.diagnosticsTab', activeDiagnosticsTab);
+    }, [activeDiagnosticsTab]);
 
     useEffect(() => {
         if (!selectedPairKey) {
@@ -278,6 +320,8 @@ function DashboardPageContent() {
                     ...prev,
                     pnlTotal: data.stats.totalPnl || 0,
                     pnlToday: data.stats.todayPnl || 0,
+                    roundTripPnl: data.stats.roundTripPnl || 0,
+                    roundTripPnlToday: data.stats.roundTripPnlToday || 0,
                     winRate: data.stats.winRate || 0,
                     tradeCount: data.stats.totalTrades || 0,
                 }));
@@ -292,6 +336,7 @@ function DashboardPageContent() {
         if (events.length === 0) return;
         if (hasOrderFilledEvent(events)) {
             void fetchTrades();
+            setTradeRefreshSeq(s => s + 1);
         }
     }, [runtimeEvents.data?.seq, runtimeEvents.data?.events, fetchTrades]);
 
@@ -344,14 +389,18 @@ function DashboardPageContent() {
 
     const stripWarnings = useMemo(() => {
         const warnings: string[] = [];
-        if (!connected) warnings.push('xrpl-down');
+        if (marketHealth.data?.xrpl.connected === false) warnings.push('xrpl-down');
+        if (!connected && !marketHealth.data) warnings.push('xrpl-unknown');
         if (marketHealth.data?.orderBook.stale) warnings.push('book-stale');
-        if (bgView?.health.degraded) warnings.push('scanner-degraded');
-        if ((bgView?.fairValue.sources.length ?? 0) < 1) warnings.push('low-samples');
+        if (marketHealth.data?.tradeTape.stale) warnings.push('tape-stale');
         if (bot.risk.killSwitch) warnings.push('kill-switch');
         if (bot.status === 'ERROR') warnings.push('runtime-error');
+        if (riskStress.data.hardRiskState === 'BLOCKED') warnings.push('hard-risk-blocked');
+        if (riskStress.data.executionAllowed === false) warnings.push('execution-blocked');
+        if (riskStress.data.consecutiveFailures >= 5) warnings.push('consec-failures');
+        if (!marketHealth.data?.overall.healthy) warnings.push('market-unhealthy');
         return warnings;
-    }, [connected, marketHealth.data?.orderBook.stale, bgView?.health.degraded, bgView?.fairValue.sources.length, bot.risk.killSwitch, bot.status]);
+    }, [connected, marketHealth.data, bot.risk.killSwitch, bot.status, riskStress.data.hardRiskState, riskStress.data.executionAllowed, riskStress.data.consecutiveFailures]);
 
     const severity = useMemo(() => {
         if (bot.status === 'ERROR') return 3;
@@ -370,12 +419,10 @@ function DashboardPageContent() {
     }, [severity, bot.tradeCount, isCompact]);
 
     const statusChips = useMemo(() => {
-        const dd = riskStress.data.drawdownPct ?? 0;
         const exposurePct = bot.risk.maxExposure > 0
             ? Math.min(999, (bot.risk.currentExposure / bot.risk.maxExposure) * 100)
             : 0;
-        const scannerState = !bgView ? 'OFF' : bgView.health.degraded ? 'ERR' : 'OK';
-        const scannerTone = !bgView ? 'neutral' : bgView.health.degraded ? 'warn' : 'ok';
+
         const volatilityStop = runtimeCache.data?.snapshot?.volatilityStop ?? null;
         const volatilityReadyValue = !volatilityStop
             ? 'N/A'
@@ -394,11 +441,52 @@ function DashboardPageContent() {
             ? `${volatilityStop.stopLossBpsUsed.toFixed(1)} bps`
             : 'N/A';
 
+        // Authoritative XRPL connection (from market health endpoint, not derived from orderbook fetch)
+        const xrplConnected = marketHealth.data?.xrpl.connected ?? connected;
+        const xrplReconnects = marketHealth.data?.xrpl.reconnects ?? 0;
+
+        // Hard risk state
+        const hardState = riskStress.data.hardRiskState;
+        const hardRiskValue = hardState ?? '—';
+        const hardRiskTone: 'ok' | 'bad' | 'warn' | 'neutral' = hardState === 'BLOCKED' ? 'bad'
+            : hardState === 'WARNING' ? 'warn'
+                : hardState === 'CLEAR' ? 'ok'
+                    : 'neutral';
+
+        // Execution gate
+        const execAllowed = riskStress.data.executionAllowed;
+        const gateTone: 'ok' | 'bad' | 'warn' | 'neutral' = execAllowed === true ? 'ok'
+            : execAllowed === false ? 'bad'
+                : 'neutral';
+
+        // Daily loss
+        const dailyLossCurrent = riskStress.data.dailyLossCurrent;
+        const dailyLossLimit = riskStress.data.dailyLossLimit;
+        const dailyLossPct = (dailyLossLimit != null && dailyLossLimit > 0 && dailyLossCurrent != null)
+            ? (dailyLossCurrent / dailyLossLimit) * 100 : 0;
+        const dailyLossValue = dailyLossCurrent != null
+            ? `${dailyLossCurrent.toFixed(2)}${dailyLossLimit != null ? ` / ${dailyLossLimit.toFixed(0)}` : ''}`
+            : '—';
+
+        // Network
+        const networkLabel = marketHealth.data?.network ?? bot.network?.toLowerCase() ?? '—';
+
+        // Consecutive failures
+        const consecFails = riskStress.data.consecutiveFailures;
+
+        // Trade tape
+        const tapeStale = marketHealth.data?.tradeTape.stale;
+
+        // Feed health
+        const feedHealthy = riskStress.data.feedHealthy;
+
         return [
             { key: 'state', label: 'Run', value: bot.status, tone: bot.status === 'RUNNING' ? 'ok' : bot.status === 'ERROR' ? 'bad' : 'warn' },
-            { key: 'today', label: 'P&L Today', value: fmtSigned(bot.pnlToday, 6), tone: bot.pnlToday >= 0 ? 'ok' : 'bad' },
-            { key: 'session', label: 'Session', value: fmtSigned(bot.pnlTotal, 6), tone: bot.pnlTotal >= 0 ? 'ok' : 'bad' },
+            { key: 'net', label: 'Net', value: networkLabel === 'testnet' ? 'TEST' : networkLabel === 'mainnet' ? 'MAIN' : networkLabel.toUpperCase(), tone: networkLabel === 'testnet' ? 'warn' : 'neutral' },
+            { key: 'today', label: 'P&L Today', value: fmtSigned(bot.roundTripPnlToday, 6), tone: bot.roundTripPnlToday >= 0 ? 'ok' : 'bad' },
+            { key: 'session', label: 'Session', value: fmtSigned(bot.roundTripPnl, 6), tone: bot.roundTripPnl >= 0 ? 'ok' : 'bad' },
             { key: 'win', label: 'Win', value: `${bot.winRate.toFixed(1)}%`, tone: bot.winRate >= 50 ? 'ok' : 'neutral' },
+            { key: 'trades', label: 'Trades', value: String(bot.tradeCount), tone: 'neutral' },
             { key: 'position', label: 'Pos', value: `${bot.openPosition} ${bot.risk.currentExposure.toFixed(0)}`, tone: 'neutral' },
             {
                 key: 'pair-balance',
@@ -406,17 +494,22 @@ function DashboardPageContent() {
                 value: `${bot.baseBalance.toFixed(2)} ${bot.baseCurrency} | ${bot.quoteBalance.toFixed(2)} ${bot.quoteCurrency || 'QUOTE'}`,
                 tone: 'neutral',
             },
-            { key: 'venue', label: 'XRPL', value: connected ? 'UP' : 'DOWN', tone: connected ? 'ok' : 'warn' },
-            { key: 'risk', label: 'Risk', value: `Exp ${exposurePct.toFixed(0)}%`, tone: dd >= 8 ? 'warn' : 'neutral' },
+            { key: 'venue', label: 'XRPL', value: xrplConnected ? `UP${xrplReconnects > 0 ? ` (${xrplReconnects}r)` : ''}` : 'DOWN', tone: xrplConnected ? 'ok' : 'bad' },
+            { key: 'gate', label: 'Gate', value: execAllowed === true ? 'OPEN' : execAllowed === false ? 'SHUT' : '—', tone: gateTone },
+            { key: 'hard-risk', label: 'H-Risk', value: hardRiskValue, tone: hardRiskTone },
+            { key: 'risk', label: 'Exposure', value: `${exposurePct.toFixed(0)}%`, tone: exposurePct >= 80 ? 'warn' : 'neutral' },
+            { key: 'daily-loss', label: 'Day Loss', value: dailyLossValue, tone: dailyLossPct >= 80 ? 'bad' : dailyLossPct >= 50 ? 'warn' : 'neutral' },
             { key: 'capital', label: 'Capital', value: bot.risk.killSwitch ? 'PROTECT' : 'NORMAL', tone: bot.risk.killSwitch ? 'warn' : 'ok' },
+            { key: 'consec-fail', label: 'Fails', value: String(consecFails), tone: consecFails >= 5 ? 'bad' : consecFails >= 3 ? 'warn' : 'neutral' },
+            { key: 'feed', label: 'Feed', value: feedHealthy === true ? 'OK' : feedHealthy === false ? 'ERR' : '—', tone: feedHealthy === true ? 'ok' : feedHealthy === false ? 'bad' : 'neutral' },
+            { key: 'book', label: 'Book', value: marketHealth.data?.orderBook.stale ? 'STALE' : 'FRESH', tone: marketHealth.data?.orderBook.stale ? 'warn' : 'ok' },
+            { key: 'tape', label: 'Tape', value: tapeStale ? 'STALE' : 'FRESH', tone: tapeStale ? 'warn' : 'ok' },
             { key: 'vol-ready', label: 'Vol Ready', value: volatilityReadyValue, tone: volatilityReadyTone },
             { key: 'vol-bps', label: 'Vol', value: volatilityBpsValue, tone: volatilityReadyTone },
             { key: 'stop-bps', label: 'Stop Bps', value: stopLossBpsValue, tone: volatilityStop?.enabled ? 'warn' : 'neutral' },
-            { key: 'scanner', label: 'Scanner', value: scannerState, tone: scannerTone },
-            { key: 'samples', label: 'Samples', value: String(bgView?.fairValue.sources.length ?? 0), tone: (bgView?.fairValue.sources.length ?? 0) < 1 ? 'warn' : 'neutral' },
-            { key: 'book', label: 'Book', value: marketHealth.data?.orderBook.stale ? 'STALE' : 'FRESH', tone: marketHealth.data?.orderBook.stale ? 'warn' : 'ok' },
+
         ] as Array<{ key: string; label: string; value: string; tone: 'ok' | 'bad' | 'warn' | 'neutral' }>;
-    }, [bot.status, bot.pnlToday, bot.pnlTotal, bot.winRate, bot.openPosition, bot.baseBalance, bot.baseCurrency, bot.quoteBalance, bot.quoteCurrency, bot.risk.currentExposure, bot.risk.maxExposure, bot.risk.killSwitch, connected, riskStress.data.drawdownPct, bgView, marketHealth.data?.orderBook.stale, runtimeCache.data?.snapshot?.volatilityStop]);
+    }, [bot.status, bot.network, bot.roundTripPnlToday, bot.roundTripPnl, bot.winRate, bot.tradeCount, bot.openPosition, bot.baseBalance, bot.baseCurrency, bot.quoteBalance, bot.quoteCurrency, bot.risk.currentExposure, bot.risk.maxExposure, bot.risk.killSwitch, connected, riskStress.data.hardRiskState, riskStress.data.executionAllowed, riskStress.data.dailyLossCurrent, riskStress.data.dailyLossLimit, riskStress.data.consecutiveFailures, riskStress.data.feedHealthy, bgView, marketHealth.data, runtimeCache.data?.snapshot?.volatilityStop]);
 
     const activePairPriceDisplay = useMemo(() => {
         const pairLabel = selectedPairKey || `${bot.baseCurrency}/${bot.quoteCurrency || 'QUOTE'}`;
@@ -432,15 +525,19 @@ function DashboardPageContent() {
     }, [runtimeCache.data?.snapshot?.pairKey, bgView?.markets]);
 
     const toolTabs: Array<{ id: ToolTab; label: string }> = [
-        { id: 'orderbook', label: 'Order Book' },
         { id: 'tape', label: 'Tape' },
-        { id: 'radar', label: 'Scanner' },
         { id: 'diagnostics', label: 'Diagnostics' },
     ];
 
     const drawerTabs: Array<{ id: DrawerTab; label: string; icon: typeof ListOrdered }> = [
-        { id: 'orders', label: 'Orders', icon: ListOrdered },
         { id: 'logs', label: 'Logs', icon: Logs },
+    ];
+    const diagnosticsTabs: Array<{ id: DiagnosticsTab; label: string }> = [
+        { id: 'execution', label: 'Execution' },
+        { id: 'risk', label: 'Risk Stress' },
+        { id: 'policy', label: 'Policy' },
+        { id: 'latency', label: 'Latency' },
+        { id: 'trades', label: 'Trade History' },
     ];
 
     const onToolTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -479,50 +576,187 @@ function DashboardPageContent() {
         />
     );
 
+    const marketQualityCard = (
+        <div className="card min-h-[260px] p-4">
+            <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
+            <div className="space-y-2">
+                <MetricLine label="Spread now" value={`${fmtNum(orderBookData.spreadBps, 1)} bps`} />
+                <MetricLine
+                    label="Spread percentile"
+                    value={spreadModel.data.lookback24h?.p75Bps != null ? `${spreadModel.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
+                />
+                <MetricLine label="Depth (top)" value={fmtNum(activePairMarket?.depthTopNotional ?? null, 0)} />
+                <MetricLine label="Staleness" value={fmtMs(activePairMarket?.stalenessMs ?? null)} />
+                <MetricLine
+                    label="Mid / Bid / Ask"
+                    value={`${fmtNum(midPrice, 4)} / ${fmtNum(orderBookBids[0]?.price ?? null, 4)} / ${fmtNum(orderBookAsks[0]?.price ?? null, 4)}`}
+                />
+            </div>
+        </div>
+    );
+
     const diagnosticsPanel = (
         <div className="space-y-4">
             <section className="space-y-3">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Execution</h3>
-                <ExecutionQualityPanel
-                    {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                    strategy={bot.strategy}
-                    pollInterval={15_000}
-                    enabled={diagnosticsVisible}
-                />
-                <EdgeAttributionPanel
-                    {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                    strategy={bot.strategy}
-                    pollInterval={20_000}
-                    enabled={diagnosticsVisible}
-                />
-            </section>
-
-            <section className="space-y-3">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Risk</h3>
-                <div className="grid gap-4 lg:grid-cols-2">
-                    <RiskStressPanel
-                        data={riskStress.data}
-                        spread={spreadModel.data}
-                        loading={riskStress.loading}
-                        error={riskStress.error}
-                    />
-                    <GovernancePanel compact enabled={diagnosticsVisible} />
+                <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-2" role="tablist" aria-label="Diagnostics tabs">
+                    {diagnosticsTabs.map((tab) => (
+                        <button
+                            key={tab.id}
+                            role="tab"
+                            aria-selected={activeDiagnosticsTab === tab.id}
+                            onClick={() => setActiveDiagnosticsTab(tab.id)}
+                            className={clsx(
+                                'rounded-md border px-3 py-1.5 text-sm',
+                                activeDiagnosticsTab === tab.id
+                                    ? 'border-sky-500/30 bg-sky-500/20 text-sky-300'
+                                    : 'border-white/10 text-slate-400 hover:text-slate-200',
+                            )}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
                 </div>
             </section>
 
-            <section className="space-y-3">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Policy</h3>
-                <div className="grid gap-4 lg:grid-cols-2">
-                    <RegimeHeatmapPanel enabled={diagnosticsVisible} />
-                    <AdaptivePanel
-                        {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
-                        strategy={bot.strategy}
-                        regime="normal"
-                        pollInterval={15_000}
-                        enabled={diagnosticsVisible}
-                    />
-                </div>
-            </section>
+            {activeDiagnosticsTab === 'execution' && (
+                <>
+                    <section className="space-y-3">
+                        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Execution Quality</h3>
+                        <div className="grid gap-4 lg:grid-cols-2">
+                            <div className="min-h-[260px]">
+                                <SlippageRealismPanel
+                                    {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                                    pollInterval={20_000}
+                                    enabled={diagnosticsVisible}
+                                />
+                            </div>
+                            <div className="min-h-[260px]">
+                                <AttributionCompletenessPanel
+                                    {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                                    pollInterval={30_000}
+                                    enabled={diagnosticsVisible}
+                                />
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="space-y-3">
+                        <ExecutionQualityPanel
+                            {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                            strategy={bot.strategy}
+                            pollInterval={15_000}
+                            enabled={diagnosticsVisible}
+                        />
+                        <EdgeAttributionPanel
+                            {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                            strategy={bot.strategy}
+                            pollInterval={20_000}
+                            enabled={diagnosticsVisible}
+                        />
+                    </section>
+                </>
+            )}
+
+            {activeDiagnosticsTab === 'risk' && (
+                <section className="space-y-3">
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]">
+                        <div className="min-h-[260px]">
+                            <RiskStressPanel
+                                data={riskStress.data}
+                                spread={spreadModel.data}
+                                loading={riskStress.loading}
+                                error={riskStress.error}
+                            />
+                        </div>
+                        <div className="h-[260px] min-h-[260px] overflow-hidden">
+                            {marketQualityCard}
+                        </div>
+                        <div className="h-[260px] min-h-[260px]">
+                            <VolatilityStopPanel pollInterval={10_000} enabled={diagnosticsVisible} />
+                        </div>
+                    </div>
+                </section>
+            )}
+
+            {activeDiagnosticsTab === 'policy' && (
+                <section className="space-y-3">
+                    {/* Policy context banner */}
+                    <div className="flex flex-wrap items-center gap-2 text-[10px] px-1">
+                        <span className={clsx(
+                            'px-1.5 py-0.5 rounded font-medium',
+                            bot.network === 'MAINNET' ? 'bg-red-500/20 text-red-400' : 'bg-blue-500/20 text-blue-400'
+                        )}>
+                            {bot.network}
+                        </span>
+                        <span className={clsx(
+                            'px-1.5 py-0.5 rounded font-medium',
+                            bot.paper ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'
+                        )}>
+                            {bot.paper ? 'PAPER' : 'LIVE'}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-300 font-mono">
+                            {selectedPairKey ?? `${bot.baseCurrency}/${bot.quoteCurrency || '?'}`}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-400">
+                            {bot.strategy}
+                        </span>
+                        {liveRegime && (
+                            <span className={clsx(
+                                'px-1.5 py-0.5 rounded font-medium',
+                                liveRegime === 'chaotic' || liveRegime === 'illiquid' ? 'bg-red-500/20 text-red-400'
+                                    : liveRegime === 'trendingUp' || liveRegime === 'trendingDown' ? 'bg-blue-500/20 text-blue-400'
+                                        : 'bg-white/5 text-slate-300'
+                            )}>
+                                regime: {liveRegime}
+                            </span>
+                        )}
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.75fr)_minmax(0,0.75fr)]">
+                        <div className="min-h-[360px]">
+                            <RegimeHeatmapPanel enabled={diagnosticsVisible} />
+                        </div>
+                        <div className="h-[360px] min-h-[360px]">
+                            <AdaptivePanel
+                                {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                                strategy={bot.strategy}
+                                regime={liveRegime ?? 'normal'}
+                                pollInterval={15_000}
+                                enabled={diagnosticsVisible}
+                            />
+                        </div>
+                        <div className="h-[360px] min-h-[360px]">
+                            <GovernancePanel compact enabled={diagnosticsVisible} />
+                        </div>
+                    </div>
+                </section>
+            )}
+
+            {activeDiagnosticsTab === 'latency' && (
+                <section className="space-y-3">
+                    <div className="card min-h-[320px] overflow-hidden p-4">
+                        <h3 className="mb-3 text-base font-semibold text-slate-100">Latency Impact</h3>
+                        <div className="h-[calc(100%-2rem)] min-h-0 overflow-y-auto pr-1">
+                            <LatencyImpactPanel
+                                {...(selectedPairKey ? { pairKey: selectedPairKey } : {})}
+                                pollInterval={15_000}
+                                enabled={diagnosticsVisible}
+                            />
+                        </div>
+                    </div>
+                </section>
+            )}
+
+            {activeDiagnosticsTab === 'trades' && (
+                <section className="space-y-3">
+                    <div className="min-h-[360px]">
+                        <TradeHistoryDiagnosticsPanel
+                            pollInterval={10_000}
+                            enabled={diagnosticsVisible && activeDiagnosticsTab === 'trades'}
+                            refreshSeq={tradeRefreshSeq}
+                        />
+                    </div>
+                </section>
+            )}
         </div>
     );
 
@@ -550,11 +784,6 @@ function DashboardPageContent() {
                 })}
             </div>
             <div className="min-h-0 flex-1 overflow-hidden px-2 pt-2 pb-0">
-                {drawerTab === 'orders' && (
-                    <div id="drawer-panel-orders" role="tabpanel" className="h-full">
-                        <BotOrdersPanel pollInterval={5000} />
-                    </div>
-                )}
                 {drawerTab === 'logs' && (
                     <div
                         id="drawer-panel-logs"
@@ -571,29 +800,66 @@ function DashboardPageContent() {
     const mainContent = (
         <div className="space-y-4">
             {/* Z1 STATUS STRIP */}
-            <section className="card p-4">
-                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-                    {statusChips.map((chip) => (
-                        <StatusChip key={chip.key} label={chip.label} value={chip.value} tone={chip.tone} />
-                    ))}
-                    {stripWarnings.length > 0 && (
-                        <details className="text-[11px] text-amber-300">
-                            <summary className="cursor-pointer">Details</summary>
-                            <div className="mt-1 text-[10px] text-slate-300">{stripWarnings.join(', ')}</div>
-                        </details>
-                    )}
-                    <div
-                        className={clsx(
-                            'ml-auto whitespace-nowrap font-mono text-lg font-semibold tracking-tight',
-                            activePairPriceTrend === 'up' && 'text-emerald-300',
-                            activePairPriceTrend === 'down' && 'text-red-300',
-                            activePairPriceTrend === 'neutral' && 'text-slate-200',
-                        )}
-                        title="Live active-pair mid price"
-                    >
-                        {activePairPriceDisplay}
-                    </div>
-                </div>
+            <section className="card px-3 py-[2px]">
+                {(() => {
+                    const sessionChip = statusChips.find(c => c.key === 'session');
+                    const regularChips = statusChips.filter(c => c.key !== 'session');
+                    const half = Math.ceil(regularChips.length / 2);
+                    const topRow = regularChips.slice(0, half);
+                    const bottomRow = regularChips.slice(half);
+                    return (
+                        <div className="flex items-stretch gap-2">
+                            {/* Price chip spans both rows */}
+                            <div
+                                className={clsx(
+                                    'flex flex-col items-center justify-center w-[14rem] rounded-md border shrink-0 font-mono overflow-hidden px-2',
+                                    activePairPriceTrend === 'up' && 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300',
+                                    activePairPriceTrend === 'down' && 'border-red-500/25 bg-red-500/10 text-red-300',
+                                    activePairPriceTrend === 'neutral' && 'border-white/10 bg-white/5 text-slate-200',
+                                )}
+                                title="Live active-pair mid price"
+                            >
+                                <span className="text-[9px] uppercase tracking-wider opacity-70 leading-none">Price</span>
+                                <span className="font-semibold whitespace-nowrap leading-snug text-base">{activePairPriceDisplay}</span>
+                            </div>
+                            {/* Two chip rows */}
+                            <div className="flex flex-col justify-center gap-1.5 flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                    {topRow.map((chip) => (
+                                        <StatusChip key={chip.key} label={chip.label} value={chip.value} tone={chip.tone} wide={chip.key === 'pair-balance'} />
+                                    ))}
+                                    {stripWarnings.length > 0 && (
+                                        <details className="text-[11px] text-amber-300 shrink-0 relative">
+                                            <summary className="cursor-pointer">⚠ {stripWarnings.length}</summary>
+                                            <div className="absolute mt-1 text-[10px] text-slate-300 bg-slate-900 border border-white/10 rounded p-2 z-50 max-w-xs">{stripWarnings.join(', ')}</div>
+                                        </details>
+                                    )}
+                                </div>
+                                {bottomRow.length > 0 && (
+                                    <div className="flex items-center gap-1.5">
+                                        {bottomRow.map((chip) => (
+                                            <StatusChip key={chip.key} label={chip.label} value={chip.value} tone={chip.tone} wide={chip.key === 'pair-balance'} />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            {/* Session P&L chip spans both rows (right end) */}
+                            {sessionChip && (
+                                <div
+                                    className={clsx(
+                                        'flex flex-col items-center justify-center w-[14rem] rounded-md border shrink-0 font-mono overflow-hidden px-2',
+                                        sessionChip.tone === 'ok' && 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300',
+                                        sessionChip.tone === 'bad' && 'border-red-500/25 bg-red-500/10 text-red-300',
+                                    )}
+                                    title="Session P&L"
+                                >
+                                    <span className="text-[9px] uppercase tracking-wider opacity-70 leading-none">Session</span>
+                                    <span className="font-semibold whitespace-nowrap leading-snug text-base">{sessionChip.value}</span>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
             </section>
 
             {/* Z2 + Z3 WITH DESKTOP ACTIVITY COLUMN */}
@@ -601,12 +867,12 @@ function DashboardPageContent() {
                 <section
                     className={clsx(
                         'grid gap-3 items-stretch',
-                        drawerOpen ? 'grid-cols-[minmax(0,1fr)_360px]' : 'grid-cols-[minmax(0,1fr)_56px]'
+                        drawerOpen ? 'grid-cols-[minmax(0,1fr)_610px]' : 'grid-cols-[minmax(0,1fr)_56px]'
                     )}
                 >
-                    <div className="space-y-4 min-w-0">
-                        {/* Z2 PRIMARY DECISION PANEL */}
-                        <section className="card p-4 min-h-[420px]">
+                    <div className="grid h-[721px] min-h-[721px] min-w-0 grid-rows-2 gap-4">
+                        {/* Z2 PRIMARY DECISION PANEL (top half) */}
+                        <section className="card min-h-0 p-4">
                             <div className="mb-3 flex items-center justify-between">
                                 <h2 className="text-lg font-semibold text-slate-100">Flow Sentiment</h2>
                                 <span className="text-xs text-slate-400">Primary Decision Panel</span>
@@ -616,28 +882,24 @@ function DashboardPageContent() {
                             </div>
                         </section>
 
-                        {/* Z3 DIAGNOSTIC SUMMARY ROW */}
-                        <section className="grid grid-cols-1 gap-4">
-                            <div className="card min-h-[220px] p-4">
-                                <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
-                                <div className="space-y-2">
-                                    <MetricLine label="Spread now" value={`${fmtNum(orderBookData.spreadBps, 1)} bps`} />
-                                    <MetricLine
-                                        label="Spread percentile"
-                                        value={spreadModel.data.lookback24h?.p75Bps != null ? `${spreadModel.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
-                                    />
-                                    <MetricLine label="Depth (top)" value={fmtNum(activePairMarket?.depthTopNotional ?? null, 0)} />
-                                    <MetricLine label="Staleness" value={fmtMs(activePairMarket?.stalenessMs ?? null)} />
-                                    <MetricLine
-                                        label="Mid / Bid / Ask"
-                                        value={`${fmtNum(midPrice, 4)} / ${fmtNum(orderBookBids[0]?.price ?? null, 4)} / ${fmtNum(orderBookAsks[0]?.price ?? null, 4)}`}
-                                    />
-                                </div>
+                        {/* Order book directly below flow in full layout */}
+                        <section className="card min-h-0 overflow-hidden">
+                            <div className="h-full min-h-0">
+                                <OrderBookPanel
+                                    bids={orderBookBids}
+                                    asks={orderBookAsks}
+                                    midPrice={midPrice}
+                                    spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                                    loading={orderBookLoading}
+                                    error={orderBookError}
+                                    lastUpdated={orderBookData.lastUpdated}
+                                    maxRows={7}
+                                />
                             </div>
                         </section>
                     </div>
 
-                    <div className="relative h-[656px] min-h-[656px] max-h-[656px] min-w-0 overflow-hidden">
+                    <div className="relative h-[716px] min-h-[716px] max-h-[716px] min-w-0 overflow-hidden">
                         {drawerOpen ? (
                             <div className="h-full min-h-0 overflow-hidden">{drawerPanel}</div>
                         ) : (
@@ -648,9 +910,6 @@ function DashboardPageContent() {
                                     aria-label="Open activity drawer"
                                 >
                                     <ChevronLeft size={16} />
-                                </button>
-                                <button onClick={() => { setDrawerOpen(true); setDrawerTab('orders'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open orders">
-                                    <ListOrdered size={14} />
                                 </button>
                                 <button onClick={() => { setDrawerOpen(true); setDrawerTab('logs'); }} className="p-2 text-slate-400 hover:text-slate-200" aria-label="Open logs">
                                     <Logs size={14} />
@@ -674,7 +933,7 @@ function DashboardPageContent() {
             ) : (
                 <>
                     {/* Z2 PRIMARY DECISION PANEL */}
-                    <section className="card p-4 min-h-[420px]">
+                    <section className="card p-4 min-h-[210px]">
                         <div className="mb-3 flex items-center justify-between">
                             <h2 className="text-lg font-semibold text-slate-100">Flow Sentiment</h2>
                             <span className="text-xs text-slate-400">Primary Decision Panel</span>
@@ -684,27 +943,21 @@ function DashboardPageContent() {
                         </div>
                     </section>
 
-                    {/* Z3 DIAGNOSTIC SUMMARY ROW */}
-                    {!isCompact && (
-                        <section className="grid grid-cols-1 gap-4">
-                            <div className="card min-h-[220px] p-4">
-                                <h3 className="mb-3 text-base font-semibold text-slate-100">Market Quality</h3>
-                                <div className="space-y-2">
-                                    <MetricLine label="Spread now" value={`${fmtNum(orderBookData.spreadBps, 1)} bps`} />
-                                    <MetricLine
-                                        label="Spread percentile"
-                                        value={spreadModel.data.lookback24h?.p75Bps != null ? `${spreadModel.data.lookback24h.p75Bps.toFixed(1)} p75` : '—'}
-                                    />
-                                    <MetricLine label="Depth (top)" value={fmtNum(activePairMarket?.depthTopNotional ?? null, 0)} />
-                                    <MetricLine label="Staleness" value={fmtMs(activePairMarket?.stalenessMs ?? null)} />
-                                    <MetricLine
-                                        label="Mid / Bid / Ask"
-                                        value={`${fmtNum(midPrice, 4)} / ${fmtNum(orderBookBids[0]?.price ?? null, 4)} / ${fmtNum(orderBookAsks[0]?.price ?? null, 4)}`}
-                                    />
-                                </div>
-                            </div>
-                        </section>
-                    )}
+                    <section className="card min-h-[320px] overflow-hidden">
+                        <div className="h-full min-h-0">
+                            <OrderBookPanel
+                                bids={orderBookBids}
+                                asks={orderBookAsks}
+                                midPrice={midPrice}
+                                spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
+                                loading={orderBookLoading}
+                                error={orderBookError}
+                                lastUpdated={orderBookData.lastUpdated}
+                                maxRows={7}
+                            />
+                        </div>
+                    </section>
+
                 </>
             )}
 
@@ -732,29 +985,9 @@ function DashboardPageContent() {
                 </div>
 
                 <div className="min-h-[340px]">
-                    {activeToolTab === 'orderbook' && (
-                        <div id="tool-panel-orderbook" role="tabpanel">
-                            <OrderBookPanel
-                                bids={orderBookBids}
-                                asks={orderBookAsks}
-                                midPrice={midPrice}
-                                spreadBps={orderBookData.spreadBps ?? bot.spreadBps}
-                                loading={orderBookLoading}
-                                error={orderBookError}
-                                lastUpdated={orderBookData.lastUpdated}
-                            />
-                        </div>
-                    )}
-
                     {activeToolTab === 'tape' && (
                         <div id="tool-panel-tape" role="tabpanel">
                             <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={120} />
-                        </div>
-                    )}
-
-                    {activeToolTab === 'radar' && (
-                        <div id="tool-panel-radar" role="tabpanel">
-                            <ScannerPanel />
                         </div>
                     )}
 
@@ -787,7 +1020,7 @@ function DashboardPageContent() {
                     {mainContent}
                     {drawerOpen && (
                         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setDrawerOpen(false)}>
-                            <div className="absolute bottom-0 right-0 h-[70vh] w-full max-w-[100vw] sm:top-0 sm:h-full sm:w-[360px] sm:max-w-[92vw]" onClick={(event) => event.stopPropagation()}>
+                            <div className="absolute bottom-0 right-0 h-[70vh] w-full max-w-[100vw] sm:top-0 sm:h-full sm:w-[610px] sm:max-w-[92vw]" onClick={(event) => event.stopPropagation()}>
                                 {drawerPanel}
                             </div>
                         </div>
@@ -808,17 +1041,18 @@ export default function Page() {
     );
 }
 
-function StatusChip({ label, value, tone }: { label: string; value: string; tone: 'ok' | 'bad' | 'warn' | 'neutral' }) {
+function StatusChip({ label, value, tone, wide = false }: { label: string; value: string; tone: 'ok' | 'bad' | 'warn' | 'neutral'; wide?: boolean }) {
     return (
         <div className={clsx(
-            'inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs',
+            'flex flex-col items-center justify-center h-[2.4rem] rounded-md border text-xs overflow-hidden',
+            wide ? 'w-[11.5rem] shrink-0' : 'flex-1 min-w-0',
             tone === 'ok' && 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300',
             tone === 'bad' && 'border-red-500/25 bg-red-500/10 text-red-300',
             tone === 'warn' && 'border-amber-500/25 bg-amber-500/10 text-amber-300',
             tone === 'neutral' && 'border-white/10 bg-white/5 text-slate-300',
         )}>
-            <span className="text-[10px] uppercase tracking-wider opacity-80">{label}</span>
-            <span className="font-semibold" title={value}>{value}</span>
+            <span className="text-[9px] uppercase tracking-wider opacity-70 leading-none">{label}</span>
+            <span className="font-semibold truncate max-w-full px-1 leading-tight text-[11px]" title={value}>{value}</span>
         </div>
     );
 }

@@ -6,7 +6,7 @@ import { nextBackoffWithJitter, BackoffState } from '../utils/backoff';
 import { sleep } from '../utils/sleep';
 import { getWalletAddress } from './wallet';
 import { toXrplCurrency } from './currency';
-import { getXrplClient, getConnectionState, isConnected as isSharedConnected } from './sharedClient';
+import { getXrplClient, getConnectionState, isConnected as isSharedConnected, rotateEndpoint } from './sharedClient';
 
 export type XRPLEvents = {
     ledger: (ledger: LedgerStreamResponse) => void;
@@ -49,11 +49,25 @@ export class XRPLWebSocket extends EventEmitter {
     private reconnecting = false;
     private handlersAttached = false;
 
+    /**
+     * Consecutive request failure counter.
+     * When this exceeds ZOMBIE_THRESHOLD, the shared client is force-rotated
+     * to a different endpoint, breaking zombie connections that report
+     * isConnected()=true but never respond to requests.
+     */
+    private consecutiveRequestFailures = 0;
+    private static readonly ZOMBIE_THRESHOLD = 3;
+
     // Stored handler references for safe .off() cleanup
     private attachedClient: Client | null = null;
     private onLedgerClosed: ((ledger: LedgerStreamResponse) => void) | null = null;
     private onTransaction: ((tx: TransactionStream) => void) | null = null;
     private onClientDisconnected: (() => void) | null = null;
+    private readonly requestTimeoutMs = (() => {
+        const raw = Number.parseInt(process.env.XRPL_REQUEST_TIMEOUT_MS ?? '', 10);
+        if (!Number.isFinite(raw)) return 8_000;
+        return Math.max(1_000, raw);
+    })();
 
     constructor(private readonly cfg: XRPLConfig) {
         super();
@@ -151,7 +165,7 @@ export class XRPLWebSocket extends EventEmitter {
         }
     }
 
-    async getOrderBook(pair: TradingPair): Promise<{ bids: BookOffer[]; asks: BookOffer[] }> {
+    async getOrderBook(pair: TradingPair): Promise<{ bids: BookOffer[]; asks: BookOffer[]; sourceLedgerIndex: number | null }> {
         await this.ensureConnected();
         const common = { ledger_index: 'validated' as const, limit: 50 };
         const baseIssuerRaw = pair.baseIssuer ?? pair.issuer ?? '';
@@ -186,7 +200,23 @@ export class XRPLWebSocket extends EventEmitter {
 
         const bidsRes = await this.safeRequest(bidsReq);
         const asksRes = await this.safeRequest(asksReq);
-        return { bids: (bidsRes?.result?.offers || []) as BookOffer[], asks: (asksRes?.result?.offers || []) as BookOffer[] };
+        const parseLedgerIndex = (res: any): number | null => {
+            const raw = res?.result?.ledger_index ?? res?.result?.ledger_current_index;
+            const parsed = typeof raw === 'string' ? Number(raw) : raw;
+            if (!Number.isFinite(parsed) || parsed <= 0) return null;
+            return Math.floor(parsed);
+        };
+        const bidsLedger = parseLedgerIndex(bidsRes);
+        const asksLedger = parseLedgerIndex(asksRes);
+        const sourceLedgerIndex = [bidsLedger, asksLedger].filter((v): v is number => v !== null).reduce<number | null>(
+            (acc, v) => (acc === null ? v : Math.max(acc, v)),
+            null,
+        );
+        return {
+            bids: (bidsRes?.result?.offers || []) as BookOffer[],
+            asks: (asksRes?.result?.offers || []) as BookOffer[],
+            sourceLedgerIndex,
+        };
     }
 
     async getAMMInfo(asset: { currency: string; issuer?: string }, asset2: { currency: string; issuer?: string }): Promise<any> {
@@ -273,8 +303,17 @@ export class XRPLWebSocket extends EventEmitter {
         this.reconnecting = true;
 
         if (this.reconnects >= this.cfg.maxReconnects) {
-            logger.error('XRPL reconnect limit reached');
+            // Instead of giving up permanently, reset the counter after a
+            // long cooldown.  The previous behaviour created a dead-end
+            // where the bot could never recover once the limit was hit.
+            logger.warn(
+                { reconnects: this.reconnects, cooldownMs: 30_000 },
+                'XRPL reconnect limit reached — cooling down before resetting counter',
+            );
             this.reconnecting = false;
+            await sleep(30_000);
+            this.reconnects = 0;
+            this.backoff = { attempt: 0, delayMs: 0 };
             return;
         }
 
@@ -299,6 +338,12 @@ export class XRPLWebSocket extends EventEmitter {
     private async ensureConnected(): Promise<void> {
         // Check if shared client is connected
         if (this.connected && isSharedConnected()) return;
+
+        // Reset reconnect counter so the request-level retry path is never
+        // permanently exhausted.  The shared client handles its own backoff/
+        // endpoint rotation, so capping retries here only causes a dead-end.
+        this.reconnects = 0;
+        this.backoff = { attempt: 0, delayMs: 0 };
 
         // Re-establish connection via shared client
         await this.establish();
@@ -330,11 +375,60 @@ export class XRPLWebSocket extends EventEmitter {
         try {
             await this.ensureConnected();
             logger.info({ request }, 'XRPL client.request');
-            return await this.client!.request(request);
+            const result = await this.withTimeout(
+                this.client!.request(request),
+                this.requestTimeoutMs,
+                `xrpl-request:${(request as { command?: string }).command ?? 'unknown'}`,
+            );
+            // Success — reset the zombie connection counter
+            this.consecutiveRequestFailures = 0;
+            return result;
         } catch (err) {
-            logger.error({ err, request }, 'XRPL request failed');
-            await this.handleReconnect();
+            this.consecutiveRequestFailures++;
+            const cmd = (request as { command?: string }).command ?? 'unknown';
+            logger.error(
+                { err, request, consecutiveFailures: this.consecutiveRequestFailures },
+                'XRPL request failed',
+            );
+
+            // Zombie connection detection: if requests keep failing while the
+            // websocket still reports connected, the connection is broken in a
+            // way that isConnected() cannot detect (e.g. server stopped
+            // responding, half-open TCP).  Force-rotate to a different endpoint.
+            if (this.consecutiveRequestFailures >= XRPLWebSocket.ZOMBIE_THRESHOLD) {
+                logger.warn(
+                    {
+                        consecutiveFailures: this.consecutiveRequestFailures,
+                        command: cmd,
+                        endpoint: getConnectionState().endpoint,
+                    },
+                    'XRPL zombie connection detected — forcing endpoint rotation',
+                );
+                this.consecutiveRequestFailures = 0;
+                try {
+                    await rotateEndpoint();
+                    this.client = null;
+                    this.connected = false;
+                    this.handlersAttached = false;
+                } catch (rotErr) {
+                    logger.warn({ err: rotErr }, 'Endpoint rotation failed during zombie recovery');
+                }
+            } else {
+                await this.handleReconnect();
+            }
             throw err;
+        }
+    }
+
+    private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, context: string): Promise<T> {
+        let timer: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`${context}-timeout:${timeoutMs}ms`)), timeoutMs);
+        });
+        try {
+            return await Promise.race([promise, timeoutPromise]);
+        } finally {
+            if (timer) clearTimeout(timer);
         }
     }
 }

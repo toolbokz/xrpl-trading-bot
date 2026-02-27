@@ -108,14 +108,21 @@ export class FeedStallRecovery {
         this.tryResetToHealthy(nowMs);
     }
 
-    /** If both feeds have recent events, reset to HEALTHY. */
+    /** If at least one feed has recent events, reset to HEALTHY. */
     private tryResetToHealthy(nowMs: number): void {
         if (this.stage === 'HEALTHY') return;
         const tapeSilence = this.lastTapeEventMs > 0 ? nowMs - this.lastTapeEventMs : Infinity;
         const bookSilence = this.lastBookEventMs > 0 ? nowMs - this.lastBookEventMs : Infinity;
-        // Only reset if BOTH signals are within the Stage 1 threshold
-        if (tapeSilence < this.config.stage1ThresholdMs && bookSilence < this.config.stage1ThresholdMs) {
-            this.emitEvent('FEED_STALL_RECOVERED', nowMs, Math.max(tapeSilence, bookSilence));
+        // Reset if EITHER signal is within the Stage 1 threshold.
+        // The previous BOTH requirement created a deadlock: the book signal
+        // would never update while the tracker returned false for staleness,
+        // so recovery never completed and kept escalating destructive reconnects.
+        // For XRP/RLUSD the trade tape can be legitimately quiet for minutes
+        // while the book is alive — that's normal, not a stall.
+        const eitherAlive = tapeSilence < this.config.stage1ThresholdMs ||
+            bookSilence < this.config.stage1ThresholdMs;
+        if (eitherAlive) {
+            this.emitEvent('FEED_STALL_RECOVERED', nowMs, Math.min(tapeSilence, bookSilence));
             this.stage = 'HEALTHY';
             this.recoveryAttempts = 0;
         }

@@ -14,36 +14,143 @@ interface AnalyticsSummaryResponse {
     drawdownVelocity?: number;
 }
 
+interface BotRiskHardRiskMetrics {
+    currentExposureNotional?: number;
+    inventorySkewPct?: number;
+    drawdownPct?: number;
+    drawdownConfidence?: boolean;
+    tradesCount?: number;
+    peakEquity?: number;
+    equityNow?: number;
+    runtimeReady?: boolean;
+    marketDataValid?: boolean;
+    balancesFresh?: boolean;
+    feedHealthy?: boolean;
+}
+
+interface BotRiskHardRiskEvent {
+    type: 'RISK_LIMIT_WARNING' | 'RISK_LIMIT_BLOCK' | 'RISK_LIMIT_RECOVERY';
+    pairKey: string;
+    reasons: string[];
+    metrics: BotRiskHardRiskMetrics;
+    timestamp: number;
+}
+
+interface BotRiskThresholds {
+    maxExposureNotional?: number;
+    maxInventorySkewPct?: number;
+    maxDrawdownPct?: number;
+    minTradesForDrawdown?: number;
+    minPeakEquityForDrawdown?: number;
+    maxBalanceStalenessMs?: number;
+    minFeedHealthScore?: number;
+    warningThresholdRatio?: number;
+}
+
+interface BotRiskExposure {
+    netPositionBase?: number;
+    notionalExposure?: number;
+    inventorySkewPct?: number;
+    lastMidPrice?: number;
+    fillCount?: number;
+    totalBought?: number;
+    totalSold?: number;
+    lastFillMs?: number;
+    pairKey?: string;
+}
+
 interface BotRiskResponse {
+    killSwitch?: boolean;
+    dailyLossLimit?: number;
+    dailyLossCurrent?: number;
+    maxExposure?: number;
+    currentExposure?: number;
+    consecutiveFailures?: number;
+    maxTradeSize?: number;
+    reserveFloorXRP?: number;
+    positionSize?: number;
     hardRisk?: {
+        pairKey?: string;
         result?: {
             riskState?: 'CLEAR' | 'WARNING' | 'BLOCKED';
             riskBlockReasons?: string[];
             warningReasons?: string[];
-            metrics?: {
-                drawdownConfidence?: boolean;
-                tradesCount?: number;
-                peakEquity?: number;
-                equityNow?: number;
-                drawdownPct?: number;
-            };
+            metrics?: BotRiskHardRiskMetrics;
+            executionAllowed?: boolean;
+            evaluatedAt?: number;
         };
+        thresholds?: BotRiskThresholds;
+        recentEvents?: BotRiskHardRiskEvent[];
     };
+    exposure?: BotRiskExposure;
+    source?: 'config' | 'runtime';
+}
+
+/** Hard risk event for display in the UI. */
+export interface RiskEvent {
+    type: 'RISK_LIMIT_WARNING' | 'RISK_LIMIT_BLOCK' | 'RISK_LIMIT_RECOVERY';
+    pairKey: string;
+    reasons: string[];
+    timestamp: number;
+}
+
+/** Threshold config for display. */
+export interface RiskThresholds {
+    maxExposureNotional: number | null;
+    maxInventorySkewPct: number | null;
+    maxDrawdownPct: number | null;
+    minTradesForDrawdown: number | null;
+}
+
+/** Exposure snapshot for display. */
+export interface RiskExposure {
+    netPositionBase: number | null;
+    notionalExposure: number | null;
+    inventorySkewPct: number | null;
+    lastMidPrice: number | null;
+    fillCount: number;
+    totalBought: number;
+    totalSold: number;
+    lastFillMs: number | null;
 }
 
 export interface RiskStressData {
+    // Adverse selection
     adverseRate: number | null;
     sampleCount: number;
     adverseCount: number;
+    // Drawdown
     drawdownPct: number | null;
     drawdownVelocity: number | null;
     maxDrawdownPct: number | null;
+    // Hard risk state
     hardRiskState: 'CLEAR' | 'WARNING' | 'BLOCKED' | null;
     hardRiskReasons: string[];
     drawdownConfidence: boolean | null;
     hardRiskTradesCount: number | null;
     hardRiskPeakEquity: number | null;
     hardRiskEquityNow: number | null;
+    // Kill switch & daily loss (from riskEngine.getStatus)
+    killSwitch: boolean;
+    dailyLossLimit: number | null;
+    dailyLossCurrent: number | null;
+    // Exposure
+    maxExposure: number | null;
+    currentExposure: number | null;
+    consecutiveFailures: number;
+    // System health booleans (from hardRisk metrics)
+    runtimeReady: boolean | null;
+    marketDataValid: boolean | null;
+    balancesFresh: boolean | null;
+    feedHealthy: boolean | null;
+    // Thresholds (for context alongside values)
+    thresholds: RiskThresholds;
+    // Exposure tracker snapshot
+    exposure: RiskExposure;
+    // Recent risk events timeline
+    recentEvents: RiskEvent[];
+    // Execution allowed flag
+    executionAllowed: boolean | null;
 }
 
 export interface UseRiskStressState {
@@ -71,6 +178,34 @@ const EMPTY_DATA: RiskStressData = {
     hardRiskTradesCount: null,
     hardRiskPeakEquity: null,
     hardRiskEquityNow: null,
+    killSwitch: false,
+    dailyLossLimit: null,
+    dailyLossCurrent: null,
+    maxExposure: null,
+    currentExposure: null,
+    consecutiveFailures: 0,
+    runtimeReady: null,
+    marketDataValid: null,
+    balancesFresh: null,
+    feedHealthy: null,
+    thresholds: {
+        maxExposureNotional: null,
+        maxInventorySkewPct: null,
+        maxDrawdownPct: null,
+        minTradesForDrawdown: null,
+    },
+    exposure: {
+        netPositionBase: null,
+        notionalExposure: null,
+        inventorySkewPct: null,
+        lastMidPrice: null,
+        fillCount: 0,
+        totalBought: 0,
+        totalSold: 0,
+        lastFillMs: null,
+    },
+    recentEvents: [],
+    executionAllowed: null,
 };
 
 export function useRiskStress({
@@ -137,6 +272,8 @@ export function useRiskStress({
                 const risk = await riskRes.json() as BotRiskResponse;
                 const hardRisk = risk.hardRisk?.result;
                 const metrics = hardRisk?.metrics;
+
+                // Hard risk state
                 next.hardRiskState = hardRisk?.riskState ?? null;
                 next.hardRiskReasons = hardRisk?.riskBlockReasons
                     ?? hardRisk?.warningReasons
@@ -153,6 +290,62 @@ export function useRiskStress({
                 next.hardRiskEquityNow = Number.isFinite(metrics?.equityNow)
                     ? metrics?.equityNow ?? null
                     : null;
+                next.executionAllowed = typeof hardRisk?.executionAllowed === 'boolean'
+                    ? hardRisk.executionAllowed
+                    : null;
+
+                // Kill switch & daily loss (from riskEngine.getStatus spread into response)
+                next.killSwitch = risk.killSwitch === true;
+                next.dailyLossLimit = Number.isFinite(risk.dailyLossLimit) ? risk.dailyLossLimit! : null;
+                next.dailyLossCurrent = Number.isFinite(risk.dailyLossCurrent) ? risk.dailyLossCurrent! : null;
+
+                // Exposure from riskEngine status
+                next.maxExposure = Number.isFinite(risk.maxExposure) ? risk.maxExposure! : null;
+                next.currentExposure = Number.isFinite(risk.currentExposure) ? risk.currentExposure! : null;
+                next.consecutiveFailures = Number.isFinite(risk.consecutiveFailures) ? risk.consecutiveFailures! : 0;
+
+                // System health booleans
+                next.runtimeReady = typeof metrics?.runtimeReady === 'boolean' ? metrics.runtimeReady : null;
+                next.marketDataValid = typeof metrics?.marketDataValid === 'boolean' ? metrics.marketDataValid : null;
+                next.balancesFresh = typeof metrics?.balancesFresh === 'boolean' ? metrics.balancesFresh : null;
+                next.feedHealthy = typeof metrics?.feedHealthy === 'boolean' ? metrics.feedHealthy : null;
+
+                // Thresholds (for context display)
+                const thresholds = risk.hardRisk?.thresholds;
+                if (thresholds) {
+                    next.thresholds = {
+                        maxExposureNotional: Number.isFinite(thresholds.maxExposureNotional) ? thresholds.maxExposureNotional! : null,
+                        maxInventorySkewPct: Number.isFinite(thresholds.maxInventorySkewPct) ? thresholds.maxInventorySkewPct! : null,
+                        maxDrawdownPct: Number.isFinite(thresholds.maxDrawdownPct) ? thresholds.maxDrawdownPct! : null,
+                        minTradesForDrawdown: Number.isFinite(thresholds.minTradesForDrawdown) ? thresholds.minTradesForDrawdown! : null,
+                    };
+                }
+
+                // Exposure tracker snapshot
+                const exp = risk.exposure;
+                if (exp) {
+                    next.exposure = {
+                        netPositionBase: Number.isFinite(exp.netPositionBase) ? exp.netPositionBase! : null,
+                        notionalExposure: Number.isFinite(exp.notionalExposure) ? exp.notionalExposure! : null,
+                        inventorySkewPct: Number.isFinite(exp.inventorySkewPct) ? exp.inventorySkewPct! : null,
+                        lastMidPrice: Number.isFinite(exp.lastMidPrice) ? exp.lastMidPrice! : null,
+                        fillCount: Number.isFinite(exp.fillCount) ? exp.fillCount! : 0,
+                        totalBought: Number.isFinite(exp.totalBought) ? exp.totalBought! : 0,
+                        totalSold: Number.isFinite(exp.totalSold) ? exp.totalSold! : 0,
+                        lastFillMs: Number.isFinite(exp.lastFillMs) ? exp.lastFillMs! : null,
+                    };
+                }
+
+                // Recent events timeline
+                const events = risk.hardRisk?.recentEvents;
+                if (Array.isArray(events)) {
+                    next.recentEvents = events.slice(0, 20).map((e) => ({
+                        type: e.type,
+                        pairKey: e.pairKey ?? '',
+                        reasons: Array.isArray(e.reasons) ? e.reasons : [],
+                        timestamp: e.timestamp ?? 0,
+                    }));
+                }
             }
 
             setData(next);

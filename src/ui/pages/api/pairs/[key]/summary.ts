@@ -21,6 +21,7 @@ import {
     initRuntimeBridge,
 } from '../../../../lib/runtimeBridge';
 import { withLocalApi } from '../../../../lib/localApi';
+import { withApiRouteContext } from '../../../../lib/localApi/withApiRouteContext';
 import type { LocalRequest } from '../../../../lib/localApi';
 
 export const config = {
@@ -375,4 +376,4 @@ async function handler(
     }
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

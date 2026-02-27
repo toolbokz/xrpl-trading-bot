@@ -1,6 +1,7 @@
 import { Wallet, isValidClassicAddress, Client, TransactionStream } from 'xrpl';
 import crypto from 'crypto';
 import { AppConfig, TradingPair, FlowConfig, loadConfig } from '../config';
+import { isExecTelemetryEnabled } from '../config/featureFlags';
 import { runtimeLog as logger } from '../analytics/logger';
 import { sleep } from '../utils/sleep';
 import { XRPLWebSocket } from '../xrpl/client';
@@ -30,6 +31,10 @@ import {
     normalizeTrade,
 } from '../market/models';
 import { feedbackEngine } from '../analytics/feedbackEngine';
+import {
+    tradeMarkoutScheduler,
+    type MarkoutLifecycleEvent,
+} from '../analytics/tradeMarkoutScheduler';
 import {
     isAdaptiveEnabled,
     getAdaptiveTuning,
@@ -75,7 +80,7 @@ import {
     SnapshotValidator,
 } from '../market/snapshotValidator';
 import { RuntimeCacheRegistry } from './runtimeCacheRegistry';
-import type { VolatilityStopCacheSnapshot } from './runtimeCacheRegistry';
+import type { RuntimeHeartbeatSnapshot, VolatilityStopCacheSnapshot } from './runtimeCacheRegistry';
 import {
     PairSwitchOrchestrator,
     PairSwitchActions,
@@ -126,6 +131,9 @@ import { BackgroundMarketScanner } from '../market/backgroundScanner/backgroundM
 import type { BackgroundScannerSnapshot } from '../market/backgroundScanner/types';
 import { AccountTradeIngestionService } from '../analytics/accountTradeIngestion';
 import { VolatilityEstimator, resolveAdaptiveStopLossBps } from '../market/volatilityEstimator';
+import { MidPriceTrendTracker } from '../market/midPriceTrend';
+import { initFirstRun } from './firstRunInit';
+import { loadOrderSizingConfig, logSizingConfigSummary, type OrderSizingConfig } from '../execution/orderSizing';
 
 const cloneConfig = (cfg: AppConfig): AppConfig => ({
     xrpl: { ...cfg.xrpl },
@@ -144,6 +152,7 @@ const cloneConfig = (cfg: AppConfig): AppConfig => ({
     backgroundScanner: { ...cfg.backgroundScanner },
     analytics: { ...cfg.analytics },
     features: cfg.features ? { ...cfg.features } : undefined,
+    historyMode: cfg.historyMode,
 });
 
 export const validateTradingPair = (pair: TradingPair): void => {
@@ -194,6 +203,10 @@ export class TradingRuntime {
     private strategies: Strategy[] = [];
     private walletAddress: string | null = null;
     private tickInFlight = false;
+    private tickHeartbeatCounter = 0;
+    private heartbeatLastSubmitTs: number | null = null;
+    private heartbeatLastValidatedTs: number | null = null;
+    private heartbeatLastError: string | null = null;
     private started = false;
     private shutdownInProgress = false;
     /** @deprecated Legacy field — use pairSwitchOrchestrator.getPhase(). */
@@ -266,10 +279,14 @@ export class TradingRuntime {
     private currentVolatilityStop: VolatilityStopCacheSnapshot | null = null;
     /** Edge-detection flag: emit VOL_STOP_READY once per pair session. */
     private volatilityStopReadyEmitted = false;
+    /** Mid-price trend tracker for longer-horizon direction detection. */
+    private midPriceTrendTracker: MidPriceTrendTracker | null = null;
     /** Whether the last snapshot passed structural validation. */
     private lastDataValid = true;
     /** Reasons the last snapshot failed validation (empty when valid). */
     private lastDataInvalidReasons: string[] = [];
+    /** Unified order-sizing config (one-knob sizing). */
+    readonly orderSizingConfig: OrderSizingConfig;
     /** Runtime lifecycle FSM — replaces the old `started`/`shutdownInProgress` booleans. */
     private readonly fsm: RuntimeFSM;
     /** Whether the first tick with market data has completed (triggers WARMING→READY). */
@@ -304,6 +321,8 @@ export class TradingRuntime {
         }
 
         this.baseConfig = config ?? loadConfig();
+        this.orderSizingConfig = loadOrderSizingConfig();
+        logSizingConfigSummary(this.orderSizingConfig);
         const volatilityEstimatorConfig = {
             ...(Number.isFinite(this.baseConfig.strategy.volatilityStop?.alpha)
                 ? { alpha: this.baseConfig.strategy.volatilityStop!.alpha }
@@ -317,6 +336,17 @@ export class TradingRuntime {
         };
         this.volatilityEstimator = new VolatilityEstimator(volatilityEstimatorConfig);
         this.currentVolatilityStop = this.buildVolatilityStopSnapshot(Date.now());
+
+        // Mid-price trend tracker (EMA-based direction detection)
+        this.midPriceTrendTracker = new MidPriceTrendTracker({
+            enabled: this.baseConfig.flow.enableTrendDetection !== false,
+            fastHalfLifeMs: this.baseConfig.flow.trendFastHalfLifeMs,
+            slowHalfLifeMs: this.baseConfig.flow.trendSlowHalfLifeMs,
+            flatThresholdBps: this.baseConfig.flow.trendFlatThresholdBps,
+            minSamples: this.baseConfig.flow.trendMinSamples,
+            staleAfterMs: this.baseConfig.flow.trendStaleAfterMs,
+        });
+
         this.fsm = new RuntimeFSM();
         this.pairResolver = new ExecutionPairResolver(loadExecutionPairResolverConfig());
         this.spreadDistributionSampler.setPairKey(this.getActivePair());
@@ -427,6 +457,8 @@ export class TradingRuntime {
         this.volatilityEstimator.reset(Date.now());
         this.currentVolatilityStop = this.buildVolatilityStopSnapshot(Date.now());
         this.volatilityStopReadyEmitted = false;
+        // Reset mid-price trend tracker for new pair
+        this.midPriceTrendTracker?.reset();
         // Invalidate pair resolver cache to force re-resolution for new pair
         this.pairResolver.invalidate();
         this.strategyDecisionFunnels = {};
@@ -437,6 +469,9 @@ export class TradingRuntime {
     }
 
     async start(): Promise<void> {
+        // First-run initialization: ensure data dir, detect clean state, set boot timestamp
+        initFirstRun();
+
         // Security gate: re-check on start
         enforceLocalOnly('TradingRuntime.start');
 
@@ -521,9 +556,6 @@ export class TradingRuntime {
                     this.lastLedgerCloseMs = Date.now();
                     this.lastLedgerAdvanceMs = Date.now();
                     this.previousLedgerIndex = this.xrpl?.getLedgerIndex() ?? 0;
-                    // Inform stall recovery that the book feed is alive
-                    // (ledger events prove the WS is active even if no trades)
-                    this.feedStallRecovery?.recordBookEvent();
                 };
 
                 this.onXrplTransaction = (tx: TransactionStream) => {
@@ -587,66 +619,44 @@ export class TradingRuntime {
             executor.setBotTxHashSink((hash) => this.accountTradeIngestion?.registerBotTxHash(hash));
             executor.setSubmitTelemetrySink((event) => this.recordSubmitTelemetry(event));
             executor.setTradeToastEmitter((event) => {
-                if (event.type === 'ORDER_PLACED') {
-                    const detail: {
-                        pairKey: string;
-                        runtimeState: RuntimeState;
-                        side: 'BUY' | 'SELL';
-                        baseCurrency: string;
-                        quoteCurrency: string;
-                        timestamp: string;
-                        baseAmount?: number;
-                        quoteAmount?: number;
-                        price?: number;
-                        feeQuote?: number;
-                    } = {
-                        pairKey: event.pair,
-                        runtimeState: this.fsm.getState(),
-                        side: event.side ?? 'BUY',
+                const eventTsMs = Date.parse(event.timestamp);
+                this.observabilityBus.emit({
+                    eventType: event.type,
+                    pairKey: event.pair,
+                    runtimeState: this.fsm.getState(),
+                    correlationId: event.correlationId ?? null,
+                    detail: {
+                        type: event.type,
+                        side: event.side ?? null,
+                        pair: event.pair,
                         baseCurrency: event.baseCurrency,
                         quoteCurrency: event.quoteCurrency,
+                        baseAmount: event.baseAmount,
+                        quoteAmount: event.quoteAmount,
+                        price: event.price,
+                        feeQuote: event.feeQuote,
+                        pnlQuote: event.pnlQuote,
                         timestamp: event.timestamp,
-                    };
-                    if (event.baseAmount !== undefined) detail.baseAmount = event.baseAmount;
-                    if (event.quoteAmount !== undefined) detail.quoteAmount = event.quoteAmount;
-                    if (event.price !== undefined) detail.price = event.price;
-                    if (event.feeQuote !== undefined) detail.feeQuote = event.feeQuote;
-
-                    this.observabilityBus.emitOrderPlaced({
-                        ...detail,
-                    });
-                } else {
-                    const detail: {
-                        pairKey: string;
-                        runtimeState: RuntimeState;
-                        baseCurrency: string;
-                        quoteCurrency: string;
-                        timestamp: string;
-                        side?: 'BUY' | 'SELL';
-                        baseAmount?: number;
-                        quoteAmount?: number;
-                        price?: number;
-                        feeQuote?: number;
-                        pnlQuote?: number;
-                    } = {
-                        pairKey: event.pair,
-                        runtimeState: this.fsm.getState(),
-                        baseCurrency: event.baseCurrency,
-                        quoteCurrency: event.quoteCurrency,
-                        timestamp: event.timestamp,
-                    };
-                    if (event.side !== undefined) detail.side = event.side;
-                    if (event.baseAmount !== undefined) detail.baseAmount = event.baseAmount;
-                    if (event.quoteAmount !== undefined) detail.quoteAmount = event.quoteAmount;
-                    if (event.price !== undefined) detail.price = event.price;
-                    if (event.feeQuote !== undefined) detail.feeQuote = event.feeQuote;
-                    if (event.pnlQuote !== undefined) detail.pnlQuote = event.pnlQuote;
-
-                    this.observabilityBus.emitOrderFilled({
-                        ...detail,
-                    });
-                }
+                        timestamp_ms: Number.isFinite(eventTsMs) ? eventTsMs : Date.now(),
+                        filled_base: event.baseAmount ?? null,
+                        filled_quote: event.quoteAmount ?? null,
+                        avg_price: event.price ?? null,
+                        fill_ts_ms: Number.isFinite(eventTsMs) ? eventTsMs : null,
+                        correlation_id: event.correlationId ?? null,
+                        pair_key: event.pair,
+                        base_currency: event.baseCurrency,
+                        quote_currency: event.quoteCurrency,
+                        base_amount: event.baseAmount ?? null,
+                        quote_amount: event.quoteAmount ?? null,
+                        fee_quote: event.feeQuote ?? null,
+                        pnl_quote: event.pnlQuote ?? null,
+                    },
+                });
             });
+            tradeMarkoutScheduler.setHooks({
+                emit_event: (event) => this.emitMarkoutLifecycleEvent(event),
+            });
+            tradeMarkoutScheduler.start();
             // Wire exposure tracker into risk engine so risk checks can
             // account for current notional exposure.
             try {
@@ -688,16 +698,24 @@ export class TradingRuntime {
                     await this.xrpl?.subscribe(this.baseConfig.tradingPair);
                 },
                 hardResubscribe: async () => {
-                    logger.info('Feed stall recovery: hard resubscribe — reconnecting WebSocket');
+                    // Stage 2: force endpoint rotation to escape zombie connections.
+                    // The previous approach only detached handlers and re-connected
+                    // via getXrplClient(), which returned the SAME broken connection
+                    // if isConnected() still reported true.
+                    logger.info('Feed stall recovery: hard resubscribe — rotating endpoint');
                     await this.xrpl?.disconnect();
+                    const { rotateEndpoint: rotate } = await import('../xrpl/sharedClient');
+                    await rotate();
                     await this.xrpl?.connect();
                     await this.xrpl?.subscribe(this.baseConfig.tradingPair);
                 },
                 fullClientRebuild: async () => {
-                    logger.warn('Feed stall recovery: full client rebuild');
+                    // Stage 3: full tear-down with endpoint rotation.
+                    logger.warn('Feed stall recovery: full client rebuild — rotating endpoint');
                     await this.xrpl?.disconnect();
-                    const { disconnectXrplClient } = await import('../xrpl/sharedClient');
+                    const { disconnectXrplClient, rotateEndpoint: rotate } = await import('../xrpl/sharedClient');
                     await disconnectXrplClient();
+                    await rotate();
                     await this.xrpl?.connect();
                     await this.xrpl?.subscribe(this.baseConfig.tradingPair);
                 },
@@ -807,10 +825,19 @@ export class TradingRuntime {
         }
         if (this.tickInFlight) return; // avoid overlapping ticks
 
-        // Skip tick if XRPL client is disconnected (will reconnect automatically)
+        // If XRPL client is disconnected, attempt to re-establish before skipping.
+        // The previous "just skip" approach could leave the bot idle indefinitely
+        // if auto-reconnect failed and no other code path triggered establish().
         if (!this.xrpl.isConnected()) {
-            logger.debug('Skipping tick - XRPL client reconnecting');
-            return;
+            logger.info('XRPL client disconnected — attempting re-establish before skipping tick');
+            try {
+                await this.xrpl.connect();
+            } catch (err) {
+                logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'XRPL re-establish failed, skipping tick');
+            }
+            if (!this.xrpl.isConnected()) {
+                return;
+            }
         }
 
         // CPU safety: skip tick if CPU is overloaded
@@ -826,6 +853,9 @@ export class TradingRuntime {
         }
 
         this.tickInFlight = true;
+        const tickId = ++this.tickHeartbeatCounter;
+        this.writeTickHeartbeat(tickId, true, this.heartbeatLastError);
+        let tickError: unknown = null;
         try {
             // Re-check after acquiring tickInFlight lock (state may have changed)
             if (!this.tracker || !this.risk || !this.xrpl) {
@@ -862,8 +892,13 @@ export class TradingRuntime {
             }
             this.perfTracer?.phaseEnd(1); // reserveCheck
 
-            await this.tracker.refresh();
-            this.lastBookUpdateMs = Date.now();
+            const bookRefreshOk = await this.tracker.refresh();
+            if (bookRefreshOk) {
+                this.lastBookUpdateMs = Date.now();
+                // Feed-stall recovery should only treat successful book_offers refreshes
+                // as book liveness, not generic websocket ledger traffic.
+                this.feedStallRecovery?.recordBookEvent(this.lastBookUpdateMs);
+            }
             this.perfTracer?.phaseEnd(2); // bookRefresh
 
             // Final null check before accessing state (may have been killed during refresh)
@@ -1096,6 +1131,36 @@ export class TradingRuntime {
             this.perfTracer?.phaseEnd(5); // healthQuorum (includes gate + FSM)
             this.perfTracer?.phaseEnd(6); // fsmTransitions
 
+            // ─────────────────────────────────────────────────────────────────
+            // Flow metrics + analytics snapshot — run BEFORE the execution gate
+            // so that observational data (adverse selection, regime, etc.) is
+            // always recorded regardless of whether trading is allowed.
+            // ─────────────────────────────────────────────────────────────────
+            const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
+
+            // Feed mid-price trend tracker and overlay trend signal
+            if (this.midPriceTrendTracker && flowMetrics.midPrice > 0) {
+                this.midPriceTrendTracker.update(flowMetrics.midPrice, nowMs);
+                flowMetrics.trend = this.midPriceTrendTracker.getSignal(nowMs);
+            }
+
+            this.currentFlowMetrics = flowMetrics;
+            this.perfTracer?.phaseEnd(7); // flowMetrics
+
+            // Record market snapshot for analytics (non-blocking, best-effort).
+            // This feeds the adverse-selection panel and regime analytics.
+            try {
+                feedbackEngine.recordSnapshot({
+                    pairKey,
+                    ledgerIndex: this.xrpl.getLedgerIndex(),
+                    orderBook: orderBookState,
+                    flow: flowMetrics,
+                });
+            } catch {
+                // Feedback recording should never crash trading
+            }
+            this.perfTracer?.phaseEnd(9); // feedbackRecord
+
             if (gateResult.verdict === 'BLOCK') {
                 const isBadData = gateResult.reasons.some(r => r === 'snapshot-invalid' || r.startsWith('data:'));
                 logger.info({
@@ -1109,14 +1174,9 @@ export class TradingRuntime {
                     ? 'EXECUTION_BLOCKED_BAD_DATA: gate denied tick — snapshot structural validation failed'
                     : 'EXECUTION_BLOCKED: gate denied tick execution');
                 // Update cache even on BLOCK so API reflects latest state
-                this.updateCacheSnapshot(pairKey, gateResult, null, spreadDistribution);
+                this.updateCacheSnapshot(pairKey, gateResult, flowMetrics, spreadDistribution);
                 return;
             }
-
-            // Compute flow metrics from trade tape and order book
-            const flowMetrics = computeFlowMetrics(this.tradeTape, orderBookState, this.baseConfig.flow);
-            this.currentFlowMetrics = flowMetrics;
-            this.perfTracer?.phaseEnd(7); // flowMetrics
 
             this.entryGate.ingestTick(orderBookState, flowMetrics);
 
@@ -1129,6 +1189,9 @@ export class TradingRuntime {
                     bestBid: bestBid > 0 ? bestBid : null,
                     bestAsk: bestAsk > 0 ? bestAsk : null,
                     spreadBps: Number.isFinite(orderBookState.spread) ? orderBookState.spread : null,
+                    bookAgeMs: Number.isFinite(orderBookState.lastUpdated)
+                        ? Math.max(0, nowMs - orderBookState.lastUpdated)
+                        : null,
                     flowCombined: flowMetrics.combinedSignal,
                     flowStrength: flowMetrics.signalStrength,
                     flowRegime: flowMetrics.regime,
@@ -1167,18 +1230,7 @@ export class TradingRuntime {
 
             this.perfTracer?.phaseEnd(8); // cacheUpdate
 
-            // Record market snapshot for analytics (non-blocking, best-effort)
-            try {
-                feedbackEngine.recordSnapshot({
-                    pairKey,
-                    ledgerIndex: this.xrpl.getLedgerIndex(),
-                    orderBook: orderBookState,
-                    flow: flowMetrics,
-                });
-            } catch {
-                // Feedback recording should never crash trading
-            }
-            this.perfTracer?.phaseEnd(9); // feedbackRecord
+            // (Snapshot recording moved before execution gate — see above)
 
             // ─────────────────────────────────────────────────────────────────
             // Hard Risk Guard — deterministic capital safety gate
@@ -1286,11 +1338,13 @@ export class TradingRuntime {
                 tradeStats: this.tradeTape?.getAggression(10_000),
                 vwap: this.tradeTape?.getVWAP(60_000),
                 flow: flowMetrics,
+                trend: flowMetrics.trend ?? undefined,
                 governance: governanceDecision,
                 globalSizeMultiplier,
                 globalCooldownMs,
                 entryGate: this.entryGate,
                 volatilityStop: this.currentVolatilityStop ?? undefined,
+                orderSizingConfig: this.orderSizingConfig,
                 // regimePolicy will be set per-strategy below
             };
 
@@ -1302,6 +1356,9 @@ export class TradingRuntime {
             for (const strategy of this.strategies) {
                 // Rate limit strategy execution to prevent CPU spikes
                 await throttleStrategy();
+
+                // Adaptive size multiplier for this strategy (set below if adaptive is enabled)
+                let adaptiveSizeMultiplier: number = 1.0;
 
                 const strategyEventContext: StrategyEventContext = {
                     pairKey,
@@ -1443,6 +1500,9 @@ export class TradingRuntime {
                         this.executor.setAdaptiveSizeMultiplier(tuning.sizeMultiplier);
                         this.executor.setAdaptiveMinEdgeBps(tuning.minEdgeBpsToTrade);
 
+                        // Expose adaptive size multiplier for unified sizing pipeline
+                        adaptiveSizeMultiplier = tuning.sizeMultiplier;
+
                         // Apply cooldown if set
                         if (tuning.coolDownMs > 0) {
                             await sleep(tuning.coolDownMs);
@@ -1450,6 +1510,7 @@ export class TradingRuntime {
                     } else {
                         // No tuning - clear overrides
                         this.executor.clearAdaptiveOverrides();
+                        adaptiveSizeMultiplier = 1.0;
                     }
                 }
 
@@ -1457,6 +1518,7 @@ export class TradingRuntime {
                 const strategyCtx = {
                     ...ctx,
                     regimePolicy: regimePolicyContext,
+                    adaptiveSizeMultiplier,
                     pairKey,
                     runtimeState: this.fsm.getState(),
                     healthScore: gateResult.healthScore,
@@ -1473,9 +1535,17 @@ export class TradingRuntime {
                 }
             }
             this.perfTracer?.phaseEnd(12); // strategies
+        } catch (err) {
+            tickError = err;
+            throw err;
         } finally {
             this.perfTracer?.tickEnd();
             this.tickInFlight = false;
+            this.writeTickHeartbeat(
+                tickId,
+                false,
+                tickError != null ? this.sanitizeTickError(tickError) : null,
+            );
         }
     }
 
@@ -1686,32 +1756,181 @@ export class TradingRuntime {
         };
     }
 
+    private classifyExecutionLifecycle(
+        event: StrategySubmitTelemetryEvent,
+    ): { lifecycleStage: string; outcomeClass: string; retryable: boolean; abortReason: string | null } {
+        if (event.stage === 'attempt') {
+            return {
+                lifecycleStage: 'attempt',
+                outcomeClass: 'attempt',
+                retryable: false,
+                abortReason: null,
+            };
+        }
+
+        if (event.stage === 'success') {
+            return {
+                lifecycleStage: 'submitted',
+                outcomeClass: event.ackStatus === 'queued' ? 'queued' : 'accepted',
+                retryable: false,
+                abortReason: null,
+            };
+        }
+
+        const rawCode = (event.errorCode ?? event.submitResult?.engine_result ?? '').toUpperCase();
+        const timeoutLike = rawCode.includes('TIMEOUT');
+        const networkLike = rawCode.includes('NETWORK') || rawCode.includes('DISCONNECT');
+        const tecLike = rawCode.startsWith('TEC');
+        const tefLike = rawCode.startsWith('TEF');
+        const telLike = rawCode.startsWith('TEL');
+
+        if (timeoutLike || networkLike || telLike) {
+            return {
+                lifecycleStage: 'abort',
+                outcomeClass: 'retry',
+                retryable: true,
+                abortReason: rawCode || 'submit-failed',
+            };
+        }
+
+        if (tecLike || tefLike) {
+            return {
+                lifecycleStage: 'abort',
+                outcomeClass: 'rejected',
+                retryable: false,
+                abortReason: rawCode || 'submit-failed',
+            };
+        }
+
+        return {
+            lifecycleStage: 'abort',
+            outcomeClass: 'failed',
+            retryable: false,
+            abortReason: rawCode || 'submit-failed',
+        };
+    }
+
+    private updateHeartbeatFromSubmitTelemetry(event: StrategySubmitTelemetryEvent): void {
+        const submitTs = event.submitTsMs;
+        if (typeof submitTs === 'number' && Number.isFinite(submitTs)) {
+            this.heartbeatLastSubmitTs = this.heartbeatLastSubmitTs == null
+                ? submitTs
+                : Math.max(this.heartbeatLastSubmitTs, submitTs);
+        }
+
+        const validatedTs = event.validatedTsMs;
+        if (typeof validatedTs === 'number' && Number.isFinite(validatedTs)) {
+            this.heartbeatLastValidatedTs = this.heartbeatLastValidatedTs == null
+                ? validatedTs
+                : Math.max(this.heartbeatLastValidatedTs, validatedTs);
+        }
+    }
+
+    private sanitizeTickError(err: unknown): string {
+        if (err instanceof Error) {
+            return err.message;
+        }
+        return String(err);
+    }
+
+    private writeTickHeartbeat(tickId: number, inFlight: boolean, lastError: string | null): void {
+        this.heartbeatLastError = lastError;
+        const heartbeat: RuntimeHeartbeatSnapshot = {
+            ts: Date.now(),
+            tickId,
+            inFlight,
+            lastError: this.heartbeatLastError,
+            lastSubmitTs: this.heartbeatLastSubmitTs,
+            lastValidatedTs: this.heartbeatLastValidatedTs,
+        };
+        this.cacheRegistry.updateHeartbeat(this.getCurrentPairKey(), heartbeat);
+    }
+
     private recordSubmitTelemetry(event: StrategySubmitTelemetryEvent): void {
+        this.updateHeartbeatFromSubmitTelemetry(event);
         const funnel = this.ensureStrategyFunnel(event.strategy);
         applySubmitTelemetryToFunnel(funnel, event);
-        if (event.stage === 'attempt') {
-            this.observabilityBus.emitSubmitAttempt({
-                pairKey: event.pairKey,
-                runtimeState: this.fsm.getState(),
+        const eventType = event.stage === 'attempt'
+            ? 'SUBMIT_ATTEMPT'
+            : (event.stage === 'success' ? 'SUBMIT_SUCCESS' : 'SUBMIT_FAIL');
+        const execTelemetryEnabled = isExecTelemetryEnabled();
+        const lifecycle = execTelemetryEnabled ? this.classifyExecutionLifecycle(event) : null;
+        this.observabilityBus.emit({
+            eventType,
+            pairKey: event.pairKey,
+            runtimeState: this.fsm.getState(),
+            correlationId: event.tradeId ?? null,
+            detail: {
                 strategy: event.strategy,
-            });
-        } else if (event.stage === 'success') {
-            this.observabilityBus.emitSubmitSuccess({
-                pairKey: event.pairKey,
-                runtimeState: this.fsm.getState(),
+                trade_id: event.tradeId ?? null,
+                side: event.side ?? null,
+                amount_base: event.amountBase ?? null,
+                intent_price: event.intentPrice ?? null,
+                baseline_ts_ms: event.baselineTsMs ?? null,
+                baseline_best_bid: event.baselineBestBid ?? null,
+                baseline_best_ask: event.baselineBestAsk ?? null,
+                baseline_mid: event.baselineMid ?? null,
+                baseline_spread_bps: event.baselineSpreadBps ?? null,
+                baseline_source: event.baselineSource ?? null,
+                expected_price: event.expectedPrice ?? null,
+                expected_rule: event.expectedRule ?? null,
+                price_convention: event.priceConvention ?? null,
+                baseline_book_age_ms: event.baselineBookAgeMs ?? null,
+                submit_ts_ms: event.submitTsMs ?? null,
+                submit_response_ts_ms: event.submitResponseTsMs ?? event.ackTsMs ?? null,
+                ack_ts_ms: event.ackTsMs ?? event.submitResponseTsMs ?? null,
+                validated_ts_ms: event.validatedTsMs ?? null,
+                node_endpoint: event.nodeEndpoint ?? null,
+                fee_drops: event.feeDrops ?? null,
+                sequence: event.sequence ?? null,
+                offer_create: event.offerCreateIntent ?? null,
+                engine_result: event.submitResult?.engine_result ?? null,
+                submit_result: event.submitResult ?? null,
+                ack_status: event.ackStatus ?? null,
+                tx_hash: event.txHash ?? null,
+                error_code: event.errorCode ?? null,
+                ...(lifecycle ? {
+                    lifecycle_stage: lifecycle.lifecycleStage,
+                    outcome_class: lifecycle.outcomeClass,
+                    retryable: lifecycle.retryable,
+                    abort_reason: lifecycle.abortReason,
+                } : {}),
+            },
+        });
+        if (lifecycle) {
+            logger.info({
+                event: 'EXECUTION_LIFECYCLE',
+                stage: lifecycle.lifecycleStage,
+                outcome: lifecycle.outcomeClass,
+                retryable: lifecycle.retryable,
+                abortReason: lifecycle.abortReason,
                 strategy: event.strategy,
+                pairKey: event.pairKey,
+                tradeId: event.tradeId ?? null,
                 txHash: event.txHash ?? null,
-            });
-        } else {
-            this.observabilityBus.emitSubmitFail({
-                pairKey: event.pairKey,
-                runtimeState: this.fsm.getState(),
-                strategy: event.strategy,
-                txHash: event.txHash ?? null,
-                errorCode: event.errorCode ?? 'submit-failed',
-            });
+                errorCode: event.errorCode ?? null,
+            }, 'Execution lifecycle telemetry');
         }
         this.syncStrategyFunnelToCache(event.pairKey);
+    }
+
+    private emitMarkoutLifecycleEvent(event: MarkoutLifecycleEvent): void {
+        const payload = {
+            pairKey: event.pair_key,
+            runtimeState: this.fsm.getState(),
+            correlationId: event.correlation_id,
+            detail: event.detail,
+            ...(typeof event.timestamp_ms === 'number' ? { nowMs: event.timestamp_ms } : {}),
+        };
+        if (event.event_type === 'MARKOUT_SCHEDULED') {
+            this.observabilityBus.emitMarkoutScheduled(payload);
+            return;
+        }
+        if (event.event_type === 'MARKOUT_RECORDED') {
+            this.observabilityBus.emitMarkoutRecorded(payload);
+            return;
+        }
+        this.observabilityBus.emitMarkoutMissing(payload);
     }
 
     private buildVolatilityStopSnapshot(nowMs: number): VolatilityStopCacheSnapshot {
@@ -2053,6 +2272,12 @@ export class TradingRuntime {
             logger.warn({ err }, 'Failed to stop adaptive scheduler');
         }
 
+        try {
+            tradeMarkoutScheduler.stop();
+        } catch (err) {
+            logger.warn({ err }, 'Failed to stop trade markout scheduler');
+        }
+
         // Step 5: Stop background scanner before XRPL disconnect
         logStep('Stopping background market scanner');
         try {
@@ -2292,7 +2517,12 @@ export class TradingRuntime {
             },
             refreshOrderBook: async () => {
                 if (!this.tracker) return false;
-                await this.tracker.refresh();
+                const refreshed = await this.tracker.refresh();
+                if (refreshed) {
+                    const now = Date.now();
+                    this.lastBookUpdateMs = now;
+                    this.feedStallRecovery?.recordBookEvent(now);
+                }
                 const state = this.tracker.getState();
                 return state.bids.length > 0 || state.asks.length > 0;
             },
@@ -2532,6 +2762,9 @@ export class TradingRuntime {
         // Must happen BEFORE this.xrpl = null so we still have the reference.
         this.detachRuntimeListeners();
 
+        // Stop persisted markout jobs timer loop for this runtime lifecycle.
+        tradeMarkoutScheduler.stop();
+
         // Stop CPU watchdog
         if (this.cpuWatchdog) {
             this.cpuWatchdog.stop();
@@ -2568,6 +2801,10 @@ export class TradingRuntime {
         this.strategies = [];
         this.walletAddress = null;
         this.tickInFlight = false;
+        this.tickHeartbeatCounter = 0;
+        this.heartbeatLastSubmitTs = null;
+        this.heartbeatLastValidatedTs = null;
+        this.heartbeatLastError = null;
         this.started = false;
         this.shutdownInProgress = false;
         this.pairSwitchState = 'IDLE';
@@ -2605,6 +2842,7 @@ export class TradingRuntime {
         this.executionQualityCollector.reset();
         this.hardRiskGuard.reset();
         this.exposureTracker.reset();
+        this.midPriceTrendTracker?.reset();
         this.observabilityBus.clear();
         this.strategyDecisionFunnels = {};
 

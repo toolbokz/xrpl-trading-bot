@@ -6,6 +6,8 @@ import { RegimePolicy, RegimeSizePolicy } from '../analytics/regimePolicy';
 import { EntryGate } from './entryGate';
 import { StrategyFunnelRecorder } from '../observability/strategyDecisionFunnel';
 import type { VolatilityStopSource } from '../market/volatilityEstimator';
+import type { OrderSizingConfig } from '../execution/orderSizing';
+import type { TrendSignal } from '../market/midPriceTrend';
 
 /**
  * Regime policy context for a specific strategy
@@ -53,6 +55,10 @@ export interface StrategyContext {
     globalSizeMultiplier?: number | undefined;
     /** Global cooldown in ms from governance (0 = no cooldown) */
     globalCooldownMs?: number | undefined;
+    /** Adaptive learner size multiplier (1.0 = no adjustment; null/undefined = not available) */
+    adaptiveSizeMultiplier?: number | undefined;
+    /** Unified order-sizing config (one-knob sizing) */
+    orderSizingConfig?: OrderSizingConfig | undefined;
     /** Regime policy context for this strategy (if regime policy is enabled) */
     regimePolicy?: StrategyRegimePolicyContext | undefined;
     /** Entry gate helper (shared across strategies) */
@@ -67,6 +73,8 @@ export interface StrategyContext {
     healthScore?: number | undefined;
     /** Strategy decision funnel recorder (observability-only). */
     strategyFunnel?: StrategyFunnelRecorder | undefined;
+    /** Mid-price trend signal from EMA tracker (longer-horizon than flow regime). */
+    trend?: TrendSignal | undefined;
 }
 
 import { TradingPair } from '../config';

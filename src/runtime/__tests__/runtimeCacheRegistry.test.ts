@@ -174,6 +174,7 @@ describe('RuntimeCacheRegistry', () => {
             expect(snapshot.asOfMs).toBe(0);
             expect(snapshot.runtimeState).toBeNull();
             expect(snapshot.executionAllowed).toBe(false);
+            expect(snapshot.heartbeat).toBeNull();
             expect(snapshot.health).toBeNull();
             expect(snapshot.flow).toBeNull();
             expect(snapshot.tape).toBeNull();
@@ -336,7 +337,50 @@ describe('RuntimeCacheRegistry', () => {
     });
 
     // ═════════════════════════════════════════════════════════════════════
-    // 4 · Execution quality counters
+    // 4 · Heartbeat cache
+    // ═════════════════════════════════════════════════════════════════════
+
+    describe('runtime heartbeat cache', () => {
+        it('stores heartbeat snapshots for the active pair', () => {
+            registry.updateHeartbeat('XRP/RLUSD', {
+                ts: 1_770_000_000_000,
+                tickId: 41,
+                inFlight: false,
+                lastError: null,
+                lastSubmitTs: 1_770_000_000_100,
+                lastValidatedTs: 1_770_000_000_200,
+            });
+
+            const snapshot = registry.getSnapshot();
+            expect(snapshot.pairKey).toBe('XRP/RLUSD');
+            expect(snapshot.heartbeat).toEqual({
+                ts: 1_770_000_000_000,
+                tickId: 41,
+                inFlight: false,
+                lastError: null,
+                lastSubmitTs: 1_770_000_000_100,
+                lastValidatedTs: 1_770_000_000_200,
+            });
+        });
+
+        it('rejects cross-pair heartbeat updates', () => {
+            registry.update(makeUpdateInput({ pairKey: 'XRP/RLUSD' }));
+
+            registry.updateHeartbeat('XRP/USD', {
+                ts: 1_770_000_000_000,
+                tickId: 99,
+                inFlight: true,
+                lastError: 'tick-failed',
+                lastSubmitTs: null,
+                lastValidatedTs: null,
+            });
+
+            expect(registry.getSnapshot().heartbeat).toBeNull();
+        });
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 5 · Execution quality counters
     // ═════════════════════════════════════════════════════════════════════
 
     describe('execution quality tracking', () => {
@@ -395,7 +439,7 @@ describe('RuntimeCacheRegistry', () => {
     });
 
     // ═════════════════════════════════════════════════════════════════════
-    // 5 · Snapshot immutability
+    // 6 · Snapshot immutability
     // ═════════════════════════════════════════════════════════════════════
 
     describe('snapshot consistency', () => {
@@ -440,7 +484,7 @@ describe('RuntimeCacheRegistry', () => {
     });
 
     // ═════════════════════════════════════════════════════════════════════
-    // 6 · Null-safe when feeds are partially provided
+    // 7 · Null-safe when feeds are partially provided
     // ═════════════════════════════════════════════════════════════════════
 
     describe('partial updates', () => {

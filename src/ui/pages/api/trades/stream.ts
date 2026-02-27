@@ -18,6 +18,7 @@ import { tradeTapeEvents } from '../../../../market/tradeTapeService';
 import { getServerSessionId } from '../../../../runtime/runtimeSingleton';
 import type { Trade } from '../../../../market/tradeTape';
 import { isLocalRequest, jsonError } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 
 export const config = {
     api: { bodyParser: false },
@@ -25,7 +26,7 @@ export const config = {
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
-export default function handler(req: NextApiRequest, res: NextApiResponse): void {
+function handler(req: NextApiRequest, res: NextApiResponse): void {
     if (req.method !== 'GET') {
         res.setHeader('Allow', 'GET');
         res.status(405).end('Method Not Allowed');
@@ -85,3 +86,5 @@ export default function handler(req: NextApiRequest, res: NextApiResponse): void
     req.on('close', cleanup);
     req.on('error', cleanup);
 }
+
+export default withApiRouteContext(handler);

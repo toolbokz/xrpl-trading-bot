@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
+import { withApiRouteContext } from '../../../../lib/localApi/withApiRouteContext';
 import { getRuntime } from '../../../../lib/runtimeHooks';
 import { getRegimePolicyEngine, RegimePolicy } from '../../../../../analytics/regimePolicy';
 
@@ -69,4 +70,4 @@ function handler(
     }
 }
 
-export default withLocalApi(handler);
+export default withLocalApi(withApiRouteContext(handler));

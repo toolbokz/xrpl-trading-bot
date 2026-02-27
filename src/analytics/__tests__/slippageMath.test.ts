@@ -1,10 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+    __resetInvalidSlippageWarningThrottleForTests,
     computeCanonicalSlippageBps,
     isReciprocalLikePrices,
+    warnInvalidSlippageInputs,
 } from '../slippageMath';
+import { logger } from '../logger';
 
 describe('slippageMath', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        __resetInvalidSlippageWarningThrottleForTests();
+    });
+
     it('computes BUY slippage with positive=cost and negative=improvement', () => {
         const worse = computeCanonicalSlippageBps('buy', 1.35, 1.36);
         const better = computeCanonicalSlippageBps('buy', 1.35, 1.34);
@@ -53,5 +62,33 @@ describe('slippageMath', () => {
             vsBbo!.toFixed(6),
         ]);
         expect(unique.size).toBe(3);
+    });
+
+    it('throttles repeated invalid-slippage warnings and reports suppressed count', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-02-22T00:00:00.000Z'));
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => logger);
+
+        const context = {
+            source: 'feedback-engine.computeSlippageBps',
+            side: 'buy' as const,
+            expectedPrice: null,
+            fillPrice: 0,
+            baseline: 'intent' as const,
+            pairKey: 'XRP/RLUSD',
+            txHash: null,
+        };
+
+        warnInvalidSlippageInputs(context);
+        warnInvalidSlippageInputs(context);
+        warnInvalidSlippageInputs(context);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+
+        vi.setSystemTime(new Date('2026-02-22T00:00:31.000Z'));
+        warnInvalidSlippageInputs(context);
+        expect(warnSpy).toHaveBeenCalledTimes(2);
+
+        const secondCallMeta = warnSpy.mock.calls[1]?.[0] as Record<string, unknown>;
+        expect(secondCallMeta?.suppressedSinceLast).toBe(2);
     });
 });

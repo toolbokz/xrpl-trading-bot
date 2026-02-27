@@ -112,7 +112,7 @@ export function OrderBookPanel({
             <div className="grid grid-cols-[46px_1fr_1fr_1fr] gap-1 px-2.5 py-1 text-[9px] text-slate-500 uppercase tracking-wider border-b border-white/5">
                 <div>Time</div>
                 <div>Price</div>
-                <div className="text-right">Size</div>
+                <div className="text-center">Size</div>
                 <div className="text-right">Total</div>
             </div>
 
@@ -130,7 +130,7 @@ export function OrderBookPanel({
                         />
                         <div className="relative text-[9px] text-slate-600">{snapshotTime}</div>
                         <div className="relative text-red-400">{formatPrice(entry.price)}</div>
-                        <div className="relative text-right text-slate-300">{formatSize(entry.size)}</div>
+                        <div className="relative text-center text-slate-300">{formatSize(entry.size)}</div>
                         <div className="relative text-right text-slate-500">{formatSize(entry.total)}</div>
                     </div>
                 ))}
@@ -160,7 +160,7 @@ export function OrderBookPanel({
                         />
                         <div className="relative text-[9px] text-slate-600">{snapshotTime}</div>
                         <div className="relative text-emerald-400">{formatPrice(entry.price)}</div>
-                        <div className="relative text-right text-slate-300">{formatSize(entry.size)}</div>
+                        <div className="relative text-center text-slate-300">{formatSize(entry.size)}</div>
                         <div className="relative text-right text-slate-500">{formatSize(entry.total)}</div>
                     </div>
                 ))}

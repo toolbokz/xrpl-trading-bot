@@ -144,6 +144,13 @@ Configuration is loaded in `src/config/index.ts` from `.env` in project root/CWD
 | `FLOW_ENABLE_REGIME_FILTER` | `true` | Strategy gating by regime. |
 | `FLOW_ENABLE_ADVERSE_SELECTION` | `true` | Adverse-selection protection. |
 
+### Execution Repricing (Feature-Flagged)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `FEATURE_EXECUTION_DEPTH_REPRICE` | `false` | Enables depth-aware repricing before `OfferCreate` submit. |
+| `EXECUTION_REPRICE_MAX_BPS` | `3` | Max allowed reprice distance from intended price (bps). |
+
 ### Volatility-Adaptive Stops (Optional)
 
 When `VOL_STOP_ENABLED=true`, scalper stop-loss bps are derived from EWMA mid-price volatility:
@@ -396,8 +403,8 @@ These are exposed through runtime cache snapshots (`/api/metrics/runtime` payloa
 - Panel: `src/ui/components/ExecutionQualityPanel.tsx`
 - API: `GET /api/analytics/execution-quality`
 - Storage: `execution_quality_events` in `feedback.sqlite`
-- Filters: `pairKey`, `pair`, `sinceMs`, `window` (legacy fallback), `strategy`, `side`, `source`, `bucketMs`
-- Response keys: `summary`, `series`, `histograms`, `breakdowns`, `anomalies`, `filters`
+- Filters: `pairKey`, `pair`, `sinceMs`, `window` (legacy fallback), `strategy`, `side`, `source`, `bucketMs`, `includeNonExecutionEvidence`, `includeStrategies`, `excludeStrategies`
+- Response keys: `summary`, `series`, `histograms`, `breakdowns`, `anomalies`, `filters`, `totalEventsRaw`, `totalEventsAnalyzed`, `excludedCounts`
 
 ### Edge Attribution Dashboard
 
@@ -623,6 +630,111 @@ When filing an issue, include:
 curl "http://127.0.0.1:3000/api/analytics/execution-quality?pairKey=XRP/RLUSD&bucketMs=60000"
 curl "http://127.0.0.1:3000/api/analytics/edge-attribution?pairKey=XRP/RLUSD&bucketMs=60000"
 curl "http://127.0.0.1:3000/api/analytics/summary?pair=XRP/RLUSD"
+```
+
+## Appendix: Verify Execution Quality Filtering
+
+```bash
+BASE_URL="http://127.0.0.1:3000"
+PAIR="XRP/RLUSD"
+
+# 1) Show raw vs analyzed counts and excluded buckets (default safe filtering)
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}" \
+  | jq '{totalEventsRaw, totalEventsAnalyzed, excludedCounts}'
+
+# 2) Compare default vs includeNonExecutionEvidence=true
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}" \
+  | jq '{mode:"default", totalEventsRaw, totalEventsAnalyzed, excludedCounts}'
+
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}&includeNonExecutionEvidence=true" \
+  | jq '{mode:"includeNonExecutionEvidence", totalEventsRaw, totalEventsAnalyzed, excludedCounts}'
+
+# 3) Show missing-rate deltas on execution-focused slice vs broad inclusion
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}" \
+  | jq '{mode:"default", missingFillSnapshotRate:.summary.missingFillSnapshotRate, missingAckRate:.summary.missingAckRate, missingMarkoutRate:.summary.missingMarkoutRate}'
+
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}&includeNonExecutionEvidence=true&includeStrategies=scalper,amm-arb,path-arb,account-ingestion" \
+  | jq '{mode:"broad", missingFillSnapshotRate:.summary.missingFillSnapshotRate, missingAckRate:.summary.missingAckRate, missingMarkoutRate:.summary.missingMarkoutRate}'
+```
+
+## Appendix: Verify Execution Quality Buckets
+
+```bash
+# 1) Call the buckets endpoint (last 500 trades by default)
+curl "http://127.0.0.1:3000/api/debug/execution-quality/buckets?limit=500" | jq
+
+# 2) Identify the most common bucket
+curl "http://127.0.0.1:3000/api/debug/execution-quality/buckets?limit=500" \
+  | jq -r '.buckets | to_entries | sort_by(.value) | reverse | .[0]'
+
+# 3) Baseline EXPIRED_LAST_LEDGER total across engine-result buckets
+BEFORE_EXPIRED=$(curl "http://127.0.0.1:3000/api/debug/execution-quality/buckets?limit=500" \
+  | jq '[.buckets | to_entries[] | select(.key | endswith(":EXPIRED_LAST_LEDGER")) | .value] | add // 0')
+echo "before EXPIRED_LAST_LEDGER=${BEFORE_EXPIRED}"
+
+# 4) Enable LLS slack and restart bot/runtime
+export FEATURE_EXECUTION_LLS_SLACK=true
+export EXECUTION_LAST_LEDGER_SLACK=8
+
+# 5) Re-check and compare (expect reduction when EXPIRED_LAST_LEDGER is present)
+AFTER_EXPIRED=$(curl "http://127.0.0.1:3000/api/debug/execution-quality/buckets?limit=500" \
+  | jq '[.buckets | to_entries[] | select(.key | endswith(":EXPIRED_LAST_LEDGER")) | .value] | add // 0')
+echo "after EXPIRED_LAST_LEDGER=${AFTER_EXPIRED}"
+```
+
+## Appendix: Verify Depth-Aware Repricing
+
+```bash
+BASE_URL="http://127.0.0.1:3000"
+PAIR="XRP/RLUSD"
+LIMIT=1000
+
+# 1) Baseline run (repricing OFF, default-safe behavior)
+export FEATURE_EXECUTION_DEPTH_REPRICE=false
+export EXECUTION_REPRICE_MAX_BPS=3
+# Restart bot/runtime after changing env vars before collecting samples.
+
+BASELINE=$(curl "${BASE_URL}/api/debug/execution-quality/buckets?limit=${LIMIT}" \
+  | jq '{
+      tecKilled: ([.buckets | to_entries[] | select(.key | startswith("tecKILLED:")) | .value] | add // 0),
+      tesSuccess: ([.buckets | to_entries[] | select(.key | startswith("tesSUCCESS:")) | .value] | add // 0),
+      repriceAppliedTotal: (.repriceAppliedByBucket | to_entries | map(.value) | add // 0)
+    }')
+echo "baseline=${BASELINE}"
+
+# 2) Enable repricing, run bot for a comparable sample window, then re-check buckets
+export FEATURE_EXECUTION_DEPTH_REPRICE=true
+# Keep EXECUTION_REPRICE_MAX_BPS=3 (or your chosen strict cap)
+# Restart bot/runtime after env change.
+
+WITH_REPRICE=$(curl "${BASE_URL}/api/debug/execution-quality/buckets?limit=${LIMIT}" \
+  | jq '{
+      tecKilled: ([.buckets | to_entries[] | select(.key | startswith("tecKILLED:")) | .value] | add // 0),
+      tesSuccess: ([.buckets | to_entries[] | select(.key | startswith("tesSUCCESS:")) | .value] | add // 0),
+      repriceAppliedTotal: (.repriceAppliedByBucket | to_entries | map(.value) | add // 0)
+    }')
+echo "with_reprice=${WITH_REPRICE}"
+
+# Optional: direct delta view (expect tecKilled to drop, tesSuccess to rise when repricing helps)
+jq -n --argjson a "${BASELINE}" --argjson b "${WITH_REPRICE}" '{
+  tecKilledDelta: ($b.tecKilled - $a.tecKilled),
+  tesSuccessDelta: ($b.tesSuccess - $a.tesSuccess),
+  repriceAppliedDelta: ($b.repriceAppliedTotal - $a.repriceAppliedTotal)
+}'
+
+# 3) Find trades where repricing was actually applied
+curl "${BASE_URL}/api/bot/trades?pair=${PAIR}&limit=${LIMIT}" \
+  | jq '.trades[]
+    | select(.trace.depth_reprice.decision == "applied")
+    | {id, side, status, intended:.trace.depth_reprice.intended_price, repriced:.trace.depth_reprice.repriced_price, repriceBps:.trace.depth_reprice.required_reprice_bps}'
+
+# 4) Inspect tx-intent explainability (replace TRADE_ID from output above)
+curl "${BASE_URL}/api/debug/tx-intent?tradeId=TRADE_ID" \
+  | jq '{tradeId, hash, txType, depth_check, depth_reprice, explain}'
+
+# 5) Analytics view: repriceAppliedRate summary + by-side rates
+curl "${BASE_URL}/api/analytics/execution-quality?pairKey=${PAIR}" \
+  | jq '{events:.summary.events, repriceAppliedRate:.summary.repriceAppliedRate, bySide:.breakdowns.bySide}'
 ```
 
 ## Appendix: Build / Verification

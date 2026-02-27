@@ -10,6 +10,23 @@ const nextConfig = {
     },
     // Ensure webpack resolves modules from root node_modules
     webpack: (config, { isServer }) => {
+        const originalEntry = config.entry;
+        config.entry = async () => {
+            const entries = typeof originalEntry === 'function'
+                ? await originalEntry()
+                : originalEntry;
+
+            if (entries && typeof entries === 'object') {
+                for (const key of Object.keys(entries)) {
+                    if (key.includes('/__tests__/') || key.includes('.test.')) {
+                        delete entries[key];
+                    }
+                }
+            }
+
+            return entries;
+        };
+
         config.resolve.modules = [
             ...(config.resolve.modules || []),
             'node_modules',

@@ -33,7 +33,7 @@ import {
     clearApiRouteContext,
     shouldUseRuntimeState,
 } from '../../xrpl/guard';
-import { botController } from './botController';
+import { ensureRuntimeHooks } from './runtimeHooks';
 import { TradingRuntime } from '../../runtime/tradingRuntime';
 
 // Re-export types for convenience
@@ -46,6 +46,13 @@ export { isSingleProcessMode, isRuntimeReady, isRuntimeWarmingUp, getCacheSnapsh
 
 let initPromise: Promise<void> | null = null;
 let isInitialized = false;
+let hooksEnsured = false;
+
+function ensureBridgeHooks(): void {
+    if (hooksEnsured) return;
+    ensureRuntimeHooks();
+    hooksEnsured = true;
+}
 
 /**
  * Initialize the runtime bridge.
@@ -68,42 +75,23 @@ export async function initRuntimeBridge(): Promise<void> {
 
     initPromise = (async () => {
         try {
-            // Start the runtime
-            await ensureRuntimeStarted();
+            // Ensure botController hooks are registered via runtimeHooks (single source of truth).
+            ensureBridgeHooks();
 
-            // Wire up bot controller hooks so dashboard controls work.
-            // These hooks reference the singleton dynamically so they
-            // survive kill/restart cycles.
-            //
-            // NOTE: runtimeHooks.ts also registers hooks.  Whichever
-            // module initializes last wins.  Both are now written to
-            // delegate to the runtimeSingleton, so the effect is the
-            // same regardless of registration order.
-            botController.setHooks({
-                start: async () => {
-                    // ensureRuntimeStarted creates a fresh runtime if the
-                    // previous one was killed/stopped.
-                    await ensureRuntimeStarted();
-                },
-                pause: async () => {
-                    const rt = getRuntime();
-                    if (rt) await rt.pause();
-                },
-                kill: async () => {
-                    const rt = getRuntime();
-                    if (!rt) return;
-                    await rt.kill();
-                    // Clear singleton so next start creates fresh runtime
-                    globalThis.__xrplTradingBotRuntime = null;
-                    globalThis.__xrplTradingBotStartPromise = null;
-                    globalThis.__xrplTradingBotIsStarting = false;
-                    isInitialized = false;
-                },
-                tick: async () => {
-                    const rt = getRuntime();
-                    if (rt?.isStarted()) await rt.tick();
-                },
-            });
+            // Start the runtime outside API-route context so runtime internals
+            // can access shared XRPL safely in single-process mode.
+            const hadApiRouteContext = shouldUseRuntimeState();
+            if (hadApiRouteContext) {
+                clearApiRouteContext();
+            }
+
+            try {
+                await ensureRuntimeStarted();
+            } finally {
+                if (hadApiRouteContext) {
+                    markApiRouteContext();
+                }
+            }
 
             isInitialized = true;
         } catch (err) {
@@ -282,6 +270,12 @@ export async function shutdownRuntimeBridge(): Promise<void> {
     isInitialized = false;
 }
 
+export function __resetRuntimeBridgeForTests(): void {
+    initPromise = null;
+    isInitialized = false;
+    hooksEnsured = false;
+}
+
 // =============================================================================
 // Process Mode Info
 // =============================================================================
@@ -297,10 +291,12 @@ export function getProcessModeInfo(): {
     warmingUp: boolean;
 } {
     const singleProcess = isSingleProcessMode();
+    const runtime = singleProcess ? getRuntime() : null;
+    const runtimeStarted = Boolean(runtime?.isStarted());
     return {
         mode: singleProcess ? 'single' : 'dual',
         xrplConnectionsExpected: singleProcess ? 1 : 2,
-        runtimeStarted: isInitialized,
+        runtimeStarted,
         runtimeReady: isRuntimeReady(),
         warmingUp: isRuntimeWarmingUp(),
     };

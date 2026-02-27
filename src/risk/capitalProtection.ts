@@ -12,6 +12,7 @@ import { feedbackEngine } from '../analytics/feedbackEngine';
 import { RiskEngine } from './riskEngine';
 import { logger } from '../analytics/logger';
 import { FlowRegime } from '../market/flowMetrics';
+import { computeProfitFactorCanonical } from '../analytics/metricUtils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -183,18 +184,24 @@ export function computeExpectancyBps(
 
 /**
  * Compute profit factor.
- * 
+ *
+ * Delegates to the canonical implementation in metricUtils.
+ * Kept as re-export for backward compatibility with existing callers.
+ *
  * ProfitFactor = GrossProfit / GrossLoss
- * 
+ *
+ * Canonical semantics:
+ *   - (0, 0)   → 1  (neutral / no information)
+ *   - (>0, 0)  → Infinity
+ *   - (0, >0)  → 0
+ *   - (>0, >0) → gain / loss
+ *
  * @param totalGain - Sum of all gains
  * @param totalLoss - Sum of all losses (positive value)
- * @returns Profit factor (0 if no losses, Infinity if no losses but gains)
+ * @returns Profit factor
  */
 export function computeProfitFactor(totalGain: number, totalLoss: number): number {
-    if (totalLoss === 0) {
-        return totalGain > 0 ? Infinity : 1;
-    }
-    return totalGain / totalLoss;
+    return computeProfitFactorCanonical(totalGain, totalLoss);
 }
 
 /**

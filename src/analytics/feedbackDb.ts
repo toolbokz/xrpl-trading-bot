@@ -126,9 +126,21 @@ export interface ExecutionQualityEventRecord {
     strategy: string | null;
     regime: FlowRegime | null;
     source: 'bot' | 'manual' | 'unknown';
+    venue?: string | null;
     intentPrice: number | null;
     expectedPrice: number | null;
     expectedPriceSource: 'intent' | 'mid' | 'bbo' | 'fallback_intent' | null;
+    baselineTs?: number | null;
+    baselineBestBid?: number | null;
+    baselineBestAsk?: number | null;
+    baselineMid?: number | null;
+    baselineSpreadBps?: number | null;
+    baselineSource?: string | null;
+    expectedRule?: string | null;
+    slippageBaselineUsed?: string | null;
+    priceConvention?: 'quote_per_base' | 'base_per_quote' | null;
+    baselineBookAgeMs?: number | null;
+    fillTs?: number | null;
     decisionMid: number | null;
     decisionBid: number | null;
     decisionAsk: number | null;
@@ -152,10 +164,14 @@ export interface ExecutionQualityEventRecord {
     guardQuarantined: number | null; // 1=true, 0=false, null=unknown
     decisionTs: number | null;
     submitTs: number | null;
+    submitResponseTs?: number | null;
     validatedTs: number | null;
+    submitResultEngine?: string | null;
+    submitError?: string | null;
     decisionToSubmitMs: number | null;
     submitToValidatedMs: number | null;
     decisionToValidatedMs: number | null;
+    repriceApplied?: number | null; // 1=true, 0=false, null=unknown
 }
 
 export interface EdgeAttributionEventRecord {
@@ -353,9 +369,21 @@ function initSchema(db: DatabaseType): void {
             strategy TEXT,
             regime TEXT,
             source TEXT,
+            venue TEXT,
             intentPrice REAL,
             expectedPrice REAL,
             expectedPriceSource TEXT,
+            baselineTs INTEGER,
+            baselineBestBid REAL,
+            baselineBestAsk REAL,
+            baselineMid REAL,
+            baselineSpreadBps REAL,
+            baselineSource TEXT,
+            expectedRule TEXT,
+            slippageBaselineUsed TEXT,
+            priceConvention TEXT,
+            baselineBookAgeMs REAL,
+            fillTs INTEGER,
             decisionMid REAL,
             decisionBid REAL,
             decisionAsk REAL,
@@ -379,10 +407,14 @@ function initSchema(db: DatabaseType): void {
             guardQuarantined INTEGER,
             decisionTs INTEGER,
             submitTs INTEGER,
+            submitResponseTs INTEGER,
             validatedTs INTEGER,
+            submitResultEngine TEXT,
+            submitError TEXT,
             decisionToSubmitMs INTEGER,
             submitToValidatedMs INTEGER,
-            decisionToValidatedMs INTEGER
+            decisionToValidatedMs INTEGER,
+            repriceApplied INTEGER
         )
     `);
 
@@ -518,9 +550,21 @@ const EXECUTION_QUALITY_EXTRA_COLUMNS = {
     strategy: 'TEXT',
     regime: 'TEXT',
     source: 'TEXT',
+    venue: 'TEXT',
     intentPrice: 'REAL',
     expectedPrice: 'REAL',
     expectedPriceSource: 'TEXT',
+    baselineTs: 'INTEGER',
+    baselineBestBid: 'REAL',
+    baselineBestAsk: 'REAL',
+    baselineMid: 'REAL',
+    baselineSpreadBps: 'REAL',
+    baselineSource: 'TEXT',
+    expectedRule: 'TEXT',
+    slippageBaselineUsed: 'TEXT',
+    priceConvention: 'TEXT',
+    baselineBookAgeMs: 'REAL',
+    fillTs: 'INTEGER',
     decisionMid: 'REAL',
     decisionBid: 'REAL',
     decisionAsk: 'REAL',
@@ -544,10 +588,14 @@ const EXECUTION_QUALITY_EXTRA_COLUMNS = {
     guardQuarantined: 'INTEGER',
     decisionTs: 'INTEGER',
     submitTs: 'INTEGER',
+    submitResponseTs: 'INTEGER',
     validatedTs: 'INTEGER',
+    submitResultEngine: 'TEXT',
+    submitError: 'TEXT',
     decisionToSubmitMs: 'INTEGER',
     submitToValidatedMs: 'INTEGER',
     decisionToValidatedMs: 'INTEGER',
+    repriceApplied: 'INTEGER',
 } as const;
 
 const EDGE_ATTRIBUTION_EXTRA_COLUMNS = {
@@ -647,28 +695,36 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
         insertExecutionQualityEvent: db.prepare(`
             INSERT OR IGNORE INTO execution_quality_events (
                 id, ts, eventId, txHash, pairKeyCanonical, pairAliases,
-                side, strategy, regime, source,
+                side, strategy, regime, source, venue,
                 intentPrice, expectedPrice, expectedPriceSource,
+                baselineTs, baselineBestBid, baselineBestAsk, baselineMid, baselineSpreadBps,
+                baselineSource, expectedRule, slippageBaselineUsed, priceConvention, baselineBookAgeMs, fillTs,
                 decisionMid, decisionBid, decisionAsk, fillPrice,
                 amountBase, filledBase, filledQuote,
                 slippageBpsVsIntent, slippageBpsVsMid, slippageBpsVsBbo,
                 effSpreadBps, realizedSpreadBps1m, realizedSpreadBps5m,
                 impactBps1m, impactBps5m, implShortfallQuote, fillRatio,
                 status, rejectReason, flags, guardQuarantined,
-                decisionTs, submitTs, validatedTs,
-                decisionToSubmitMs, submitToValidatedMs, decisionToValidatedMs
+                decisionTs, submitTs, submitResponseTs, validatedTs,
+                submitResultEngine, submitError,
+                decisionToSubmitMs, submitToValidatedMs, decisionToValidatedMs,
+                repriceApplied
             ) VALUES (
                 @id, @ts, @eventId, @txHash, @pairKeyCanonical, @pairAliases,
-                @side, @strategy, @regime, @source,
+                @side, @strategy, @regime, @source, @venue,
                 @intentPrice, @expectedPrice, @expectedPriceSource,
+                @baselineTs, @baselineBestBid, @baselineBestAsk, @baselineMid, @baselineSpreadBps,
+                @baselineSource, @expectedRule, @slippageBaselineUsed, @priceConvention, @baselineBookAgeMs, @fillTs,
                 @decisionMid, @decisionBid, @decisionAsk, @fillPrice,
                 @amountBase, @filledBase, @filledQuote,
                 @slippageBpsVsIntent, @slippageBpsVsMid, @slippageBpsVsBbo,
                 @effSpreadBps, @realizedSpreadBps1m, @realizedSpreadBps5m,
                 @impactBps1m, @impactBps5m, @implShortfallQuote, @fillRatio,
                 @status, @rejectReason, @flags, @guardQuarantined,
-                @decisionTs, @submitTs, @validatedTs,
-                @decisionToSubmitMs, @submitToValidatedMs, @decisionToValidatedMs
+                @decisionTs, @submitTs, @submitResponseTs, @validatedTs,
+                @submitResultEngine, @submitError,
+                @decisionToSubmitMs, @submitToValidatedMs, @decisionToValidatedMs,
+                @repriceApplied
             )
         `),
         updateExecutionQualityHorizons: db.prepare(`
@@ -932,9 +988,21 @@ export function insertExecutionQualityEvent(event: ExecutionQualityEventRecord):
             strategy: event.strategy,
             regime: event.regime,
             source: event.source,
+            venue: event.venue ?? null,
             intentPrice: event.intentPrice,
             expectedPrice: event.expectedPrice,
             expectedPriceSource: event.expectedPriceSource,
+            baselineTs: event.baselineTs ?? null,
+            baselineBestBid: event.baselineBestBid ?? null,
+            baselineBestAsk: event.baselineBestAsk ?? null,
+            baselineMid: event.baselineMid ?? null,
+            baselineSpreadBps: event.baselineSpreadBps ?? null,
+            baselineSource: event.baselineSource ?? null,
+            expectedRule: event.expectedRule ?? null,
+            slippageBaselineUsed: event.slippageBaselineUsed ?? null,
+            priceConvention: event.priceConvention ?? null,
+            baselineBookAgeMs: event.baselineBookAgeMs ?? null,
+            fillTs: event.fillTs ?? null,
             decisionMid: event.decisionMid,
             decisionBid: event.decisionBid,
             decisionAsk: event.decisionAsk,
@@ -958,10 +1026,14 @@ export function insertExecutionQualityEvent(event: ExecutionQualityEventRecord):
             guardQuarantined: event.guardQuarantined,
             decisionTs: event.decisionTs,
             submitTs: event.submitTs,
+            submitResponseTs: event.submitResponseTs ?? null,
             validatedTs: event.validatedTs,
+            submitResultEngine: event.submitResultEngine ?? null,
+            submitError: event.submitError ?? null,
             decisionToSubmitMs: event.decisionToSubmitMs,
             submitToValidatedMs: event.submitToValidatedMs,
             decisionToValidatedMs: event.decisionToValidatedMs,
+            repriceApplied: event.repriceApplied ?? null,
         });
         if (result.changes === 0) {
             return null;
@@ -1538,6 +1610,60 @@ export function getSnapshotNear(pairKey: string, ts: number, toleranceMs: number
     } catch (err) {
         logger.warn({ err, pairKey, ts }, 'Failed to get snapshot near timestamp');
         return null;
+    }
+}
+
+/**
+ * Return FILLED execution quality events that have null drift/impact fields
+ * and have the data needed to recompute them (fillTs, fillPrice, decisionMid, side).
+ * Used by the startup horizon backfill.
+ */
+export function queryExecutionQualityEventsWithMissingHorizons(
+    maxRows: number = 500,
+): Pick<ExecutionQualityEventRecord, 'id' | 'pairKeyCanonical' | 'side' | 'fillPrice' | 'decisionMid' | 'fillTs'>[] {
+    const db = getFeedbackDb();
+    try {
+        return db.prepare(`
+            SELECT id, pairKeyCanonical, side, fillPrice, decisionMid, fillTs
+            FROM execution_quality_events
+            WHERE status IN ('FILLED', 'PARTIAL')
+              AND (impactBps1m IS NULL OR impactBps5m IS NULL)
+              AND fillPrice IS NOT NULL
+              AND decisionMid IS NOT NULL
+              AND fillTs IS NOT NULL
+              AND side IS NOT NULL
+            ORDER BY ts DESC
+            LIMIT ?
+        `).all(maxRows) as Pick<ExecutionQualityEventRecord, 'id' | 'pairKeyCanonical' | 'side' | 'fillPrice' | 'decisionMid' | 'fillTs'>[];
+    } catch (err) {
+        logger.warn({ err }, 'Failed to query events with missing horizons');
+        return [];
+    }
+}
+
+/**
+ * Return edge attribution events that have null drift fields and enough
+ * data to recompute them.  Used by the startup horizon backfill.
+ */
+export function queryEdgeAttributionEventsWithMissingHorizons(
+    maxRows: number = 500,
+): Pick<EdgeAttributionEventRecord, 'id' | 'ts' | 'pairKeyCanonical' | 'side' | 'fillPrice' | 'midDecision' | 'baseFilled'>[] {
+    const db = getFeedbackDb();
+    try {
+        return db.prepare(`
+            SELECT id, ts, pairKeyCanonical, side, fillPrice, midDecision, baseFilled
+            FROM edge_attribution_events
+            WHERE (driftBps1m IS NULL OR driftBps5m IS NULL)
+              AND fillPrice IS NOT NULL
+              AND midDecision IS NOT NULL
+              AND side IS NOT NULL
+              AND baseFilled IS NOT NULL
+            ORDER BY ts DESC
+            LIMIT ?
+        `).all(maxRows) as Pick<EdgeAttributionEventRecord, 'id' | 'ts' | 'pairKeyCanonical' | 'side' | 'fillPrice' | 'midDecision' | 'baseFilled'>[];
+    } catch (err) {
+        logger.warn({ err }, 'Failed to query edge attribution events with missing horizons');
+        return [];
     }
 }
 

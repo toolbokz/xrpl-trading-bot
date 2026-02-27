@@ -234,6 +234,14 @@ export function GovernancePanel({ compact = false, enabled = true }: { compact?:
                                 </div>
                                 <div className="grid grid-cols-2 gap-1.5 text-[10px]">
                                     <div className="flex items-center justify-between text-slate-300">
+                                        <span className="text-slate-500">Equity</span>
+                                        <span className="font-mono text-slate-200">{state.metrics.equityNow.toFixed(2)}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-slate-300">
+                                        <span className="text-slate-500">Peak</span>
+                                        <span className="font-mono text-slate-400">{state.metrics.peakEquity.toFixed(2)}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-slate-300">
                                         <span className="text-slate-500">DD</span>
                                         <span className={clsx(state.metrics.drawdownPct > state.thresholds.maxDrawdownPct && 'text-danger')}>
                                             {state.metrics.drawdownPct.toFixed(1)}%
@@ -330,7 +338,8 @@ export function GovernancePanel({ compact = false, enabled = true }: { compact?:
                                     Drawdown confidence: <span className={clsx(state.metrics.drawdownConfidence ? 'text-slate-300' : 'text-amber-300')}>
                                         {state.metrics.drawdownConfidence ? 'qualified' : 'low-confidence'}
                                     </span>
-                                    {' '}| Peak equity: <span className="font-mono text-slate-300">{state.metrics.peakEquity.toFixed(4)}</span>
+                                    {' '}| Equity: <span className="font-mono text-slate-300">{state.metrics.equityNow.toFixed(4)}</span>
+                                    {' '}| Peak: <span className="font-mono text-slate-400">{state.metrics.peakEquity.toFixed(4)}</span>
                                 </div>
 
                                 <MetricBar

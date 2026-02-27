@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { feedbackEngine, AnalyticsResponse, AnalyticsSummary, RegimeStats, StrategyStats, DrawdownPoint, ProfitFactorPoint } from '../../../../analytics/feedbackEngine';
 import { canonicalizePairKey } from '../../../../xrpl/currency';
 import { buildAnalyticsCacheKey, getCachedAnalytics, setCachedAnalytics, getAnalyticsCacheTtlMs } from './_cache';
@@ -109,4 +110,4 @@ function handler(req: LocalRequest, res: NextApiResponse<AnalyticsApiResponse | 
     }
 }
 
-export default withLocalApi(handler);
+export default withLocalApi(withApiRouteContext(handler));

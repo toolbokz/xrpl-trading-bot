@@ -41,10 +41,19 @@ import {
     ExecutionQualityQueryFilters,
     EdgeAttributionQueryFilters,
     getFeedbackDb,
+    queryExecutionQualityEventsWithMissingHorizons,
+    queryEdgeAttributionEventsWithMissingHorizons,
 } from './feedbackDb';
 import { FlowMetrics, FlowRegime, hasAdverseSelectionRisk } from '../market/flowMetrics';
 import { OrderBookState } from '../utils/types';
 import { logger } from './logger';
+import {
+    classifyPnl,
+    computeProfitFactorCanonical,
+    pfToFinite,
+    warnOnPoorClassifiability,
+    type ClassifiabilityReport,
+} from './metricUtils';
 import { canonicalizePairKey, getPairKeyAliases } from '../xrpl/currency';
 import {
     buildExecutionQualityMetrics,
@@ -56,6 +65,13 @@ import {
     buildEdgeAttributionMetrics,
     validatePnlIdentity,
 } from './edgeAttributionMetrics';
+import { tradeHistory, TradeTrace } from './tradeHistory';
+import {
+    applyStrategyFilters,
+    DEFAULT_EXECUTION_QUALITY_EXCLUDED_STRATEGIES,
+    isExecutionEvidenceEvent,
+    isPaperTradeEvent,
+} from './executionQualityEventFilters';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -140,9 +156,21 @@ export interface ExecutionQualityEventInput {
     strategy?: string | null;
     regime?: FlowRegime | null;
     source?: 'bot' | 'manual' | 'unknown';
+    venue?: string | null;
     intentPrice?: number | null;
     expectedPrice?: number | null;
     expectedPriceSource?: 'intent' | 'mid' | 'bbo' | 'fallback_intent' | null;
+    baselineTs?: number | null;
+    baselineBestBid?: number | null;
+    baselineBestAsk?: number | null;
+    baselineMid?: number | null;
+    baselineSpreadBps?: number | null;
+    baselineSource?: string | null;
+    expectedRule?: string | null;
+    slippageBaselineUsed?: string | null;
+    priceConvention?: 'quote_per_base' | 'base_per_quote' | null;
+    baselineBookAgeMs?: number | null;
+    fillTs?: number | null;
     decisionMid?: number | null;
     decisionBid?: number | null;
     decisionAsk?: number | null;
@@ -166,10 +194,14 @@ export interface ExecutionQualityEventInput {
     guardQuarantined?: boolean | null;
     decisionTs?: number | null;
     submitTs?: number | null;
+    submitResponseTs?: number | null;
     validatedTs?: number | null;
+    submitResultEngine?: string | null;
+    submitError?: string | null;
     decisionToSubmitMs?: number | null;
     submitToValidatedMs?: number | null;
     decisionToValidatedMs?: number | null;
+    repriceApplied?: boolean | null;
 }
 
 export interface ExecutionQualityFilters {
@@ -179,6 +211,9 @@ export interface ExecutionQualityFilters {
     side?: 'buy' | 'sell';
     source?: 'bot' | 'manual' | 'unknown';
     bucketMs?: number;
+    includeNonExecutionEvidence?: boolean;
+    includeStrategies?: string[];
+    excludeStrategies?: string[];
 }
 
 export interface ExecutionQualitySummary {
@@ -200,6 +235,49 @@ export interface ExecutionQualitySummary {
     avgDecisionToSubmitMs: number | null;
     avgSubmitToValidatedMs: number | null;
     avgDecisionToValidatedMs: number | null;
+    missingFillSnapshotRate: number;
+    missingAckRate: number;
+    missingMarkoutRate: number;
+    tsMonotonicityViolationRate: number;
+    negRateAgeDelta: number;
+    weeklyP50DriftBps: number | null;
+    weeklyP90DriftBps: number | null;
+    staleFillSnapshotRate: number;
+    negSlippageRate: number;
+    negSlippageSampleCount: number;
+    negSlippageNoDataCount: number;
+    staleFillSnapshotSampleCount: number;
+    staleFillSnapshotNoDataCount: number;
+    tooGoodRate: number;
+    tooBadRate: number;
+    repriceAppliedRate: number;
+}
+
+export interface ExecutionQualityRealismDiagnostic {
+    txHash: string | null;
+    pairKey: string;
+    side: 'buy' | 'sell' | null;
+    reason:
+    | 'missing_baseline'
+    | 'missing_fill_ts'
+    | 'invalid_baseline'
+    | 'invalid_fill_price'
+    | 'invalid_side'
+    | 'stale_snapshot';
+    slippage_baseline_used: 'best_bid' | 'best_ask' | 'mid' | 'vwap' | 'intent' | 'unknown';
+    baseline_ts_ms: number | null;
+    fill_ts_ms: number | null;
+    delta_ms: number | null;
+    convention: 'quote_per_base' | 'base_per_quote' | 'unknown';
+    venue: string | null;
+}
+
+interface ExecutionQualityRealismResult {
+    event: ExecutionQualityEventRecord;
+    slippageBps: number | null;
+    stale: boolean | null;
+    staleDeltaMs: number | null;
+    diagnostic: ExecutionQualityRealismDiagnostic | null;
 }
 
 export interface ExecutionQualityBucket {
@@ -227,12 +305,19 @@ export interface ExecutionQualityBreakdownRow {
     avgSlippageBpsVsIntent: number | null;
     avgEffSpreadBps: number | null;
     avgFillRatio: number | null;
+    repriceAppliedRate: number;
 }
 
 export interface ExecutionQualityAnomalies {
     suspiciousSlippageSpikes: number;
     partialFillAnomalies: number;
     quoteBaseIntegrityViolations: number;
+}
+
+export interface ExecutionQualityExcludedCounts {
+    noExecutionEvidence: number;
+    excludedByStrategy: number;
+    paperTrades: number;
 }
 
 export interface ExecutionQualityAnalytics {
@@ -250,6 +335,10 @@ export interface ExecutionQualityAnalytics {
         byRegime: ExecutionQualityBreakdownRow[];
     };
     anomalies: ExecutionQualityAnomalies;
+    slippageRealismDiagnostics: ExecutionQualityRealismDiagnostic[];
+    totalEventsRaw: number;
+    totalEventsAnalyzed: number;
+    excludedCounts: ExecutionQualityExcludedCounts;
 }
 
 export interface EdgeAttributionEventInput {
@@ -287,6 +376,11 @@ export interface EdgeAttributionSummary {
     coverageDecision: number;
     coverage1m: number;
     coverage5m: number;
+    unknownRate: number;
+    unknownCount: number;
+    collisionCount: number;
+    collisionsPer10k: number;
+    orphanFillsPer10k: number;
     avgSignalEdgeBpsExAnte: number | null;
     avgSignalEdgeBpsExPost1m: number | null;
     avgSignalEdgeBpsExPost5m: number | null;
@@ -557,6 +651,9 @@ const SNAPSHOT_FLUSH_INTERVAL_TICKS = Math.max(
     parseInt(process.env.SNAPSHOT_FLUSH_INTERVAL ?? '5', 10) || 5,
 );
 
+/** Maximum wall-clock seconds between snapshot flushes (safety net). */
+const SNAPSHOT_FLUSH_MAX_INTERVAL_MS = 30_000;
+
 class FeedbackEngine {
     private initialized = false;
     private pruneIntervalId: NodeJS.Timeout | null = null;
@@ -564,6 +661,8 @@ class FeedbackEngine {
     private snapshotBuffer: MarketSnapshotRecord[] = [];
     /** Tick counter for snapshot flush scheduling. */
     private snapshotTickCounter = 0;
+    /** Timestamp of the last snapshot flush (ms). */
+    private lastSnapshotFlushMs = Date.now();
 
     /**
      * Initialize the feedback engine (lazy, called on first use)
@@ -582,6 +681,14 @@ class FeedbackEngine {
 
             // Initial prune on startup
             setTimeout(() => this.prune(), 30000);
+
+            // Backfill any execution quality events whose drift/impact fields
+            // are null because snapshots were unavailable when markout timers
+            // originally fired (e.g. snapshot flush lag).
+            setTimeout(() => {
+                this.backfillMissingHorizons();
+                this.backfillMissingEdgeAttributionHorizons();
+            }, 5000);
 
             return true;
         } catch (err) {
@@ -627,7 +734,9 @@ class FeedbackEngine {
             this.snapshotBuffer.push(snapshot);
             this.snapshotTickCounter++;
 
-            if (this.snapshotTickCounter >= SNAPSHOT_FLUSH_INTERVAL_TICKS) {
+            const wallElapsed = Date.now() - this.lastSnapshotFlushMs;
+            if (this.snapshotTickCounter >= SNAPSHOT_FLUSH_INTERVAL_TICKS
+                || wallElapsed >= SNAPSHOT_FLUSH_MAX_INTERVAL_MS) {
                 this.flushSnapshots();
             }
         } catch (err) {
@@ -657,6 +766,7 @@ class FeedbackEngine {
         } finally {
             this.snapshotBuffer = [];
             this.snapshotTickCounter = 0;
+            this.lastSnapshotFlushMs = Date.now();
         }
     }
 
@@ -903,9 +1013,21 @@ class FeedbackEngine {
                 strategy: input.strategy ?? null,
                 regime: input.regime ?? null,
                 source: input.source ?? 'unknown',
+                venue: input.venue ?? 'XRPL',
                 intentPrice: input.intentPrice ?? null,
                 expectedPrice: input.expectedPrice ?? null,
                 expectedPriceSource: input.expectedPriceSource ?? null,
+                baselineTs: input.baselineTs ?? input.decisionTs ?? null,
+                baselineBestBid: input.baselineBestBid ?? null,
+                baselineBestAsk: input.baselineBestAsk ?? null,
+                baselineMid: input.baselineMid ?? null,
+                baselineSpreadBps: input.baselineSpreadBps ?? null,
+                baselineSource: input.baselineSource ?? null,
+                expectedRule: input.expectedRule ?? null,
+                slippageBaselineUsed: input.slippageBaselineUsed ?? null,
+                priceConvention: input.priceConvention ?? 'quote_per_base',
+                baselineBookAgeMs: input.baselineBookAgeMs ?? null,
+                fillTs: input.fillTs ?? input.validatedTs ?? null,
                 decisionMid: input.decisionMid ?? null,
                 decisionBid: input.decisionBid ?? null,
                 decisionAsk: input.decisionAsk ?? null,
@@ -929,16 +1051,167 @@ class FeedbackEngine {
                 guardQuarantined: input.guardQuarantined == null ? null : (input.guardQuarantined ? 1 : 0),
                 decisionTs: input.decisionTs ?? null,
                 submitTs: input.submitTs ?? null,
+                submitResponseTs: input.submitResponseTs ?? null,
                 validatedTs: input.validatedTs ?? null,
+                submitResultEngine: input.submitResultEngine ?? null,
+                submitError: input.submitError ?? null,
                 decisionToSubmitMs: input.decisionToSubmitMs ?? null,
                 submitToValidatedMs: input.submitToValidatedMs ?? null,
                 decisionToValidatedMs: input.decisionToValidatedMs ?? null,
+                repriceApplied: input.repriceApplied == null ? null : (input.repriceApplied ? 1 : 0),
             };
 
             return insertExecutionQualityEvent(event);
         } catch (err) {
             logger.warn({ err, pairKey: input.pairKey, txHash: input.txHash }, 'Failed to record execution quality event');
             return null;
+        }
+    }
+
+    /**
+     * One-time backfill: re-compute drift/impact for fills whose horizon
+     * fields are null because market snapshots weren't in SQLite when
+     * the original markout timer fired.
+     *
+     * Uses progressively wider tolerance windows: first tries the normal
+     * tight window, then falls back to wider windows to handle snapshot
+     * gaps (e.g. from flush-interval misconfiguration).
+     */
+    backfillMissingHorizons(): void {
+        if (!this.ensureInitialized()) return;
+        try {
+            const events = queryExecutionQualityEventsWithMissingHorizons(500);
+            if (events.length === 0) return;
+            let patched = 0;
+
+            // Progressive tolerance windows: normal → medium → wide
+            // Cap at 1 hour — beyond that, drift is too inaccurate.
+            const tolerances1m = [120_000, 600_000, 3_600_000];
+            const tolerances5m = [180_000, 600_000, 3_600_000];
+            /** Maximum acceptable distance (ms) between target time and snapshot. */
+            const MAX_SNAP_DISTANCE_MS = 3_600_000;
+
+            for (const evt of events) {
+                if (!evt.fillTs || !evt.fillPrice || !evt.decisionMid || !evt.side) continue;
+                const pair = canonicalizePairKey(evt.pairKeyCanonical);
+
+                let midAfter1m: number | null = null;
+                for (const tol of tolerances1m) {
+                    const snap = getSnapshotNear(pair, evt.fillTs + 60_000, tol);
+                    if (snap?.midPrice != null && snap.midPrice > 0
+                        && Math.abs(snap.ts - (evt.fillTs + 60_000)) <= MAX_SNAP_DISTANCE_MS) {
+                        midAfter1m = snap.midPrice;
+                        break;
+                    }
+                }
+
+                let midAfter5m: number | null = null;
+                for (const tol of tolerances5m) {
+                    const snap = getSnapshotNear(pair, evt.fillTs + 300_000, tol);
+                    if (snap?.midPrice != null && snap.midPrice > 0
+                        && Math.abs(snap.ts - (evt.fillTs + 300_000)) <= MAX_SNAP_DISTANCE_MS) {
+                        midAfter5m = snap.midPrice;
+                        break;
+                    }
+                }
+
+                if (midAfter1m == null && midAfter5m == null) continue;
+                const realizedSpreadBps1m = computeRealizedSpreadBps(evt.side, evt.fillPrice, evt.decisionMid, midAfter1m);
+                const realizedSpreadBps5m = computeRealizedSpreadBps(evt.side, evt.fillPrice, evt.decisionMid, midAfter5m);
+                const impactBps1m = computeImpactBps(evt.side, evt.decisionMid, midAfter1m);
+                const impactBps5m = computeImpactBps(evt.side, evt.decisionMid, midAfter5m);
+                updateExecutionQualityHorizonsDb({
+                    id: evt.id,
+                    realizedSpreadBps1m,
+                    realizedSpreadBps5m,
+                    impactBps1m,
+                    impactBps5m,
+                });
+                patched++;
+            }
+            if (patched > 0) {
+                logger.info({ patched, total: events.length }, 'Backfilled missing execution quality horizons');
+            }
+        } catch (err) {
+            logger.warn({ err }, 'Failed to backfill missing execution quality horizons');
+        }
+    }
+
+    /**
+     * One-time backfill: re-compute drift/pnl for edge attribution events
+     * whose horizon fields are null.
+     */
+    backfillMissingEdgeAttributionHorizons(): void {
+        if (!this.ensureInitialized()) return;
+        try {
+            const events = queryEdgeAttributionEventsWithMissingHorizons(500);
+            if (events.length === 0) return;
+            let patched = 0;
+
+            const tolerances = [120_000, 600_000, 3_600_000];
+            const MAX_SNAP_DISTANCE_MS = 3_600_000;
+
+            for (const evt of events) {
+                if (!evt.fillPrice || !evt.midDecision || !evt.side || !evt.baseFilled) continue;
+                const pair = canonicalizePairKey(evt.pairKeyCanonical);
+                const fillTs = evt.ts; // Use event timestamp as fill time approximation
+
+                let midFill1m: number | null = null;
+                for (const tol of tolerances) {
+                    const snap = getSnapshotNear(pair, fillTs + 60_000, tol);
+                    if (snap?.midPrice != null && snap.midPrice > 0
+                        && Math.abs(snap.ts - (fillTs + 60_000)) <= MAX_SNAP_DISTANCE_MS) {
+                        midFill1m = snap.midPrice;
+                        break;
+                    }
+                }
+
+                let midFill5m: number | null = null;
+                for (const tol of tolerances) {
+                    const snap = getSnapshotNear(pair, fillTs + 300_000, tol);
+                    if (snap?.midPrice != null && snap.midPrice > 0
+                        && Math.abs(snap.ts - (fillTs + 300_000)) <= MAX_SNAP_DISTANCE_MS) {
+                        midFill5m = snap.midPrice;
+                        break;
+                    }
+                }
+
+                if (midFill1m == null && midFill5m == null) continue;
+
+                const metrics = buildEdgeAttributionMetrics({
+                    side: evt.side,
+                    midDecision: evt.midDecision,
+                    fillPrice: evt.fillPrice,
+                    baseFilled: evt.baseFilled,
+                    strategyFair: null,
+                    midDecision1m: midFill1m, // approximation: use fill+1m snap for decision+1m
+                    midDecision5m: midFill5m,
+                    midFill1m,
+                    midFill5m,
+                });
+
+                updateEdgeAttributionHorizonsDb({
+                    id: evt.id,
+                    mid1m: midFill1m,
+                    mid5m: midFill5m,
+                    signalEdgeBpsExPost1m: metrics.signalEdgeBpsExPost1m,
+                    signalEdgeBpsExPost5m: metrics.signalEdgeBpsExPost5m,
+                    driftBps1m: metrics.driftBps1m,
+                    driftBps5m: metrics.driftBps5m,
+                    pnlDriftQuote1m: metrics.pnlDriftQuote1m,
+                    pnlTotalQuote1m: metrics.pnlTotalQuote1m,
+                    pnlDriftQuote5m: metrics.pnlDriftQuote5m,
+                    pnlTotalQuote5m: metrics.pnlTotalQuote5m,
+                    hasHorizon1m: metrics.hasHorizon1m ? 1 : 0,
+                    hasHorizon5m: metrics.hasHorizon5m ? 1 : 0,
+                });
+                patched++;
+            }
+            if (patched > 0) {
+                logger.info({ patched, total: events.length }, 'Backfilled missing edge attribution horizons');
+            }
+        } catch (err) {
+            logger.warn({ err }, 'Failed to backfill missing edge attribution horizons');
         }
     }
 
@@ -1376,14 +1649,15 @@ class FeedbackEngine {
                 const edge = this.computeEdgeBps(event);
                 const slippage = event.slippageBpsVsIntent ?? this.computeSlippageBps(event);
 
-                if (pnl > 0) {
+                const cls = classifyPnl(pnl);
+                if (cls === 'win') {
                     wins++;
                     totalGain += pnl;
-                } else if (pnl < 0) {
+                } else if (cls === 'loss') {
                     losses++;
                     totalLoss += Math.abs(pnl);
                 }
-                // pnl === 0: skip — neither win nor loss
+                // breakeven: excluded from win/loss counts
 
                 if (edge !== null) {
                     sumEdgeBps += edge;
@@ -1412,7 +1686,10 @@ class FeedbackEngine {
             const classifiable = wins + losses;
             const winRate = classifiable > 0 ? wins / classifiable : 0;
             const avgTradeSize = trades > 0 ? totalTradeSize / trades : 1;
-            const profitFactor = totalLoss > 0 ? totalGain / totalLoss : (totalGain > 0 ? 10 : 1);
+            // Fix C: canonical PF with display cap of 10 for heatmap visualization.
+            // computeProfitFactorCanonical already applies displayCap, so no
+            // additional pfToFinite wrapping is needed.
+            const profitFactor = computeProfitFactorCanonical(totalGain, totalLoss, { displayCap: 10 });
 
             // Expectancy in bps
             const avgWin = wins > 0 ? totalGain / wins : 0;
@@ -1436,7 +1713,7 @@ class FeedbackEngine {
                 regime,
                 trades,
                 winRate,
-                profitFactor: Number.isFinite(profitFactor) ? profitFactor : 10,
+                profitFactor,
                 expectancyBps: Number.isFinite(expectancyBps) ? expectancyBps : 0,
                 avgEdgeBps,
                 avgSlippageBps,
@@ -1594,11 +1871,70 @@ class FeedbackEngine {
             if (filters.side) queryFilters.side = filters.side;
             if (filters.source) queryFilters.source = filters.source;
 
-            const events = queryExecutionQualityEvents(queryFilters);
+            const rawEvents = queryExecutionQualityEvents(queryFilters);
+            const includeNonExecutionEvidence = filters.includeNonExecutionEvidence === true;
+
+            const nonPaperEvents: ExecutionQualityEventRecord[] = [];
+            let excludedPaperTrades = 0;
+            for (const event of rawEvents) {
+                if (isPaperTradeEvent(event)) {
+                    excludedPaperTrades += 1;
+                } else {
+                    nonPaperEvents.push(event);
+                }
+            }
+
+            const strategyFilterOptions: {
+                includeStrategies?: string[];
+                excludeStrategies?: string[];
+                defaultExcludedStrategies: readonly string[];
+            } = {
+                defaultExcludedStrategies: DEFAULT_EXECUTION_QUALITY_EXCLUDED_STRATEGIES,
+            };
+            if (filters.includeStrategies) {
+                strategyFilterOptions.includeStrategies = filters.includeStrategies;
+            }
+            if (filters.excludeStrategies) {
+                strategyFilterOptions.excludeStrategies = filters.excludeStrategies;
+            }
+            const strategyFiltered = applyStrategyFilters(nonPaperEvents, strategyFilterOptions);
+
+            const events: ExecutionQualityEventRecord[] = [];
+            let excludedNoExecutionEvidence = 0;
+            for (const event of strategyFiltered.included) {
+                if (includeNonExecutionEvidence || isExecutionEvidenceEvent(event)) {
+                    events.push(event);
+                } else {
+                    excludedNoExecutionEvidence += 1;
+                }
+            }
+
+            const excludedCounts: ExecutionQualityExcludedCounts = {
+                noExecutionEvidence: excludedNoExecutionEvidence,
+                excludedByStrategy: strategyFiltered.excludedCount,
+                paperTrades: excludedPaperTrades,
+            };
+            const totalEventsRaw = rawEvents.length;
+            const totalEventsAnalyzed = events.length;
 
             const fills = events.filter((e) => e.status === 'FILLED' || e.status === 'PARTIAL');
             const rejects = events.filter((e) => e.status === 'REJECTED');
             const partials = events.filter((e) => e.status === 'PARTIAL');
+
+            const realism = fills.map((event) => this.computeExecutionQualityRealism(event));
+            const slippageValues = realism
+                .map((r) => r.slippageBps)
+                .filter((v): v is number => v != null && Number.isFinite(v));
+            const staleMeasured = realism.filter((r) => r.stale != null);
+            const staleCount = staleMeasured.filter((r) => r.stale === true).length;
+            const staleNoDataCount = fills.length - staleMeasured.length;
+            const negCount = slippageValues.filter((v) => v < 0).length;
+            const negNoDataCount = fills.length - slippageValues.length;
+            const repriceAppliedCount = events.filter((e) => e.repriceApplied === 1).length;
+            const slippageRealismDiagnostics = realism
+                .map((r) => r.diagnostic)
+                .filter((d): d is ExecutionQualityRealismDiagnostic => d != null)
+                .slice(0, 200);
 
             const summary: ExecutionQualitySummary = {
                 events: events.length,
@@ -1607,7 +1943,7 @@ class FeedbackEngine {
                 partials: partials.length,
                 coverage1m: fills.length > 0 ? fills.filter((e) => e.realizedSpreadBps1m != null).length / fills.length : 0,
                 coverage5m: fills.length > 0 ? fills.filter((e) => e.realizedSpreadBps5m != null).length / fills.length : 0,
-                avgSlippageBpsVsIntent: this.avg(fills.map((e) => e.slippageBpsVsIntent)),
+                avgSlippageBpsVsIntent: this.avg(slippageValues),
                 avgSlippageBpsVsMid: this.avg(fills.map((e) => e.slippageBpsVsMid)),
                 avgSlippageBpsVsBbo: this.avg(fills.map((e) => e.slippageBpsVsBbo)),
                 avgEffSpreadBps: this.avg(fills.map((e) => e.effSpreadBps)),
@@ -1619,12 +1955,56 @@ class FeedbackEngine {
                 avgDecisionToSubmitMs: this.avg(events.map((e) => e.decisionToSubmitMs)),
                 avgSubmitToValidatedMs: this.avg(events.map((e) => e.submitToValidatedMs)),
                 avgDecisionToValidatedMs: this.avg(events.map((e) => e.decisionToValidatedMs)),
+                missingFillSnapshotRate: fills.length > 0
+                    ? fills.filter((e) => e.decisionTs == null || e.submitTs == null || e.validatedTs == null).length / fills.length
+                    : 0,
+                missingAckRate: fills.length > 0
+                    ? fills.filter((e) => {
+                        const responseTs = e.submitResponseTs ?? e.submitTs;
+                        const hasSubmitResponse = responseTs != null && Number.isFinite(responseTs);
+                        const hasSubmitResult = (typeof e.submitResultEngine === 'string' && e.submitResultEngine.length > 0)
+                            || (e.status === 'FILLED' || e.status === 'PARTIAL' || e.status === 'REJECTED');
+                        const hasRecordedError = (typeof e.submitError === 'string' && e.submitError.length > 0)
+                            || (typeof e.rejectReason === 'string' && e.rejectReason.length > 0);
+                        return !(hasSubmitResponse && (hasSubmitResult || hasRecordedError));
+                    }).length / fills.length
+                    : 0,
+                missingMarkoutRate: fills.length > 0
+                    ? fills.filter((e) => e.realizedSpreadBps1m == null && e.realizedSpreadBps5m == null).length / fills.length
+                    : 0,
+                tsMonotonicityViolationRate: fills.length > 0
+                    ? fills.filter((e) => {
+                        if (e.decisionTs == null || e.submitTs == null || e.validatedTs == null) return false;
+                        return !(e.decisionTs <= e.submitTs && e.submitTs <= e.validatedTs);
+                    }).length / fills.length
+                    : 0,
+                negRateAgeDelta: this.computeNegRateAgeDelta(realism),
+                weeklyP50DriftBps: this.percentile(
+                    fills
+                        .map((e) => e.impactBps1m ?? e.impactBps5m)
+                        .filter((v): v is number => v != null && Number.isFinite(v))
+                        .map((v) => Math.max(0, v)),
+                    0.5,
+                ),
+                weeklyP90DriftBps: this.percentile(
+                    fills
+                        .map((e) => e.impactBps1m ?? e.impactBps5m)
+                        .filter((v): v is number => v != null && Number.isFinite(v))
+                        .map((v) => Math.max(0, v)),
+                    0.9,
+                ),
+                staleFillSnapshotRate: staleMeasured.length > 0 ? staleCount / staleMeasured.length : 0,
+                negSlippageRate: slippageValues.length > 0 ? negCount / slippageValues.length : 0,
+                negSlippageSampleCount: slippageValues.length,
+                negSlippageNoDataCount: negNoDataCount,
+                staleFillSnapshotSampleCount: staleMeasured.length,
+                staleFillSnapshotNoDataCount: staleNoDataCount,
+                tooGoodRate: this.computeTooGoodRate(slippageValues),
+                tooBadRate: this.computeTooBadRate(slippageValues),
+                repriceAppliedRate: events.length > 0 ? repriceAppliedCount / events.length : 0,
             };
 
             const series = this.buildExecutionQualitySeries(events, bucketMs);
-            const slippageValues = fills
-                .map((e) => e.slippageBpsVsIntent)
-                .filter((v): v is number => v != null && Number.isFinite(v));
             const spreadValues = fills
                 .map((e) => e.effSpreadBps)
                 .filter((v): v is number => v != null && Number.isFinite(v));
@@ -1646,10 +2026,7 @@ class FeedbackEngine {
             };
 
             const anomalies: ExecutionQualityAnomalies = {
-                suspiciousSlippageSpikes: fills.filter((e) => {
-                    const s = e.slippageBpsVsIntent;
-                    return s != null && Number.isFinite(s) && (s < -100 || s > 500);
-                }).length,
+                suspiciousSlippageSpikes: slippageValues.filter((s) => s < -100 || s > 500).length,
                 partialFillAnomalies: partials.filter((e) => (e.fillRatio ?? 0) < 0.999).length,
                 quoteBaseIntegrityViolations: fills.filter((e) => {
                     if (!Number.isFinite(e.fillPrice ?? null) || (e.fillPrice ?? 0) <= 0) return true;
@@ -1665,6 +2042,10 @@ class FeedbackEngine {
                 histograms,
                 breakdowns,
                 anomalies,
+                slippageRealismDiagnostics,
+                totalEventsRaw,
+                totalEventsAnalyzed,
+                excludedCounts,
             };
         } catch (err) {
             logger.warn({ err, filters }, 'Failed to compute execution quality analytics');
@@ -1687,12 +2068,29 @@ class FeedbackEngine {
             if (filters.source) queryFilters.source = filters.source;
 
             const events = queryEdgeAttributionEvents(queryFilters);
+            const unknownCount = events.filter((e) => e.hasDecisionSnapshot !== 1).length;
+            const txHashCounts = new Map<string, number>();
+            for (const event of events) {
+                const txHash = event.txHash?.trim();
+                if (!txHash) continue;
+                txHashCounts.set(txHash, (txHashCounts.get(txHash) ?? 0) + 1);
+            }
+            let collisionCount = 0;
+            for (const count of txHashCounts.values()) {
+                if (count > 1) collisionCount += count - 1;
+            }
+            const denom = events.length > 0 ? events.length : 1;
 
             const summary: EdgeAttributionSummary = {
                 events: events.length,
                 coverageDecision: events.length > 0 ? events.filter((e) => e.hasDecisionSnapshot === 1).length / events.length : 0,
                 coverage1m: events.length > 0 ? events.filter((e) => e.hasHorizon1m === 1).length / events.length : 0,
                 coverage5m: events.length > 0 ? events.filter((e) => e.hasHorizon5m === 1).length / events.length : 0,
+                unknownRate: events.length > 0 ? unknownCount / events.length : 0,
+                unknownCount,
+                collisionCount,
+                collisionsPer10k: (collisionCount / denom) * 10_000,
+                orphanFillsPer10k: (unknownCount / denom) * 10_000,
                 avgSignalEdgeBpsExAnte: this.avg(events.map((e) => e.signalEdgeBpsExAnte)),
                 avgSignalEdgeBpsExPost1m: this.avg(events.map((e) => e.signalEdgeBpsExPost1m)),
                 avgSignalEdgeBpsExPost5m: this.avg(events.map((e) => e.signalEdgeBpsExPost5m)),
@@ -1765,6 +2163,22 @@ class FeedbackEngine {
                 avgDecisionToSubmitMs: null,
                 avgSubmitToValidatedMs: null,
                 avgDecisionToValidatedMs: null,
+                missingFillSnapshotRate: 0,
+                missingAckRate: 0,
+                missingMarkoutRate: 0,
+                tsMonotonicityViolationRate: 0,
+                negRateAgeDelta: 0,
+                weeklyP50DriftBps: null,
+                weeklyP90DriftBps: null,
+                staleFillSnapshotRate: 0,
+                negSlippageRate: 0,
+                negSlippageSampleCount: 0,
+                negSlippageNoDataCount: 0,
+                staleFillSnapshotSampleCount: 0,
+                staleFillSnapshotNoDataCount: 0,
+                tooGoodRate: 0,
+                tooBadRate: 0,
+                repriceAppliedRate: 0,
             },
             series: this.buildExecutionQualitySeries([], bucketMs),
             histograms: {
@@ -1783,6 +2197,14 @@ class FeedbackEngine {
                 partialFillAnomalies: 0,
                 quoteBaseIntegrityViolations: 0,
             },
+            slippageRealismDiagnostics: [],
+            totalEventsRaw: 0,
+            totalEventsAnalyzed: 0,
+            excludedCounts: {
+                noExecutionEvidence: 0,
+                excludedByStrategy: 0,
+                paperTrades: 0,
+            },
         };
     }
 
@@ -1793,6 +2215,11 @@ class FeedbackEngine {
                 coverageDecision: 0,
                 coverage1m: 0,
                 coverage5m: 0,
+                unknownRate: 0,
+                unknownCount: 0,
+                collisionCount: 0,
+                collisionsPer10k: 0,
+                orphanFillsPer10k: 0,
                 avgSignalEdgeBpsExAnte: null,
                 avgSignalEdgeBpsExPost1m: null,
                 avgSignalEdgeBpsExPost5m: null,
@@ -1832,6 +2259,212 @@ class FeedbackEngine {
             }
         }
         return count > 0 ? sum / count : null;
+    }
+
+    private percentile(values: number[], p: number): number | null {
+        if (values.length === 0) return null;
+        const sorted = [...values].sort((a, b) => a - b);
+        const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))));
+        return sorted[idx] ?? null;
+    }
+
+    private normalizeExecutionVenue(event: ExecutionQualityEventRecord): string {
+        const venue = typeof event.venue === 'string' ? event.venue.trim().toUpperCase() : '';
+        if (venue.length > 0) return venue;
+        const pair = (event.pairKeyCanonical ?? '').toUpperCase();
+        if (pair.includes('XRP/')) return 'XRPL';
+        if (pair.endsWith('/XRP')) return 'XRPL';
+        return 'UNKNOWN';
+    }
+
+    private staleFillSnapshotThresholdMs(venue: string): number {
+        const fallbackRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_FILL_FRESHNESS_MS ?? '');
+        const fallbackMs = Number.isFinite(fallbackRaw) ? Math.max(1, fallbackRaw) : 500;
+        const xrplRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_FILL_FRESHNESS_MS_XRPL ?? '');
+        const xrplMs = Number.isFinite(xrplRaw) ? Math.max(1, xrplRaw) : 12_000;
+        return venue === 'XRPL' ? xrplMs : fallbackMs;
+    }
+
+    private resolveSlippageBaselineUsed(
+        event: ExecutionQualityEventRecord
+    ): 'best_bid' | 'best_ask' | 'mid' | 'vwap' | 'intent' | 'unknown' {
+        const direct = typeof event.slippageBaselineUsed === 'string'
+            ? event.slippageBaselineUsed.trim().toLowerCase()
+            : '';
+        if (
+            direct === 'best_bid'
+            || direct === 'best_ask'
+            || direct === 'mid'
+            || direct === 'vwap'
+            || direct === 'intent'
+            || direct === 'unknown'
+        ) {
+            return direct;
+        }
+
+        if (event.expectedPriceSource === 'mid') return 'mid';
+        if (event.expectedPriceSource === 'bbo') {
+            if (event.side === 'buy') return 'best_ask';
+            if (event.side === 'sell') return 'best_bid';
+            return 'unknown';
+        }
+        if (event.expectedPriceSource === 'intent' || event.expectedPriceSource === 'fallback_intent') {
+            return 'intent';
+        }
+        return 'unknown';
+    }
+
+    private resolvePriceConvention(
+        event: ExecutionQualityEventRecord
+    ): 'quote_per_base' | 'base_per_quote' | 'unknown' {
+        if (event.priceConvention === 'quote_per_base' || event.priceConvention === 'base_per_quote') {
+            return event.priceConvention;
+        }
+        return 'unknown';
+    }
+
+    private computeExecutionQualityRealism(event: ExecutionQualityEventRecord): ExecutionQualityRealismResult {
+        const venue = this.normalizeExecutionVenue(event);
+        const baselineTsMs = Number.isFinite(event.baselineTs ?? null)
+            ? (event.baselineTs as number)
+            : (Number.isFinite(event.decisionTs ?? null) ? (event.decisionTs as number) : null);
+        const fillTsMs = Number.isFinite(event.fillTs ?? null)
+            ? (event.fillTs as number)
+            : (Number.isFinite(event.validatedTs ?? null) ? (event.validatedTs as number) : null);
+        const baselineUsed = this.resolveSlippageBaselineUsed(event);
+        const convention = this.resolvePriceConvention(event);
+
+        const toDiagnostic = (
+            reason: ExecutionQualityRealismDiagnostic['reason'],
+            deltaMs: number | null,
+        ): ExecutionQualityRealismDiagnostic => ({
+            txHash: event.txHash ?? null,
+            pairKey: event.pairKeyCanonical,
+            side: event.side,
+            reason,
+            slippage_baseline_used: baselineUsed,
+            baseline_ts_ms: baselineTsMs,
+            fill_ts_ms: fillTsMs,
+            delta_ms: deltaMs,
+            convention,
+            venue,
+        });
+
+        if (event.side !== 'buy' && event.side !== 'sell') {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('invalid_side', null),
+            };
+        }
+
+        if (event.baselineSource === 'invalid') {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('invalid_baseline', null),
+            };
+        }
+
+        const expectedPrice = event.expectedPrice;
+        if (
+            baselineTsMs == null
+            || !Number.isFinite(expectedPrice ?? null)
+            || (expectedPrice ?? 0) <= 0
+        ) {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('missing_baseline', null),
+            };
+        }
+
+        if (!Number.isFinite(event.fillPrice ?? null) || (event.fillPrice ?? 0) <= 0) {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('invalid_fill_price', null),
+            };
+        }
+
+        const slippageBps = computeCanonicalSlippageBps(event.side, expectedPrice as number, event.fillPrice as number);
+        if (slippageBps == null) {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('invalid_fill_price', null),
+            };
+        }
+
+        if (fillTsMs == null) {
+            return {
+                event,
+                slippageBps,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('missing_fill_ts', null),
+            };
+        }
+
+        const deltaMs = fillTsMs - baselineTsMs;
+        if (!Number.isFinite(deltaMs) || deltaMs < 0) {
+            return {
+                event,
+                slippageBps: null,
+                stale: null,
+                staleDeltaMs: null,
+                diagnostic: toDiagnostic('invalid_baseline', deltaMs),
+            };
+        }
+
+        const thresholdMs = this.staleFillSnapshotThresholdMs(venue);
+        const stale = deltaMs > thresholdMs;
+        return {
+            event,
+            slippageBps,
+            stale,
+            staleDeltaMs: deltaMs,
+            diagnostic: stale ? toDiagnostic('stale_snapshot', deltaMs) : null,
+        };
+    }
+
+    private computeNegRateAgeDelta(realism: ExecutionQualityRealismResult[]): number {
+        const freshnessMs = Number.parseFloat(process.env.LATENCY_IMPACT_DECISION_FRESHNESS_MS ?? '');
+        const slippageImprovementBps = Number.parseFloat(process.env.LATENCY_IMPACT_SLIPPAGE_IMPROVEMENT_BPS ?? '');
+        const latencyCap = Number.isFinite(freshnessMs) ? Math.max(1, freshnessMs) : 1000;
+        const improvement = Number.isFinite(slippageImprovementBps) ? Math.max(0, slippageImprovementBps) : 5;
+
+        const aged = realism.filter((r) => (r.event.decisionToValidatedMs ?? 0) > latencyCap && r.slippageBps != null);
+        if (aged.length === 0) return 0;
+
+        const flagged = aged.filter((r) => (r.slippageBps ?? Number.POSITIVE_INFINITY) <= -improvement);
+        return flagged.length / aged.length;
+    }
+
+    private computeTooGoodRate(slippageValues: number[]): number {
+        const tooGoodRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_TOO_GOOD_BPS_BUFFER ?? '');
+        const tooGood = Number.isFinite(tooGoodRaw) ? Math.max(0, tooGoodRaw) : 2;
+        if (slippageValues.length === 0) return 0;
+        const count = slippageValues.filter((slippage) => Number.isFinite(slippage) && slippage <= -tooGood).length;
+        return count / slippageValues.length;
+    }
+
+    private computeTooBadRate(slippageValues: number[]): number {
+        const tooBadRaw = Number.parseFloat(process.env.SLIPPAGE_REALISM_TOO_BAD_BPS_BUFFER ?? '');
+        const tooBad = Number.isFinite(tooBadRaw) ? Math.max(0, tooBadRaw) : 5;
+        if (slippageValues.length === 0) return 0;
+        const count = slippageValues.filter((slippage) => Number.isFinite(slippage) && slippage >= tooBad).length;
+        return count / slippageValues.length;
     }
 
     private buildExecutionQualitySeries(events: ExecutionQualityEventRecord[], bucketMs: number): ExecutionQualityBucket[] {
@@ -1965,6 +2598,9 @@ class FeedbackEngine {
                 avgSlippageBpsVsIntent: this.avg(group.map((e) => e.slippageBpsVsIntent)),
                 avgEffSpreadBps: this.avg(group.map((e) => e.effSpreadBps)),
                 avgFillRatio: this.avg(group.map((e) => e.fillRatio)),
+                repriceAppliedRate: group.length > 0
+                    ? group.filter((e) => e.repriceApplied === 1).length / group.length
+                    : 0,
             }))
             .sort((a, b) => b.count - a.count);
     }
@@ -2025,6 +2661,8 @@ class FeedbackEngine {
         avgSlippageBps: number;
         partialFillRate: number;
         winRate: number;
+        /** Fraction of lookback window consumed by non-classifiable (breakeven/unclassifiable) events. */
+        breakevenDisplacementRatio: number;
     } {
         if (!this.ensureInitialized()) {
             return this.emptyRollingRiskMetrics();
@@ -2053,28 +2691,36 @@ class FeedbackEngine {
                 return this.emptyRollingRiskMetrics();
             }
 
-            // Compute win/loss stats
+            // Compute win/loss stats (Fix C/D: canonical PF + epsilon classification)
             let wins = 0;
             let losses = 0;
+            let breakeven = 0;
             let totalGain = 0;
             let totalLoss = 0;
             let totalSlippageBps = 0;
             let slippageCount = 0;
             let partialCount = 0;
             let totalTradeSize = 0;
+            let missingMidPrice = 0;
+            let zeroFillSize = 0;
 
             for (const event of lookback) {
                 const pnl = this.computeEventPnl(event);
                 const slippage = event.slippageBpsVsIntent ?? this.computeSlippageBps(event);
 
-                if (pnl > 0) {
+                const cls = classifyPnl(pnl);
+                if (cls === 'win') {
                     wins++;
                     totalGain += pnl;
-                } else if (pnl < 0) {
+                } else if (cls === 'loss') {
                     losses++;
                     totalLoss += Math.abs(pnl);
+                } else {
+                    breakeven++;
+                    // Track unclassifiable reasons for diagnostics
+                    if (!event.midPriceAtDecision) missingMidPrice++;
+                    if (!event.fillSizeBase || event.fillSizeBase <= 0) zeroFillSize++;
                 }
-                // pnl === 0: skip — neither win nor loss (no price data to classify)
 
                 if (slippage !== null) {
                     totalSlippageBps += Math.abs(slippage);
@@ -2095,8 +2741,8 @@ class FeedbackEngine {
             const winRate = classifiable > 0 ? wins / classifiable : 0;
             const avgTradeSize = tradesCount > 0 ? totalTradeSize / tradesCount : 1;
 
-            // Profit factor
-            const profitFactor = totalLoss > 0 ? totalGain / totalLoss : (totalGain > 0 ? Infinity : 1);
+            // Profit factor (Fix C: canonical utility)
+            const profitFactor = computeProfitFactorCanonical(totalGain, totalLoss);
 
             // Expectancy in bps
             const avgWin = wins > 0 ? totalGain / wins : 0;
@@ -2110,6 +2756,30 @@ class FeedbackEngine {
             // Partial fill rate
             const partialFillRate = tradesCount > 0 ? partialCount / tradesCount : 0;
 
+            // Diagnostics (Fix E)
+            const diagReport: ClassifiabilityReport = {
+                total: tradesCount,
+                classifiable,
+                breakeven,
+                unclassifiableReasons: {
+                    missingMidPrice,
+                    zeroFillSize,
+                    missingFeeConversion: 0,
+                    breakeven,
+                    nonFillEvent: 0,
+                },
+                ratio: tradesCount > 0 ? classifiable / tradesCount : 0,
+            };
+            warnOnPoorClassifiability('getRollingRiskMetrics', diagReport);
+
+            // Breakeven displacement: when breakeven/unclassifiable events consume
+            // lookback slots, the effective time window for classifiable trades
+            // shrinks.  Report this ratio so consumers can decide whether the window
+            // is representative.
+            const breakevenDisplacementRatio = tradesCount > 0
+                ? (tradesCount - classifiable) / tradesCount
+                : 0;
+
             // Compute drawdown from equity curve (chronological order)
             const pnlSeriesChronological: number[] = [];
             for (let i = lookback.length - 1; i >= 0; i--) {
@@ -2121,7 +2791,7 @@ class FeedbackEngine {
 
             return {
                 tradesCount,
-                profitFactor: Number.isFinite(profitFactor) ? profitFactor : 100,
+                profitFactor: pfToFinite(profitFactor, 100),
                 expectancyBps: Number.isFinite(expectancyBps) ? expectancyBps : 0,
                 drawdownPct: drawdown.drawdownPct,
                 drawdownConfidence: drawdown.drawdownConfidence,
@@ -2130,6 +2800,7 @@ class FeedbackEngine {
                 avgSlippageBps,
                 partialFillRate,
                 winRate,
+                breakevenDisplacementRatio,
             };
         } catch (err) {
             logger.warn({ err }, 'Failed to get rolling risk metrics');
@@ -2151,6 +2822,7 @@ class FeedbackEngine {
         avgSlippageBps: number;
         partialFillRate: number;
         winRate: number;
+        breakevenDisplacementRatio: number;
     } {
         return {
             tradesCount: 0,
@@ -2163,6 +2835,7 @@ class FeedbackEngine {
             avgSlippageBps: 0,
             partialFillRate: 0,
             winRate: 0,
+            breakevenDisplacementRatio: 0,
         };
     }
 
@@ -2181,13 +2854,23 @@ class FeedbackEngine {
      * Get learning dataset for adaptive learning.
      * Returns fill events with their corresponding regime context.
      */
-    getLearningDataset(filters: QueryFilters = {}): Array<{ event: TradeEventRecord; regime: FlowRegime | null }> {
+    getLearningDataset(filters: QueryFilters = {}): Array<{
+        event: TradeEventRecord;
+        regime: FlowRegime | null;
+        trace: TradeTrace | null;
+    }> {
         if (!this.ensureInitialized()) {
             return [];
         }
 
         try {
             const events = queryTradeEvents(filters);
+            const traceByHash = new Map<string, TradeTrace>();
+            for (const trade of tradeHistory.getAllTrades()) {
+                if (typeof trade.hash === 'string' && trade.hash.length > 0 && trade.trace) {
+                    traceByHash.set(trade.hash, trade.trace);
+                }
+            }
 
             // Filter to bot fills only
             const fills = events.filter(e =>
@@ -2202,6 +2885,7 @@ class FeedbackEngine {
                 return {
                     event,
                     regime: this.resolveEventRegime(event, snapshot?.flowRegime ?? null),
+                    trace: event.txHash ? (traceByHash.get(event.txHash) ?? null) : null,
                 };
             });
         } catch (err) {
@@ -2286,13 +2970,16 @@ class FeedbackEngine {
 
     /**
      * Resolve regime for an event with robust fallbacks.
-     * Snapshot is preferred when available; event-captured fields are used
-     * when pair-key or timing mismatches prevent snapshot correlation.
+     * The entry regime (captured at decision time) is preferred because it
+     * reflects the exact market state the strategy acted on.  Nearby
+     * snapshots are periodic and may be seconds away, often landing in a
+     * different micro-regime — which fragments the learner's buckets and
+     * prevents it from ever reaching the sample threshold.
      */
     private resolveEventRegime(event: TradeEventRecord, snapshotRegime: FlowRegime | null): FlowRegime | null {
         return (
-            snapshotRegime
-            ?? event.entryFlowRegime
+            event.entryFlowRegime
+            ?? snapshotRegime
             ?? event.postFlowRegime1s
             ?? event.postFlowRegime3s
             ?? null
@@ -2311,7 +2998,7 @@ class FeedbackEngine {
     }
 
     /**
-     * Compute summary statistics from events
+     * Compute summary statistics from events (Fix C/D: canonical PF + epsilon)
      */
     private computeSummary(events: TradeEventRecord[]): AnalyticsSummary {
         // Filter to fills and executed orders only
@@ -2335,14 +3022,15 @@ class FeedbackEngine {
             const slippage = this.computeSlippageBps(event);
             const edge = this.computeEdgeBps(event);
 
-            if (pnl > 0) {
+            const cls = classifyPnl(pnl);
+            if (cls === 'win') {
                 wins++;
                 totalGain += pnl;
-            } else if (pnl < 0) {
+            } else if (cls === 'loss') {
                 losses++;
                 totalLoss += Math.abs(pnl);
             }
-            // pnl === 0: skip — neither win nor loss
+            // breakeven: excluded from win/loss counts
 
             if (slippage !== null) {
                 totalSlippageBps += slippage;
@@ -2360,7 +3048,7 @@ class FeedbackEngine {
         const avgWin = wins > 0 ? totalGain / wins : 0;
         const avgLoss = losses > 0 ? totalLoss / losses : 0;
         const expectancy = (winRate * avgWin) - ((1 - winRate) * avgLoss);
-        const profitFactor = totalLoss > 0 ? totalGain / totalLoss : (totalGain > 0 ? Infinity : 0);
+        const profitFactor = computeProfitFactorCanonical(totalGain, totalLoss);
         const avgSlippageBps = slippageCount > 0 ? totalSlippageBps / slippageCount : 0;
         const avgEdgeBps = edgeCount > 0 ? totalEdgeBps / edgeCount : 0;
 
@@ -2388,27 +3076,60 @@ class FeedbackEngine {
     }
 
     /**
-     * Compute approximate PnL for an event
-     * Uses edge relative to mid-price as a proxy when actual PnL unavailable
+     * Compute approximate PnL for an event.
+     *
+     * Uses edge relative to mid-price as a proxy when actual PnL unavailable,
+     * then subtracts available fee components (Fix B):
+     *   - txFeeXrp: on-ledger transaction fee (converted to quote units)
+     *   - ammFeeBps: AMM fee as basis points of notional
+     *
+     * Units: result is in quote currency (e.g. RLUSD).
+     *
+     * Sign convention:
+     *   - positive = profit (buy below mid or sell above mid, net of fees)
+     *   - negative = loss
      */
     private computeEventPnl(event: TradeEventRecord): number {
+        let grossPnl = 0;
+
         // If we have fill info, compute edge-based PnL approximation
         if (event.fillPrice && event.fillSizeBase && event.midPriceAtDecision) {
             const edgeBps = this.computeEdgeBps(event);
             if (edgeBps !== null) {
                 // Convert edge bps to quote currency PnL
                 // Positive edge = profit, negative = loss
-                return (edgeBps / 10000) * event.fillPrice * event.fillSizeBase;
+                grossPnl = (edgeBps / 10000) * event.fillPrice * event.fillSizeBase;
+            }
+        } else {
+            // Fallback: use slippage as negative PnL proxy
+            const slippage = this.computeSlippageBps(event);
+            if (slippage !== null && event.fillPrice && event.fillSizeBase) {
+                grossPnl = -(slippage / 10000) * event.fillPrice * event.fillSizeBase;
+            } else {
+                return 0;
             }
         }
 
-        // Fallback: use slippage as negative PnL proxy
-        const slippage = this.computeSlippageBps(event);
-        if (slippage !== null && event.fillPrice && event.fillSizeBase) {
-            return -(slippage / 10000) * event.fillPrice * event.fillSizeBase;
+        // ── Fee deductions (Fix B) ──────────────────────────────────────
+        let feeCostQuote = 0;
+
+        // 1. Transaction fee (txFeeXrp is in XRP).
+        //    Convert to quote units using fillPrice as approximate XRP→quote rate.
+        //    For XRP-base pairs (e.g., XRP/RLUSD), fillPrice ≈ RLUSD per XRP.
+        //    For non-XRP-base pairs, this is an approximation.
+        //    TODO: use an explicit XRP→quote conversion when available.
+        if (event.txFeeXrp != null && event.txFeeXrp > 0 && event.fillPrice) {
+            feeCostQuote += event.txFeeXrp * event.fillPrice;
         }
 
-        return 0;
+        // 2. AMM fee (ammFeeBps is bps of notional).
+        //    Notional = fillPrice * fillSizeBase (in quote currency).
+        if (event.ammFeeBps != null && event.ammFeeBps > 0 && event.fillPrice && event.fillSizeBase) {
+            const notional = event.fillPrice * event.fillSizeBase;
+            feeCostQuote += (event.ammFeeBps / 10000) * notional;
+        }
+
+        return grossPnl - feeCostQuote;
     }
 
     private resolveExpectedPriceForEvent(event: TradeEventRecord): number | null {
@@ -2505,7 +3226,8 @@ class FeedbackEngine {
     }
 
     /**
-     * Return empty summary for error cases
+     * Return empty summary for error cases.
+     * PF = 1 (neutral, consistent with canonical no-data policy).
      */
     private emptySummary(): AnalyticsSummary {
         return {
@@ -2513,7 +3235,7 @@ class FeedbackEngine {
             wins: 0,
             losses: 0,
             winRate: 0,
-            profitFactor: 0,
+            profitFactor: 1,
             expectancy: 0,
             avgSlippageBps: 0,
             totalPnlApprox: 0,
@@ -2572,6 +3294,9 @@ class FeedbackEngine {
     /**
      * Compute rolling cumulative profit factor series aligned with
      * drawdown time buckets.
+     *
+     * Fix F: restrict to fill-like events only (excludes rejects/errors).
+     * Fix C: use canonical PF with display cap of 10 for chart output.
      */
     private computeProfitFactorSeries(
         filters: QueryFilters = {},
@@ -2583,7 +3308,14 @@ class FeedbackEngine {
             const events = queryTradeEvents(filters);
             if (events.length === 0) return [];
 
-            const sorted = [...events].sort((a, b) => a.ts - b.ts);
+            // Fix F: only include fill-like events
+            const fills = events.filter(e =>
+                (e.action === 'fill' || (e.action === 'offer_create' && e.fillPrice)) &&
+                e.isBotTrade === 1
+            );
+            if (fills.length === 0) return [];
+
+            const sorted = [...fills].sort((a, b) => a.ts - b.ts);
             const firstEvent = sorted[0];
             if (!firstEvent) return [];
 
@@ -2597,36 +3329,34 @@ class FeedbackEngine {
 
             for (const event of sorted) {
                 const pnl = this.computeEventPnl(event);
+                const cls = classifyPnl(pnl);
                 const eventBucket = Math.floor(event.ts / bucketMs) * bucketMs;
 
                 if (eventBucket > currentBucket) {
                     // Emit point for completed bucket
                     cumulativeGain += bucketGain;
                     cumulativeLoss += bucketLoss;
-                    const pf = cumulativeLoss > 0
-                        ? cumulativeGain / cumulativeLoss
-                        : (cumulativeGain > 0 ? 10 : 1);
+                    const pf = computeProfitFactorCanonical(cumulativeGain, cumulativeLoss, { displayCap: 10 });
                     points.push({ ts: currentBucket, profitFactor: pf });
 
                     // Start new bucket
                     currentBucket = eventBucket;
-                    bucketGain = pnl > 0 ? pnl : 0;
-                    bucketLoss = pnl <= 0 ? Math.abs(pnl) : 0;
+                    bucketGain = cls === 'win' ? pnl : 0;
+                    bucketLoss = cls === 'loss' ? Math.abs(pnl) : 0;
                 } else {
-                    if (pnl > 0) {
+                    if (cls === 'win') {
                         bucketGain += pnl;
-                    } else {
+                    } else if (cls === 'loss') {
                         bucketLoss += Math.abs(pnl);
                     }
+                    // breakeven: excluded from PF computation
                 }
             }
 
             // Emit final bucket
             cumulativeGain += bucketGain;
             cumulativeLoss += bucketLoss;
-            const pf = cumulativeLoss > 0
-                ? cumulativeGain / cumulativeLoss
-                : (cumulativeGain > 0 ? 10 : 1);
+            const pf = computeProfitFactorCanonical(cumulativeGain, cumulativeLoss, { displayCap: 10 });
             points.push({ ts: currentBucket, profitFactor: pf });
 
             return points;
@@ -2665,6 +3395,65 @@ export function computeAdverseSelectionRate(
         if (snap.adverseSelectionRisk === 1) {
             adverseCount++;
         }
+    }
+
+    return {
+        sampleCount,
+        adverseCount,
+        adverseRate: sampleCount > 0 ? adverseCount / sampleCount : 0,
+    };
+}
+
+/**
+ * Compute adverse selection rate from trade events as a fallback when
+ * market snapshots are unavailable. Uses the per-trade entry flow data
+ * (entryFlowStrength, entryFlowRegime) which mirrors the same
+ * hasAdverseSelectionRisk logic used for snapshot recording.
+ *
+ * A trade is counted as "adverse" if:
+ *  1. Entry flow showed adverse conditions (strong signal + trending), OR
+ *  2. Post-fill mid moved against the trade direction (1s or 3s markout)
+ */
+export function computeAdverseSelectionRateFromTrades(
+    trades: TradeEventRecord[],
+): { sampleCount: number; adverseCount: number; adverseRate: number } {
+    let sampleCount = 0;
+    let adverseCount = 0;
+
+    for (const t of trades) {
+        // Only count trades that have flow data or post-fill data
+        const hasFlowData = t.entryFlowStrength != null && t.entryFlowRegime != null;
+        const hasPostData = (t.postMid1s != null || t.postMid3s != null) && t.entryMid != null;
+
+        if (!hasFlowData && !hasPostData) continue;
+        sampleCount++;
+
+        let isAdverse = false;
+
+        // Check 1: Entry flow adverse conditions (mirrors hasAdverseSelectionRisk)
+        if (hasFlowData) {
+            const strength = t.entryFlowStrength!;
+            const regime = t.entryFlowRegime;
+            if (strength > 0.5 && (regime === 'trendingUp' || regime === 'trendingDown')) {
+                isAdverse = true;
+            }
+        }
+
+        // Check 2: Post-fill price moved against trade direction
+        if (!isAdverse && hasPostData && t.side != null) {
+            const entryMid = t.entryMid!;
+            const postMid = t.postMid1s ?? t.postMid3s;
+            if (postMid != null && entryMid > 0) {
+                const isBuy = t.side.toLowerCase() === 'buy';
+                // For a buy, adverse = price dropped after entry
+                // For a sell, adverse = price rose after entry
+                const moveBps = ((postMid - entryMid) / entryMid) * 10000;
+                if (isBuy && moveBps < -5) isAdverse = true;
+                if (!isBuy && moveBps > 5) isAdverse = true;
+            }
+        }
+
+        if (isAdverse) adverseCount++;
     }
 
     return {

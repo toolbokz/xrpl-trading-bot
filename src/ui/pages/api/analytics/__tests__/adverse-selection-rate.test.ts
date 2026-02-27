@@ -1,17 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invalidateAnalyticsCache } from '../_cache';
 
-const { mockQuerySnapshots, mockComputeAdverseSelectionRate } = vi.hoisted(() => ({
+const { mockQuerySnapshots, mockComputeAdverseSelectionRate, mockQueryTradeEvents, mockComputeAdverseSelectionRateFromTrades } = vi.hoisted(() => ({
     mockQuerySnapshots: vi.fn(),
     mockComputeAdverseSelectionRate: vi.fn(),
+    mockQueryTradeEvents: vi.fn(),
+    mockComputeAdverseSelectionRateFromTrades: vi.fn(),
 }));
 
 vi.mock('../../../../../analytics/feedbackDb', () => ({
     querySnapshots: mockQuerySnapshots,
+    queryTradeEvents: mockQueryTradeEvents,
 }));
 
 vi.mock('../../../../../analytics/feedbackEngine', () => ({
     computeAdverseSelectionRate: mockComputeAdverseSelectionRate,
+    computeAdverseSelectionRateFromTrades: mockComputeAdverseSelectionRateFromTrades,
 }));
 
 vi.mock('../../../../lib/localApi', () => ({
@@ -54,6 +58,12 @@ describe('GET /api/analytics/adverse-selection-rate', () => {
             adverseCount: 3,
             adverseRate: 0.3,
         });
+        mockQueryTradeEvents.mockReturnValue([]);
+        mockComputeAdverseSelectionRateFromTrades.mockReturnValue({
+            sampleCount: 0,
+            adverseCount: 0,
+            adverseRate: 0,
+        });
     });
 
     it('returns adverse selection metrics', () => {
@@ -69,6 +79,11 @@ describe('GET /api/analytics/adverse-selection-rate', () => {
     });
 
     it('uses cache for identical filters', () => {
+        // Pin Date.now so the computed sinceMs is identical across calls,
+        // producing the same cache key.
+        const now = Date.now();
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+
         const req1 = createMockReq({ pairKey: 'XRP/RLUSD', windowMs: '60000' });
         const req2 = createMockReq({ pairKey: 'XRP/RLUSD', windowMs: '60000' });
         const res1 = createMockRes();
@@ -81,5 +96,7 @@ describe('GET /api/analytics/adverse-selection-rate', () => {
         expect(res2.statusCode).toBe(200);
         expect(mockQuerySnapshots).toHaveBeenCalledTimes(1);
         expect(mockComputeAdverseSelectionRate).toHaveBeenCalledTimes(1);
+
+        vi.restoreAllMocks();
     });
 });

@@ -20,7 +20,8 @@
 
 import { Client } from 'xrpl';
 import { logger } from '../analytics/logger';
-import { assertNoDirectXrplCallsInSingleProcess } from './guard';
+import { isAuditGuardsEnabled } from '../config/featureFlags';
+import { assertNoDirectXrplCallsInSingleProcess, getRequestContext, isApiRouteContext, isRequestContext } from './guard';
 
 // =============================================================================
 // Configuration
@@ -31,6 +32,7 @@ const DEFAULT_ENDPOINTS = [
     'wss://xrplcluster.com',
     'wss://s1.ripple.com',
     'wss://s2.ripple.com',
+    'wss://162.159.153.233',
 ];
 
 /** Parse endpoint list from environment or config */
@@ -89,6 +91,16 @@ interface EndpointState {
     cooldownUntil: number; // timestamp when cooldown expires (0 = no cooldown)
     failures: number;
     lastAttempt: number;
+}
+
+export class MissingApiRouteContextError extends Error {
+    constructor(context: string, requestId?: string) {
+        super(
+            `[XRPL Guard] Missing API route context for shared XRPL client access. ` +
+            `Context: ${context}.${requestId ? ` RequestId: ${requestId}.` : ''}`
+        );
+        this.name = 'MissingApiRouteContextError';
+    }
 }
 
 // =============================================================================
@@ -341,6 +353,8 @@ async function connectInternal(): Promise<Client> {
  * @throws SingleProcessXrplGuardError if called from an API route in single-process mode
  */
 export async function getXrplClient(): Promise<Client> {
+    enforceApiRouteContextInvariant('getXrplClient');
+
     // Guard: block direct calls from API routes in single-process mode
     assertNoDirectXrplCallsInSingleProcess('getXrplClient');
 
@@ -470,4 +484,34 @@ export function __getConfig(): typeof CONFIG {
 /** Override CONFIG for testing */
 export function __setConfigForTesting(overrides: Partial<typeof CONFIG>): void {
     Object.assign(CONFIG, overrides);
+}
+
+function enforceApiRouteContextInvariant(context: string): void {
+    if (!isAuditGuardsEnabled()) {
+        return;
+    }
+
+    if (!isRequestContext()) {
+        return;
+    }
+
+    if (isApiRouteContext()) {
+        return;
+    }
+
+    const requestContext = getRequestContext();
+    const requestId = requestContext?.requestId;
+
+    logger.warn(
+        {
+            context,
+            requestId: requestId ?? null,
+            nodeEnv: process.env.NODE_ENV ?? 'development',
+        },
+        '[XRPL Guard] Request-scoped shared client access without API route context'
+    );
+
+    if (process.env.NODE_ENV !== 'production') {
+        throw new MissingApiRouteContextError(context, requestId);
+    }
 }

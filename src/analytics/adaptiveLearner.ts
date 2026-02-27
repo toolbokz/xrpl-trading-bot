@@ -60,6 +60,11 @@ export interface PerformanceRow {
     avgSlippageBpsVsMid: number;
     avgSpreadPaidBps: number;
     partialFillRate: number;
+    /**
+     * Gross edge win rate proxy: fraction of trades with positive netEdgeBpsVsMid.
+     * Does NOT include tx/AMM fees. Intentionally different from feedbackEngine
+     * net PnL win rate. See Fix G documentation.
+     */
     winRateProxy: number;
     score: number;
 }
@@ -336,6 +341,13 @@ function computeGroupMetrics(points: LearningDataPoint[]): Omit<PerformanceRow, 
     const avgSlippageBpsVsMid = countSlippage > 0 ? sumSlippage / countSlippage : 0;
     const avgSpreadPaidBps = countSpread > 0 ? sumSpread / countSpread : 0;
     const partialFillRate = fills > 0 ? partialCount / fills : 0;
+
+    // Fix G: winRateProxy is intentionally a GROSS edge metric
+    // (fraction of trades with positive netEdgeBpsVsMid).
+    // It does NOT include tx fees or AMM fees.
+    // This is by design: the adaptive learner evaluates execution-edge
+    // quality, while feedbackEngine computes fee-inclusive net PnL WR.
+    // See: feedbackEngine.computeEventPnl() for fee-aware classification.
     const winRateProxy = countNetEdge > 0 ? positiveEdgeCount / countNetEdge : 0;
 
     // Composite score formula:
@@ -373,7 +385,6 @@ export function recommendTuning(opts: RecommendTuningOptions): AdaptiveTuning {
     const config = opts.config ?? getConfigFromEnv();
 
     const prior = priorTuning ?? { ...DEFAULT_TUNING };
-    const reasons: string[] = [];
 
     // Start from defaults
     let sizeMultiplier = 1.0;
@@ -389,7 +400,6 @@ export function recommendTuning(opts: RecommendTuningOptions): AdaptiveTuning {
     // ─────────────────────────────────────────────────────────────────────────
     if ((regime === 'chaotic' || regime === 'illiquid') && score < 0) {
         disabledRegimes.push(regime);
-        reasons.push(`disable ${regime} (score=${score.toFixed(1)})`);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -407,8 +417,6 @@ export function recommendTuning(opts: RecommendTuningOptions): AdaptiveTuning {
         // Add cooldown (up to 10s)
         const cooldownIncrease = Math.min(10000, Math.abs(avgNetEdgeBps) * 200);
         coolDownMs = cooldownIncrease;
-
-        reasons.push(`negEdge=${avgNetEdgeBps.toFixed(1)}bps → size×${sizeMultiplier.toFixed(2)}, minEdge=${minEdgeBpsToTrade.toFixed(0)}bps, cooldown=${coolDownMs}ms`);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -417,7 +425,6 @@ export function recommendTuning(opts: RecommendTuningOptions): AdaptiveTuning {
     if (partialFillRate > 0.3) {
         const reduction = Math.min(0.2, (partialFillRate - 0.3) * 0.5);
         sizeMultiplier = Math.max(0, sizeMultiplier - reduction);
-        reasons.push(`highPartials=${(partialFillRate * 100).toFixed(0)}% → size×${sizeMultiplier.toFixed(2)}`);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -426,7 +433,6 @@ export function recommendTuning(opts: RecommendTuningOptions): AdaptiveTuning {
     if (avgNetEdgeBps > 5 && avgSlippageBpsVsMid < 10 && winRateProxy > 0.55) {
         sizeMultiplier = Math.min(1.2, sizeMultiplier + 0.1);
         minEdgeBpsToTrade = Math.max(0, minEdgeBpsToTrade - 2);
-        reasons.push(`strongPerf (edge=${avgNetEdgeBps.toFixed(1)}, slip=${avgSlippageBpsVsMid.toFixed(1)}, wr=${(winRateProxy * 100).toFixed(0)}%) → size×${sizeMultiplier.toFixed(2)}`);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -453,9 +459,22 @@ export function recommendTuning(opts: RecommendTuningOptions): AdaptiveTuning {
     // Merge disabled regimes (keep prior disables unless explicitly cleared)
     const mergedDisabled = new Set([...prior.disabledRegimes, ...disabledRegimes]);
 
-    // Build reason string
-    const reasonStr = reasons.length > 0
-        ? reasons.join('; ')
+    // Build reason string using final (post-smoothing) values
+    const finalReasons: string[] = [];
+    if (mergedDisabled.size > 0) {
+        finalReasons.push(`disabled: ${Array.from(mergedDisabled).join(', ')}`);
+    }
+    if (avgNetEdgeBps < 0) {
+        finalReasons.push(`negEdge=${avgNetEdgeBps.toFixed(1)}bps → size×${sizeMultiplier.toFixed(2)}, minEdge=${minEdgeBpsToTrade.toFixed(1)}bps, cooldown=${(coolDownMs / 1000).toFixed(1)}s`);
+    }
+    if (partialFillRate > 0.3) {
+        finalReasons.push(`highPartials=${(partialFillRate * 100).toFixed(0)}%`);
+    }
+    if (avgNetEdgeBps > 5 && avgSlippageBpsVsMid < 10 && winRateProxy > 0.55) {
+        finalReasons.push(`strongPerf (edge=${avgNetEdgeBps.toFixed(1)}, wr=${(winRateProxy * 100).toFixed(0)}%) → size×${sizeMultiplier.toFixed(2)}`);
+    }
+    const reasonStr = finalReasons.length > 0
+        ? `${perfRow.fills} fills: ${finalReasons.join('; ')}`
         : `stable (score=${score.toFixed(1)}, fills=${perfRow.fills})`;
 
     return {

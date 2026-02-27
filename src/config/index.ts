@@ -68,33 +68,154 @@ export interface FlowConfig {
     enableAdverseSelectionProtection: boolean;
     /** Maximum quote skew in bps based on imbalance (default: 10) */
     maxQuoteSkewBps: number;
+
+    // ── Mid-price trend detection ────────────────────────────────────────
+    /** Enable mid-price trend detection for entry gating (default: true) */
+    enableTrendDetection: boolean;
+    /** Fast EMA half-life in ms for trend tracker (default: 60000) */
+    trendFastHalfLifeMs: number;
+    /** Slow EMA half-life in ms for trend tracker (default: 300000) */
+    trendSlowHalfLifeMs: number;
+    /** Trend magnitude threshold in bps to classify as trending (default: 5) */
+    trendFlatThresholdBps: number;
+    /** Minimum samples before trend tracker emits signal (default: 10) */
+    trendMinSamples: number;
+    /** Max staleness before trend signal is ignored (default: 30000) */
+    trendStaleAfterMs: number;
+    /** Block long entry when trend is down beyond this bps (default: 8) */
+    trendEntryBlockBps: number;
 }
 
 export interface StrategyConfig {
+    /**
+     * Legacy: minimum spread in bps (kept for backward compatibility).
+     * NOTE: IOC taker scalper should prefer maxSpreadBps gating instead.
+     */
     minSpreadBps: number;
+
+    /**
+     * IOC taker scalper gate:
+     * - Enter only when spread is <= maxSpreadBps (cheap enough to cross).
+     */
+    maxSpreadBps: number;
+
+    /**
+     * IOC taker scalper exit gate:
+     * - Allow profit-taking exits only when spread is <= maxExitSpreadBps.
+     * - Stop-loss exits can still proceed in strategy logic.
+     */
+    maxExitSpreadBps: number;
+
     positionSize: number;
     stopLossBps: number;
     cooldownMs: number;
     ammArbMinProfitBps: number;
+    /** AMM arb: skip when book spread exceeds this (0 = disabled). */
+    ammArbMaxSpreadBps: number;
+    /** AMM arb: independent position size (0 = use shared positionSize). */
+    ammArbPositionSize: number;
+    /** AMM arb: independent stop-loss bps (0 = use shared stopLossBps). */
+    ammArbStopLossBps: number;
+    /** AMM arb: minimum ms between executions (0 = use shared cooldownMs). */
+    ammArbCooldownMs: number;
+    /** AMM arb: entry cross aggressiveness in bps (0 = use shared entryCrossBps). */
+    ammArbEntryCrossBps: number;
     pathArbMinProfitBps: number;
     maxSlippageBps: number;
+
     /** Order book staleness threshold in milliseconds (default: 5000) */
     orderBookStaleMs: number;
+
     /**
      * Additional entry aggressiveness in bps (0 = passive reference price).
      * Higher value crosses more toward the opposite side for better fill odds.
      */
     entryCrossBps: number;
+
     /**
      * Additional exit aggressiveness in bps (0 = passive reference price).
      * Higher value crosses more toward the opposite side for better fill odds.
      */
     exitCrossBps: number;
+
     /**
      * Optional volatility-adaptive stop-loss configuration for scalper exits.
      * Defaults preserve legacy fixed-stop behavior (`enabled=false`).
      */
     volatilityStop?: VolatilityStopConfig | undefined;
+
+    // ── Flow-Alpha Entry Filter ──────────────────────────────────────────
+
+    /**
+     * Enable flow-alpha directional filter for scalper BUY entries.
+     * When enabled, the scalper only enters long when order-flow imbalance
+     * and depth imbalance confirm buy-side pressure. (default: false)
+     */
+    flowAlphaEnabled: boolean;
+
+    /**
+     * Minimum flow imbalance (buyVol-sellVol)/(buyVol+sellVol) to allow entry.
+     * Range [0, 1]. Higher = more selective. (default: 0.15)
+     */
+    flowAlphaMinImbalance: number;
+
+    /**
+     * Minimum combined signal (avg of flow + depth imbalance) to allow entry.
+     * Range [0, 1]. Higher = more selective. (default: 0.10)
+     */
+    flowAlphaMinCombinedSignal: number;
+
+    /**
+     * Minimum VWAP deviation (in bps, negative = price below VWAP = oversold)
+     * to allow entry. Set to a negative value to require "buy the dip".
+     * (default: 0 = disabled)
+     */
+    flowAlphaMaxVwapDeviationBps: number;
+
+    /**
+     * Minimum profit in bps above entry price before a take-profit exit is allowed.
+     * Prevents the scalper from exiting at a microscopic "profit" that doesn't
+     * cover the cost of the round-trip spread + fees. (default: 2)
+     */
+    minTakeProfitBps: number;
+
+    // ── Edge-vs-Cost Gate ────────────────────────────────────────────────
+
+    /**
+     * Enable the edge-vs-cost gate for scalper BUY entries.
+     * When enabled, the scalper estimates the expected directional edge (in bps)
+     * from flow signals and only enters when edge > half-spread + surplus buffer.
+     * This prevents IOC taker entries where the crossing cost exceeds the
+     * predicted move. (default: true)
+     */
+    edgeCostGateEnabled: boolean;
+
+    /**
+     * Scaling factor: maps the composite flow signal strength [0,1] to expected
+     * directional price movement in bps.
+     *   expectedEdgeBps = compositeSignal × edgeEstimateMultiplierBps
+     * Calibrate against observed markout data. (default: 30)
+     */
+    edgeEstimateMultiplierBps: number;
+
+    /**
+     * Minimum surplus (in bps) that expected edge must exceed the half-spread
+     * crossing cost.  edge - halfSpread >= edgeMinSurplusBps.  (default: 2)
+     */
+    edgeMinSurplusBps: number;
+
+    /**
+     * Minimum depth imbalance (bidDepth - askDepth) / total required alongside
+     * the flow-alpha check.  Positive values ensure the book is tilted in the
+     * trade direction.  (default: 0.10)
+     */
+    edgeMinDepthImbalance: number;
+
+    /**
+     * Require buy aggression ratio (buyCount/totalCount) to be above this
+     * threshold before allowing BUY entry. (default: 0.55)
+     */
+    edgeMinBuyAggressionRatio: number;
 }
 
 export interface VolatilityStopConfig {
@@ -145,6 +266,13 @@ export interface AppConfig {
         xrplDiscoveryEnabled?: boolean | undefined;
         tradeToastsEnabled?: boolean | undefined;
     } | undefined;
+    /**
+     * Controls how the bot treats historical data on startup.
+     * - 'none' (default): start clean, only use data accumulated since boot.
+     *   Strategies must warm up from live data before trading.
+     * - 'backfill': attempt to backfill historical ledger data on startup.
+     */
+    historyMode: 'none' | 'backfill';
 }
 
 const toBool = (val: EnvBool, fallback: boolean): boolean => {
@@ -215,17 +343,39 @@ export const loadConfig = (): AppConfig => {
         reserveFloorXRP: toNumber(process.env.RESERVE_FLOOR_XRP, 25),
     };
 
+    // ── One-knob sizing: BASE_ORDER_SIZE_XRP takes precedence over POSITION_SIZE_XRP ──
+    const baseOrderSizeXrp = (() => {
+        const raw = process.env.BASE_ORDER_SIZE_XRP;
+        if (raw !== undefined) return toNumber(raw, 5);
+        return toNumber(process.env.POSITION_SIZE_XRP, 5);
+    })();
+
     const strategy: StrategyConfig = {
+        // Legacy (kept so other components/tests don't break immediately)
         minSpreadBps: toNumber(process.env.MIN_SPREAD_BPS, 10),
-        positionSize: toNumber(process.env.POSITION_SIZE_XRP, 5),
+
+        // New: IOC taker scalper prefers max-spread gating
+        maxSpreadBps: toNumber(process.env.SCALPER_MAX_SPREAD_BPS, 12),
+        maxExitSpreadBps: toNumber(process.env.SCALPER_MAX_EXIT_SPREAD_BPS, 15),
+
+        positionSize: baseOrderSizeXrp,
         stopLossBps: toNumber(process.env.STOP_LOSS_BPS, 50),
         cooldownMs: toNumber(process.env.COOLDOWN_MS, 60_000),
         ammArbMinProfitBps: toNumber(process.env.AMM_ARB_MIN_PROFIT_BPS, 15),
+        ammArbMaxSpreadBps: toNumber(process.env.AMM_ARB_MAX_SPREAD_BPS, 0),
+        ammArbPositionSize: toNumber(process.env.AMM_ARB_POSITION_SIZE, 0),
+        ammArbStopLossBps: toNumber(process.env.AMM_ARB_STOP_LOSS_BPS, 0),
+        ammArbCooldownMs: toNumber(process.env.AMM_ARB_COOLDOWN_MS, 0),
+        ammArbEntryCrossBps: Math.max(0, toNumber(process.env.AMM_ARB_ENTRY_CROSS_BPS, 0)),
         pathArbMinProfitBps: toNumber(process.env.PATH_ARB_MIN_PROFIT_BPS, 20),
         maxSlippageBps: toNumber(process.env.MAX_SLIPPAGE_BPS, 50),
+
         orderBookStaleMs: toNumber(process.env.ORDERBOOK_STALE_MS, 5_000), // Default 5 seconds
-        entryCrossBps: Math.max(0, toNumber(process.env.SCALPER_ENTRY_CROSS_BPS, 2)),
-        exitCrossBps: Math.max(0, toNumber(process.env.SCALPER_EXIT_CROSS_BPS, 2)),
+
+        // Instant-fill defaults (override via .env)
+        entryCrossBps: Math.max(0, toNumber(process.env.SCALPER_ENTRY_CROSS_BPS, 12)),
+        exitCrossBps: Math.max(0, toNumber(process.env.SCALPER_EXIT_CROSS_BPS, 12)),
+
         volatilityStop: {
             enabled: toBool(process.env.VOL_STOP_ENABLED as EnvBool, false),
             warmupMs: Math.max(0, toNumber(process.env.VOL_STOP_WARMUP_MS, 60_000)),
@@ -236,6 +386,22 @@ export const loadConfig = (): AppConfig => {
             maxBps: Math.max(1, toNumber(process.env.VOL_STOP_MAX_BPS, 250)),
             useForEnhanced: toBool(process.env.VOL_STOP_USE_FOR_ENHANCED as EnvBool, true),
         },
+
+        // Flow-alpha directional entry filter
+        flowAlphaEnabled: toBool(process.env.FLOW_ALPHA_ENABLED as EnvBool, false),
+        flowAlphaMinImbalance: clamp(toNumber(process.env.FLOW_ALPHA_MIN_IMBALANCE, 0.15), 0, 1),
+        flowAlphaMinCombinedSignal: clamp(toNumber(process.env.FLOW_ALPHA_MIN_COMBINED_SIGNAL, 0.10), 0, 1),
+        flowAlphaMaxVwapDeviationBps: toNumber(process.env.FLOW_ALPHA_MAX_VWAP_DEVIATION_BPS, 0),
+
+        // Minimum profit gate for take-profit exits
+        minTakeProfitBps: clamp(toNumber(process.env.SCALPER_MIN_TAKE_PROFIT_BPS, 2), 0, 100),
+
+        // Edge-vs-cost gate
+        edgeCostGateEnabled: toBool(process.env.EDGE_COST_GATE_ENABLED as EnvBool, true),
+        edgeEstimateMultiplierBps: Math.max(0, toNumber(process.env.EDGE_ESTIMATE_MULTIPLIER_BPS, 30)),
+        edgeMinSurplusBps: toNumber(process.env.EDGE_MIN_SURPLUS_BPS, 2),
+        edgeMinDepthImbalance: clamp(toNumber(process.env.EDGE_MIN_DEPTH_IMBALANCE, 0.10), -1, 1),
+        edgeMinBuyAggressionRatio: clamp(toNumber(process.env.EDGE_MIN_BUY_AGGRESSION_RATIO, 0.55), 0, 1),
     };
 
     const flow: FlowConfig = {
@@ -250,6 +416,14 @@ export const loadConfig = (): AppConfig => {
         enableRegimeFilter: toBool(process.env.FLOW_ENABLE_REGIME_FILTER as EnvBool, true),
         enableAdverseSelectionProtection: toBool(process.env.FLOW_ENABLE_ADVERSE_SELECTION as EnvBool, true),
         maxQuoteSkewBps: toNumber(process.env.FLOW_MAX_QUOTE_SKEW_BPS, 10),
+        // Mid-price trend detection
+        enableTrendDetection: toBool(process.env.TREND_DETECTION_ENABLED as EnvBool, true),
+        trendFastHalfLifeMs: toNumber(process.env.TREND_FAST_HALF_LIFE_MS, 60_000),
+        trendSlowHalfLifeMs: toNumber(process.env.TREND_SLOW_HALF_LIFE_MS, 300_000),
+        trendFlatThresholdBps: toNumber(process.env.TREND_FLAT_THRESHOLD_BPS, 5),
+        trendMinSamples: toNumber(process.env.TREND_MIN_SAMPLES, 10),
+        trendStaleAfterMs: toNumber(process.env.TREND_STALE_AFTER_MS, 30_000),
+        trendEntryBlockBps: toNumber(process.env.TREND_ENTRY_BLOCK_BPS, 8),
     };
 
     const xrpl: XRPLConfig = {
@@ -291,5 +465,6 @@ export const loadConfig = (): AppConfig => {
             xrplDiscoveryEnabled: toBool(process.env.FEATURE_XRPL_DISCOVERY_ENABLED as EnvBool, false),
             tradeToastsEnabled: toBool(process.env.FEATURE_TRADE_TOASTS_ENABLED as EnvBool, false),
         },
+        historyMode: (process.env.HISTORY_MODE === 'backfill' ? 'backfill' : 'none') as 'none' | 'backfill',
     };
 };

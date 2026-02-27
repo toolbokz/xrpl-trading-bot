@@ -18,6 +18,7 @@
  */
 
 import { OrderBookSnapshot } from './models';
+import { BOOK_CROSS_EPS_ABS, NEG_SPREAD_EPS_BPS } from './bookValidationEpsilon';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -95,12 +96,13 @@ export class SnapshotValidator {
         }
 
         // ── 2. Non-negative spread ───────────────────────────────────────
-        if (snapshot.spreadBps < 0) {
+        if (snapshot.spreadBps < -NEG_SPREAD_EPS_BPS) {
             reasons.push(`negative-spread:${snapshot.spreadBps}`);
         }
 
         // ── 3. Bid < Ask (non-crossed) ──────────────────────────────────
-        if (snapshot.bestBid > 0 && snapshot.bestAsk > 0 && snapshot.bestBid >= snapshot.bestAsk) {
+        const cross = snapshot.bestBid - snapshot.bestAsk;
+        if (snapshot.bestBid > 0 && snapshot.bestAsk > 0 && cross > BOOK_CROSS_EPS_ABS) {
             reasons.push(`crossed-book:bid=${snapshot.bestBid},ask=${snapshot.bestAsk}`);
         }
 

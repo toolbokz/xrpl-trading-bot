@@ -6,6 +6,7 @@ export interface LatencyInput {
     decisionTs: number | null | undefined;
     submitTs: number | null | undefined;
     validatedTs: number | null | undefined;
+    fillTs?: number | null | undefined;
 }
 
 export interface LatencyMetrics {
@@ -98,19 +99,24 @@ export function computeFillRatio(
 }
 
 export function computeLatencyMetrics(input: LatencyInput): LatencyMetrics {
+    const decisionTs = input.decisionTs ?? null;
+    const submitTs = input.submitTs ?? null;
+    const validatedTs = input.validatedTs ?? null;
+    const fillTs = input.fillTs ?? validatedTs;
+
     const decisionToSubmitMs =
-        hasPositive(input.decisionTs ?? null) && hasPositive(input.submitTs ?? null) && (input.submitTs as number) >= (input.decisionTs as number)
-            ? (input.submitTs as number) - (input.decisionTs as number)
+        hasPositive(decisionTs) && hasPositive(submitTs) && submitTs >= decisionTs
+            ? submitTs - decisionTs
             : null;
 
     const submitToValidatedMs =
-        hasPositive(input.submitTs ?? null) && hasPositive(input.validatedTs ?? null) && (input.validatedTs as number) >= (input.submitTs as number)
-            ? (input.validatedTs as number) - (input.submitTs as number)
+        hasPositive(submitTs) && hasPositive(validatedTs) && validatedTs >= submitTs
+            ? validatedTs - submitTs
             : null;
 
     const decisionToValidatedMs =
-        hasPositive(input.decisionTs ?? null) && hasPositive(input.validatedTs ?? null) && (input.validatedTs as number) >= (input.decisionTs as number)
-            ? (input.validatedTs as number) - (input.decisionTs as number)
+        hasPositive(decisionTs) && hasPositive(fillTs) && fillTs >= decisionTs
+            ? fillTs - decisionTs
             : null;
 
     return {

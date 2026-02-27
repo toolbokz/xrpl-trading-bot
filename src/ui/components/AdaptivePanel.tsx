@@ -249,13 +249,24 @@ export function AdaptivePanel({
                         <div className="flex items-center justify-between text-[11px]">
                             <span className="text-slate-500">Max Slip</span>
                             <span className="font-mono text-slate-300">
-                                {currentTuning.maxSlippageBps} bps
+                                {Number(currentTuning.maxSlippageBps).toFixed(1)} bps
                             </span>
                         </div>
                         <div className="flex items-center justify-between text-[11px]">
                             <span className="text-slate-500">Min Edge</span>
                             <span className="font-mono text-slate-300">
-                                {currentTuning.minEdgeBpsToTrade} bps
+                                {Number(currentTuning.minEdgeBpsToTrade).toFixed(1)} bps
+                            </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-slate-500">Quote Skew</span>
+                            <span className={clsx(
+                                'font-mono',
+                                currentTuning.quoteSkewBps > 0 && 'text-blue-400',
+                                currentTuning.quoteSkewBps < 0 && 'text-amber-400',
+                                currentTuning.quoteSkewBps === 0 && 'text-slate-300'
+                            )}>
+                                {currentTuning.quoteSkewBps > 0 ? '+' : ''}{Number(currentTuning.quoteSkewBps).toFixed(1)} bps
                             </span>
                         </div>
                         {currentTuning.coolDownMs > 0 && (
@@ -263,6 +274,14 @@ export function AdaptivePanel({
                                 <span className="text-slate-500">Cooldown</span>
                                 <span className="font-mono text-amber-400">
                                     {(currentTuning.coolDownMs / 1000).toFixed(1)}s
+                                </span>
+                            </div>
+                        )}
+                        {currentTuning.disabledRegimes.length > 0 && (
+                            <div className="flex items-center justify-between text-[11px]">
+                                <span className="text-slate-500">Disabled</span>
+                                <span className="font-mono text-red-400 text-[10px]">
+                                    {currentTuning.disabledRegimes.map(r => REGIME_LABELS[r] || r).join(', ')}
                                 </span>
                             </div>
                         )}

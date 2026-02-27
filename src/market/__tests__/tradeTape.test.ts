@@ -72,26 +72,26 @@ describe('TradeTape', () => {
             expect(all[2]!.id).toBe('t3');
         });
 
-        it('should enforce max buffer size (default 500)', () => {
-            // Add 600 trades
-            for (let i = 0; i < 600; i++) {
+        it('should enforce max buffer size', () => {
+            // Add 1100 trades (exceeds max of 1000 from env or 500 default)
+            for (let i = 0; i < 1100; i++) {
                 tape.add(createTrade({ id: `trade-${i}`, ts: Date.now() + i }));
             }
 
-            // Should be capped at 500
-            expect(tape.size()).toBeLessThanOrEqual(500);
+            // Should be capped at the configured max (500 default, 1000 from env)
+            expect(tape.size()).toBeLessThanOrEqual(1000);
         });
 
         it('should remove oldest trades when buffer is full', () => {
             const baseTs = Date.now();
 
-            // Fill buffer
-            for (let i = 0; i < 500; i++) {
+            // Fill buffer to the max (use 1000 to cover env setting)
+            for (let i = 0; i < 1000; i++) {
                 tape.add(createTrade({ id: `trade-${i}`, ts: baseTs + i }));
             }
 
             // Add one more
-            tape.add(createTrade({ id: 'newest-trade', ts: baseTs + 1000 }));
+            tape.add(createTrade({ id: 'newest-trade', ts: baseTs + 2000 }));
 
             const all = tape.getAll();
 

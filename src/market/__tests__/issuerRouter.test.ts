@@ -31,6 +31,7 @@ import {
     registerIssuer,
     registerInstrument,
 } from '../instrumentRegistry/registry';
+import { getRegistryDb } from '../instrumentRegistry/db';
 import type { IssuerRecord, Instrument } from '../instrumentRegistry/schema';
 
 // ─── Test Fixtures ────────────────────────────────────────────────────────
@@ -81,6 +82,8 @@ beforeEach(() => {
     const tempDir = mkdtempSync(join(tmpdir(), 'issuer-router-test-'));
     process.env.INSTRUMENT_DB_PATH = join(tempDir, 'test.sqlite');
     resetRegistry();
+    // Clear seeded issuers to prevent collisions with test-registered issuers
+    getRegistryDb().exec('DELETE FROM issuers');
 });
 
 afterEach(() => {

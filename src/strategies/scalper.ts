@@ -14,10 +14,14 @@ import {
 import { resolveIssuerForRisk } from '../market/executionPairResolver';
 import { getExecutionOrderFlags, getExecutionOrderType } from '../execution/orderType';
 import { resolveAdaptiveStopLossBps, type VolatilityStopResolution } from '../market/volatilityEstimator';
+import { computeFinalOrderSizeXrp, loadOrderSizingConfig, type CpMode } from '../execution/orderSizing';
 
 interface PositionState {
     side: 'flat' | 'long' | 'short';
     entryPrice?: number | undefined;
+    /** Actual filled base amount from the entry BUY. Used to size the exit SELL
+     *  so we always sell exactly what we bought, regardless of multiplier drift. */
+    entrySize?: number | undefined;
     cooldownUntil?: number | undefined;
 }
 
@@ -157,6 +161,28 @@ export class ScalperStrategy implements Strategy {
             }
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Mid-Price Trend Filter (block BUY entry during confirmed downtrend)
+        // Only gates new entries (flat → long); exits are unaffected.
+        // ─────────────────────────────────────────────────────────────────────
+        if (this.position.side === 'flat' && ctx.trend?.ready) {
+            const trendBlockBps = this.flowConfig.trendEntryBlockBps ?? 8;
+            if (ctx.trend.direction === 'down' && Math.abs(ctx.trend.trendBps) >= trendBlockBps) {
+                logger.info({
+                    trendDirection: ctx.trend.direction,
+                    trendBps: ctx.trend.trendBps.toFixed(2),
+                    velocityBpsPerMin: ctx.trend.velocityBpsPerMin?.toFixed(2) ?? 'N/A',
+                    trendBlockBps,
+                }, 'Scalper: 📉 Trend down — blocking BUY entry');
+                reject('trendDown', {
+                    direction: ctx.trend.direction,
+                    trendBps: ctx.trend.trendBps,
+                    trendBlockBps,
+                });
+                return;
+            }
+        }
+
         const issuer = resolveIssuerForRisk(this.pair);
         if (!issuer) {
             logger.info({ pair: this.pair }, 'Scalper: ❌ No issuer resolved for trading pair');
@@ -165,17 +191,34 @@ export class ScalperStrategy implements Strategy {
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Position Sizing (scale based on regime)
+        // Unified Position Sizing (one-knob sizing pipeline)
         // ─────────────────────────────────────────────────────────────────────
-        const basePositionSize = this.config.positionSize;
-        const sizeMultiplier = flow ? getRegimeSizeMultiplier(flow) : 1.0;
-        const adjustedPositionSize = basePositionSize * sizeMultiplier;
+        const flowRegimeMult = flow ? getRegimeSizeMultiplier(flow) : 1.0;
+        const regimePolicyMult = ctx.regimePolicy?.regimeSizeMultiplier ?? 1.0;
+        const combinedRegimeMult = Math.min(flowRegimeMult, regimePolicyMult);
+        const cpMode: CpMode = (ctx.governance?.mode === 'THROTTLE'
+            ? 'THROTTLE' : ctx.governance?.mode === 'PAUSE'
+                ? 'PAUSE' : ctx.governance?.mode === 'SHUTDOWN'
+                    ? 'SHUTDOWN' : 'NORMAL') as CpMode;
+        const sizingCfg = ctx.orderSizingConfig ?? loadOrderSizingConfig();
+        const sizingResult = computeFinalOrderSizeXrp({
+            cpMode,
+            cpSizeMult: ctx.globalSizeMultiplier ?? 1.0,
+            regimeSizeMult: combinedRegimeMult,
+            adaptiveSizeMult: ctx.adaptiveSizeMultiplier ?? 1.0,
+            strategy: this.name,
+        }, sizingCfg);
 
-        if (adjustedPositionSize <= 0) {
-            logger.debug({ sizeMultiplier, regime: flow?.regime }, 'Scalper: ⚠️ Position size zero after regime adjustment');
-            reject('unknown', { reason: 'position-size-zero', sizeMultiplier, regime: flow?.regime });
+        if (sizingResult.skip) {
+            reject('unknown', {
+                reason: 'size-skip',
+                detail: sizingResult.reason,
+                finalSize: sizingResult.finalSize,
+                minSize: sizingResult.minSize,
+            });
             return;
         }
+        const adjustedPositionSize = sizingResult.finalSize;
 
         const riskIntent = {
             issuer,
@@ -198,9 +241,13 @@ export class ScalperStrategy implements Strategy {
         const bestAsk = state.asks[0]?.price ?? 0;
         const spreadBps = state.spread;
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Entry Gate (updated to support max-spread gating for IOC taker scalper)
+        // ─────────────────────────────────────────────────────────────────────
         if (ctx.entryGate) {
             const decision = ctx.entryGate.shouldEnter({
-                minSpreadBps: this.config.minSpreadBps,
+                maxSpreadBps: this.config.maxSpreadBps,
+                // Legacy options left out intentionally; max-spread gate is preferred for IOC instant fills.
             });
             if (!decision.allowed) {
                 ctx.entryGate.logDecision(this.name, decision);
@@ -227,37 +274,161 @@ export class ScalperStrategy implements Strategy {
             bestBid: bestBid.toFixed(6),
             bestAsk: bestAsk.toFixed(6),
             spreadBps: spreadBps.toFixed(2),
-            minSpreadBps: this.config.minSpreadBps,
+            maxSpreadBps: this.config.maxSpreadBps,
             position: this.position.side,
             positionSize: adjustedPositionSize.toFixed(4),
-            sizeMultiplier: sizeMultiplier.toFixed(2),
+            sizingBase: sizingResult.baseSize,
+            sizingCp: sizingResult.cpMult,
+            sizingRegime: sizingResult.regimeMult,
+            sizingAdaptive: sizingResult.adaptiveMult,
             skewBps: skewBps.toFixed(2),
             regime: flow?.regime ?? 'unknown',
             imbalance: flow?.imbalance?.toFixed(3) ?? 'N/A',
         }, 'Scalper: 📊 Market conditions');
 
-        if (spreadBps < this.config.minSpreadBps) {
-            logger.info({
-                spreadBps: spreadBps.toFixed(2),
-                minSpreadBps: this.config.minSpreadBps
-            }, 'Scalper: ❌ Spread too narrow (need higher spread to profit)');
-            reject('minEdge', {
-                spreadBps,
-                minSpreadBps: this.config.minSpreadBps,
-            });
-            return;
+        // ─────────────────────────────────────────────────────────────────────
+        // IOC taker scalper spread gate:
+        // Enter only when spread is tight enough to cross cheaply.
+        // ─────────────────────────────────────────────────────────────────────
+        if (Number.isFinite(this.config.maxSpreadBps) && this.config.maxSpreadBps > 0) {
+            if (spreadBps > this.config.maxSpreadBps) {
+                logger.info({
+                    spreadBps: spreadBps.toFixed(2),
+                    maxSpreadBps: this.config.maxSpreadBps,
+                }, 'Scalper: ❌ Spread too wide (too expensive to cross for IOC scalper)');
+                reject('spreadTooWide', { spreadBps, maxSpreadBps: this.config.maxSpreadBps });
+                return;
+            }
+        } else {
+            // Fallback legacy behavior if maxSpreadBps is not configured
+            if (spreadBps < this.config.minSpreadBps) {
+                logger.info({
+                    spreadBps: spreadBps.toFixed(2),
+                    minSpreadBps: this.config.minSpreadBps
+                }, 'Scalper: ❌ Spread too narrow (legacy min-spread gate)');
+                reject('minEdge', { spreadBps, minSpreadBps: this.config.minSpreadBps });
+                return;
+            }
         }
 
         if (bestBid <= 0 || bestAsk <= 0 || bestBid >= bestAsk) {
             logger.info({ bestBid, bestAsk }, 'Scalper: ❌ Invalid prices (bid >= ask or zero prices)');
-            reject('spreadTooWide', { bestBid, bestAsk });
+            reject('invalidPrices', { bestBid, bestAsk });
             return;
         }
 
-        logger.info({ spreadBps: spreadBps.toFixed(2), minSpreadBps: this.config.minSpreadBps },
-            'Scalper: ✅ Spread profitable, evaluating trade');
+        logger.info({
+            spreadBps: spreadBps.toFixed(2),
+            maxSpreadBps: this.config.maxSpreadBps,
+        }, 'Scalper: ✅ Spread acceptable, evaluating trade');
 
         if (this.position.side === 'flat') {
+            // ─────────────────────────────────────────────────────────────────
+            // Flow-Alpha Directional Entry Filter
+            // Only enter long when order flow confirms buy-side pressure.
+            // This prevents random entries that statistically lose the spread.
+            // ─────────────────────────────────────────────────────────────────
+            if (this.config.flowAlphaEnabled && flow) {
+                const minImbalance = this.config.flowAlphaMinImbalance ?? 0.15;
+                const minCombined = this.config.flowAlphaMinCombinedSignal ?? 0.10;
+                const maxVwapDevBps = this.config.flowAlphaMaxVwapDeviationBps ?? 0;
+
+                const imbalanceOk = flow.imbalance >= minImbalance;
+                const combinedOk = flow.combinedSignal >= minCombined;
+                const vwapOk = maxVwapDevBps === 0 || flow.vwapDeviationBps <= maxVwapDevBps;
+
+                if (!imbalanceOk || !combinedOk || !vwapOk) {
+                    logger.info({
+                        imbalance: flow.imbalance.toFixed(3),
+                        minImbalance,
+                        imbalanceOk,
+                        combinedSignal: flow.combinedSignal.toFixed(3),
+                        minCombined,
+                        combinedOk,
+                        vwapDeviationBps: flow.vwapDeviationBps.toFixed(2),
+                        maxVwapDevBps,
+                        vwapOk,
+                    }, 'Scalper: 🔬 Flow-alpha filter BLOCKED entry — no directional edge');
+                    reject('flowAlpha', {
+                        imbalance: flow.imbalance,
+                        combinedSignal: flow.combinedSignal,
+                        vwapDeviationBps: flow.vwapDeviationBps,
+                    });
+                    return;
+                }
+
+                logger.info({
+                    imbalance: flow.imbalance.toFixed(3),
+                    combinedSignal: flow.combinedSignal.toFixed(3),
+                    vwapDeviationBps: flow.vwapDeviationBps.toFixed(2),
+                    depthImbalance: flow.depthImbalance.toFixed(3),
+                    buyAggressionRatio: flow.buyAggressionRatio.toFixed(3),
+                }, 'Scalper: 🔬 Flow-alpha filter PASSED — directional edge confirmed');
+            }
+
+            // ─────────────────────────────────────────────────────────────────
+            // Edge-vs-Cost Gate
+            // Estimates expected directional edge from composite flow signals
+            // and only enters when that edge exceeds the crossing cost (half-
+            // spread) by a configurable surplus.  This is the core gate that
+            // prevents spread-donation trades.
+            // ─────────────────────────────────────────────────────────────────
+            if (this.config.edgeCostGateEnabled && flow) {
+                // Composite signal: weighted blend of flow imbalance, depth
+                // imbalance and buy aggression ratio (re-centered to [0,1]).
+                const flowWeight = 0.40;
+                const depthWeight = 0.35;
+                const aggressionWeight = 0.25;
+                const aggressionScore = (flow.buyAggressionRatio - 0.5) * 2; // map [0.5,1] → [0,1]
+                const compositeSignal = Math.max(0,
+                    flowWeight * flow.imbalance
+                    + depthWeight * flow.depthImbalance
+                    + aggressionWeight * aggressionScore
+                );
+
+                const multiplier = this.config.edgeEstimateMultiplierBps ?? 30;
+                const expectedEdgeBps = compositeSignal * multiplier;
+                const halfSpreadBps = spreadBps / 2;
+                const surplusRequired = this.config.edgeMinSurplusBps ?? 2;
+                const edgeSurplus = expectedEdgeBps - halfSpreadBps;
+
+                // Also gate on structural depth & aggression floors
+                const depthOk = flow.depthImbalance >= (this.config.edgeMinDepthImbalance ?? 0.10);
+                const aggressionOk = flow.buyAggressionRatio >= (this.config.edgeMinBuyAggressionRatio ?? 0.55);
+
+                if (edgeSurplus < surplusRequired || !depthOk || !aggressionOk) {
+                    logger.info({
+                        compositeSignal: compositeSignal.toFixed(4),
+                        expectedEdgeBps: expectedEdgeBps.toFixed(2),
+                        halfSpreadBps: halfSpreadBps.toFixed(2),
+                        edgeSurplus: edgeSurplus.toFixed(2),
+                        surplusRequired,
+                        depthImbalance: flow.depthImbalance.toFixed(3),
+                        depthOk,
+                        buyAggressionRatio: flow.buyAggressionRatio.toFixed(3),
+                        aggressionOk,
+                    }, 'Scalper: 🚫 Edge-vs-cost gate BLOCKED entry — expected edge does not cover crossing cost');
+                    reject('edgeCostGate', {
+                        compositeSignal,
+                        expectedEdgeBps,
+                        halfSpreadBps,
+                        edgeSurplus,
+                        depthImbalance: flow.depthImbalance,
+                        buyAggressionRatio: flow.buyAggressionRatio,
+                    });
+                    return;
+                }
+
+                logger.info({
+                    compositeSignal: compositeSignal.toFixed(4),
+                    expectedEdgeBps: expectedEdgeBps.toFixed(2),
+                    halfSpreadBps: halfSpreadBps.toFixed(2),
+                    edgeSurplus: edgeSurplus.toFixed(2),
+                    depthImbalance: flow.depthImbalance.toFixed(3),
+                    buyAggressionRatio: flow.buyAggressionRatio.toFixed(3),
+                }, 'Scalper: ✅ Edge-vs-cost gate PASSED — expected edge covers crossing cost');
+            }
+
             // Apply skew to entry price: positive imbalance → bid less aggressively
             const entryBasePrice = bestBid * (1.0001 - skewFactor);
             const entryCrossFactor = 1 + ((this.config.entryCrossBps ?? 0) / 10_000);
@@ -280,11 +451,25 @@ export class ScalperStrategy implements Strategy {
                 amount: adjustedPositionSize,
                 strategy: this.name,
                 flags: getExecutionOrderFlags(),
+                sizePreComposed: true,
             });
             if (res.accepted) {
-                this.position = { side: 'long', entryPrice: price };
+                // Use actual fill price from executor (post depth-reprice), not the intended price.
+                // The depth reprice system may silently move the price 10-20 bps higher;
+                // using the intended price causes false take-profit exits.
+                const actualEntryPrice = res.fillResult?.effectivePrice ?? price;
+                // Track actual filled size so the exit SELL uses the real position,
+                // not a freshly-computed size that may differ due to multiplier drift.
+                const actualEntrySize = res.fillResult?.baseFilled ?? adjustedPositionSize;
+                this.position = { side: 'long', entryPrice: actualEntryPrice, entrySize: actualEntrySize };
                 logger.info({
-                    price: price.toFixed(6),
+                    intendedPrice: price.toFixed(6),
+                    actualEntryPrice: actualEntryPrice.toFixed(6),
+                    intendedSize: adjustedPositionSize.toFixed(4),
+                    actualEntrySize: actualEntrySize.toFixed(4),
+                    repricedBps: actualEntryPrice !== price
+                        ? (((actualEntryPrice - price) / price) * 10_000).toFixed(2)
+                        : '0.00',
                     spreadBps: spreadBps.toFixed(2),
                     regime: flow?.regime ?? 'unknown',
                 }, 'Scalper: ✅ Entered LONG position');
@@ -299,11 +484,19 @@ export class ScalperStrategy implements Strategy {
         }
 
         if (this.position.side === 'long' && this.position.entryPrice) {
+            // Use the actual filled entry size for the exit, not the freshly-computed
+            // adjustedPositionSize which may have drifted due to regime/adaptive/CP changes.
+            const exitSize = this.position.entrySize ?? adjustedPositionSize;
+
             // Apply skew to exit price: positive imbalance → ask more aggressively
             const targetExitBase = bestAsk * (0.9999 + skewFactor);
             const exitCrossFactor = 1 - ((this.config.exitCrossBps ?? 0) / 10_000);
             const targetExit = Math.max(bestBid, targetExitBase * exitCrossFactor);
-            const takeProfit = targetExit > this.position.entryPrice;
+            // Require exit price to exceed entry by at least minTakeProfitBps to
+            // avoid exiting at a microscopic "profit" that doesn't cover fees/spread.
+            const minTakeProfitBps = this.config.minTakeProfitBps ?? 0;
+            const minProfitThreshold = this.position.entryPrice * (1 + minTakeProfitBps / 10_000);
+            const takeProfit = targetExit > minProfitThreshold;
             const stopLossResolution = resolveScalperStopLossBps({
                 fixedStopLossBps: this.config.stopLossBps,
                 volatilityStopConfig: this.config.volatilityStop,
@@ -319,6 +512,8 @@ export class ScalperStrategy implements Strategy {
             logger.info({
                 entryPrice: this.position.entryPrice.toFixed(6),
                 targetExit: targetExit.toFixed(6),
+                minProfitThreshold: minProfitThreshold.toFixed(6),
+                minTakeProfitBps,
                 stopLossLevel: stopLossLevel.toFixed(6),
                 stopLossBpsUsed: stopLossResolution.stopLossBpsUsed.toFixed(2),
                 enhancedStopBpsUsed: stopLossResolution.enhancedStopBpsUsed.toFixed(2),
@@ -331,6 +526,20 @@ export class ScalperStrategy implements Strategy {
             }, 'Scalper: 📈 Evaluating exit for LONG position');
 
             if (takeProfit || isStopLoss || enhancedStopLoss) {
+                // Optional: prevent profit-taking exits when spread is too wide (stop-loss still allowed)
+                if (takeProfit && !isStopLoss && !enhancedStopLoss) {
+                    if (Number.isFinite(this.config.maxExitSpreadBps) && this.config.maxExitSpreadBps > 0) {
+                        if (spreadBps > this.config.maxExitSpreadBps) {
+                            logger.info({
+                                spreadBps: spreadBps.toFixed(2),
+                                maxExitSpreadBps: this.config.maxExitSpreadBps,
+                            }, 'Scalper: ❌ Exit spread too wide for take-profit IOC exit (skipping)');
+                            reject('spreadTooWideExit', { spreadBps, maxExitSpreadBps: this.config.maxExitSpreadBps });
+                            return;
+                        }
+                    }
+                }
+
                 const exitReason = enhancedStopLoss
                     ? 'ENHANCED STOP (trending down)'
                     : (isStopLoss ? 'STOP LOSS' : 'TAKE PROFIT');
@@ -338,19 +547,22 @@ export class ScalperStrategy implements Strategy {
                 logger.info({
                     side: 'SELL',
                     price: targetExit.toFixed(6),
-                    amount: adjustedPositionSize.toFixed(4),
+                    amount: exitSize.toFixed(4),
+                    entrySize: this.position.entrySize?.toFixed(4) ?? 'unknown',
+                    computedSize: adjustedPositionSize.toFixed(4),
                     reason: exitReason,
                     exitCrossBps: this.config.exitCrossBps ?? 0,
-                }, 'Scalper: 🚀 Placing SELL order');
+                }, 'Scalper: 🚀 Placing SELL order (using entry fill size)');
                 markCandidateBuilt();
-                markApproved('sell', adjustedPositionSize, 'bestAsk');
+                markApproved('sell', exitSize, 'bestAsk');
 
                 const res = await this.executor.placeOffer({
                     side: 'sell',
                     price: targetExit,
-                    amount: adjustedPositionSize,
+                    amount: exitSize,
                     strategy: this.name,
                     flags: getExecutionOrderFlags(),
+                    sizePreComposed: true,
                 });
                 if (res.accepted) {
                     const shouldCooldown = isStopLoss || enhancedStopLoss;

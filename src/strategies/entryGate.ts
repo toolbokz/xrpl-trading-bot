@@ -5,7 +5,20 @@ import { tradeHistory } from '../analytics/tradeHistory';
 
 export interface EntryGateConfig {
     enabled: boolean;
+
+    /**
+     * Legacy gate: require spread >= minSpreadBps
+     * (Useful for maker/spread-capture; not ideal for IOC taker scalper.)
+     */
     minSpreadBps: number;
+
+    /**
+     * New gate: require spread <= maxSpreadBps
+     * (Preferred for IOC taker scalper / instant fills.)
+     * If maxSpreadBps > 0, it takes precedence over minSpreadBps logic.
+     */
+    maxSpreadBps: number;
+
     minSignalStrength: number;
     requireFlow: boolean;
     blockLocalExtreme: boolean;
@@ -40,6 +53,7 @@ export interface EntryGateDecision {
 const DEFAULT_CONFIG: EntryGateConfig = {
     enabled: true,
     minSpreadBps: 0,
+    maxSpreadBps: 0, // 0 = disabled; use legacy minSpread gating (if any)
     minSignalStrength: 0,
     requireFlow: false,
     blockLocalExtreme: false,
@@ -59,7 +73,13 @@ const DEFAULT_CONFIG: EntryGateConfig = {
 export function loadEntryGateConfig(): EntryGateConfig {
     return {
         enabled: process.env.ENTRY_GATE_ENABLED !== 'false',
+
+        // Legacy: min spread gate (>=)
         minSpreadBps: Number(process.env.ENTRY_GATE_MIN_SPREAD_BPS) || DEFAULT_CONFIG.minSpreadBps,
+
+        // New: max spread gate (<=)
+        maxSpreadBps: Number(process.env.ENTRY_GATE_MAX_SPREAD_BPS) || DEFAULT_CONFIG.maxSpreadBps,
+
         minSignalStrength: Number(process.env.ENTRY_GATE_MIN_SIGNAL_STRENGTH) || DEFAULT_CONFIG.minSignalStrength,
         requireFlow: process.env.ENTRY_GATE_REQUIRE_FLOW === 'true',
         blockLocalExtreme: process.env.ENTRY_GATE_BLOCK_LOCAL_EXTREME === 'true',
@@ -153,9 +173,25 @@ export class EntryGate {
         return score != null && score >= this.config.localExtremeThreshold;
     }
 
-    shouldEnter(options?: { minSpreadBps?: number; minSignalStrength?: number }): EntryGateDecision {
+    /**
+     * Gate entry based on:
+     * - book staleness
+     * - flow presence (optional)
+     * - spread gate:
+     *    - if maxSpreadBps > 0: require spread <= maxSpreadBps (IOC taker scalper)
+     *    - else: require spread >= minSpreadBps (legacy)
+     * - signal strength (optional)
+     * - local extreme filter (optional)
+     * - reject throttle (optional)
+     */
+    shouldEnter(options?: {
+        minSpreadBps?: number;
+        maxSpreadBps?: number;
+        minSignalStrength?: number;
+    }): EntryGateDecision {
         const reasons: string[] = [];
         const metrics = this.lastMetrics;
+
         if (!this.config.enabled) {
             return { allowed: true, reasons, metrics };
         }
@@ -168,12 +204,25 @@ export class EntryGate {
             reasons.push('missing-flow');
         }
 
-        const minSpreadBps = Math.max(
-            options?.minSpreadBps ?? this.config.minSpreadBps,
-            this.getThrottleMinSpreadBps(),
-        );
-        if (metrics.spreadBps != null && metrics.spreadBps < minSpreadBps) {
-            reasons.push('spread-too-narrow');
+        // Prefer max-spread gate if configured (>0) either via options or config.
+        const maxSpreadBps = options?.maxSpreadBps ?? this.config.maxSpreadBps;
+        const maxSpreadActive = Number.isFinite(maxSpreadBps) && (maxSpreadBps as number) > 0;
+
+        if (metrics.spreadBps != null) {
+            if (maxSpreadActive) {
+                if (metrics.spreadBps > (maxSpreadBps as number)) {
+                    reasons.push('spread-too-wide');
+                }
+            } else {
+                // Legacy min-spread gate, includes reject-throttle min spread bump.
+                const minSpreadBps = Math.max(
+                    options?.minSpreadBps ?? this.config.minSpreadBps,
+                    this.getThrottleMinSpreadBps(),
+                );
+                if (metrics.spreadBps < minSpreadBps) {
+                    reasons.push('spread-too-narrow');
+                }
+            }
         }
 
         const minSignalStrength = options?.minSignalStrength ?? this.config.minSignalStrength;
@@ -209,6 +258,10 @@ export class EntryGate {
         return this.rejectThrottleUntilMs != null && nowMs < this.rejectThrottleUntilMs;
     }
 
+    /**
+     * Reject throttle currently increases MIN spread requirement (legacy behavior).
+     * If you're using max-spread gating (IOC taker), this is not applied.
+     */
     private getThrottleMinSpreadBps(): number {
         if (!this.isRejectThrottleActive()) return 0;
         return this.config.rejectThrottleMinSpreadBps;

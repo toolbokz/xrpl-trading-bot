@@ -1,14 +1,15 @@
 /**
  * XRPL Connection Guard
- * 
+ *
  * Prevents accidental direct XRPL client creation from Next.js API routes
  * when SINGLE_PROCESS_MODE=true. In single-process mode, all XRPL calls
  * should go through the TradingRuntime singleton.
- * 
+ *
  * This guard helps catch regressions where API routes bypass the runtime
  * and create their own connections (which would cause 429 rate limits).
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { logger } from '../analytics/logger';
 
 // =============================================================================
@@ -22,21 +23,78 @@ export function isSingleProcessMode(): boolean {
     return process.env.SINGLE_PROCESS_MODE === 'true';
 }
 
+interface RequestContextStore {
+    requestId: string | undefined;
+    apiRouteContext: boolean;
+}
+
+const requestContextStorage = new AsyncLocalStorage<RequestContextStore>();
+
+/**
+ * Execute a callback inside request context metadata.
+ *
+ * API wrappers use this to mark codepaths that originate from HTTP requests,
+ * so guard checks can enforce route-context invariants safely.
+ */
+export async function runWithRequestContext<T>(
+    callback: () => Promise<T> | T,
+    metadata: { requestId?: string } = {},
+): Promise<T> {
+    const parent = requestContextStorage.getStore();
+    const store: RequestContextStore = {
+        requestId: metadata.requestId ?? parent?.requestId,
+        apiRouteContext: false,
+    };
+
+    return requestContextStorage.run(store, async () => await callback());
+}
+
+/**
+ * True when code executes in a request-scoped context.
+ */
+export function isRequestContext(): boolean {
+    return requestContextStorage.getStore() !== undefined;
+}
+
+/**
+ * Get request context metadata if present.
+ */
+export function getRequestContext(): { requestId: string | undefined; apiRouteContext: boolean } | null {
+    const store = requestContextStorage.getStore();
+    if (!store) return null;
+    return {
+        requestId: store.requestId,
+        apiRouteContext: store.apiRouteContext,
+    };
+}
+
 /**
  * Check if this is a Next.js API route context.
- * We detect this by checking for Next.js-specific globals/patterns.
+ *
+ * Priority:
+ * 1) Request-scoped async context (preferred)
+ * 2) Legacy global marker (fallback)
  */
 export function isApiRouteContext(): boolean {
-    // Check for Next.js API route markers
-    // In Next.js API routes, we set a marker in the request handler
+    const store = requestContextStorage.getStore();
+    if (store) {
+        return store.apiRouteContext;
+    }
+
     return Boolean((globalThis as any).__NEXT_API_ROUTE_CONTEXT__);
 }
 
 /**
  * Mark that we're in a Next.js API route context.
- * Called by the runtime bridge at the start of API route handling.
+ * Called by route wrappers at the start of API route handling.
  */
 export function markApiRouteContext(): void {
+    const store = requestContextStorage.getStore();
+    if (store) {
+        store.apiRouteContext = true;
+        return;
+    }
+
     (globalThis as any).__NEXT_API_ROUTE_CONTEXT__ = true;
 }
 
@@ -45,6 +103,12 @@ export function markApiRouteContext(): void {
  * Called after API route handling completes.
  */
 export function clearApiRouteContext(): void {
+    const store = requestContextStorage.getStore();
+    if (store) {
+        store.apiRouteContext = false;
+        return;
+    }
+
     (globalThis as any).__NEXT_API_ROUTE_CONTEXT__ = false;
 }
 
@@ -68,11 +132,11 @@ export class SingleProcessXrplGuardError extends Error {
 
 /**
  * Assert that direct XRPL calls are not being made from API routes in single-process mode.
- * 
+ *
  * Call this at the start of any function that creates or uses an XRPL client directly.
  * In dual-process mode, this is a no-op.
  * In single-process mode API routes, this throws an error.
- * 
+ *
  * @param context - Description of where the call is being made (for error messages)
  * @throws SingleProcessXrplGuardError if called from an API route in single-process mode
  */
@@ -97,7 +161,7 @@ export function assertNoDirectXrplCallsInSingleProcess(context: string): void {
 /**
  * Check if direct XRPL calls would be blocked.
  * Use this to conditionally choose between direct XRPL access and runtime state.
- * 
+ *
  * @returns true if in single-process mode AND in API route context
  */
 export function shouldUseRuntimeState(): boolean {
@@ -108,7 +172,7 @@ export function shouldUseRuntimeState(): boolean {
  * Wrapper for functions that need XRPL access, providing either:
  * - Direct XRPL access (dual-process mode)
  * - Runtime state (single-process mode)
- * 
+ *
  * @param directFn - Function that makes direct XRPL calls
  * @param runtimeFn - Function that uses runtime state instead
  * @returns Result from the appropriate function

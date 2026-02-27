@@ -59,6 +59,9 @@ export const OBSERVABILITY_EVENT_TYPES = [
     'SUBMIT_FAIL',
     'ORDER_PLACED',
     'ORDER_FILLED',
+    'MARKOUT_SCHEDULED',
+    'MARKOUT_RECORDED',
+    'MARKOUT_MISSING',
     'VOL_STOP_READY',
 ] as const;
 
@@ -635,13 +638,17 @@ export class ObservabilityBus {
         pairKey: string;
         runtimeState: string;
         strategy: string;
+        submitTsMs?: number | null;
         nowMs?: number;
     }): ObservabilityEvent | null {
         return this.emit({
             eventType: 'SUBMIT_ATTEMPT',
             pairKey: params.pairKey,
             runtimeState: params.runtimeState,
-            detail: { strategy: params.strategy },
+            detail: {
+                strategy: params.strategy,
+                submit_ts_ms: params.submitTsMs ?? null,
+            },
             nowMs: params.nowMs,
         });
     }
@@ -654,8 +661,14 @@ export class ObservabilityBus {
         runtimeState: string;
         strategy: string;
         txHash?: string | null;
+        submitTsMs?: number | null;
+        submitResponseTsMs?: number | null;
+        ackTsMs?: number | null;
+        engineResult?: string | null;
+        ackStatus?: 'accepted' | 'queued' | 'rejected' | 'unknown' | null;
         nowMs?: number;
     }): ObservabilityEvent | null {
+        const submitResponseTsMs = params.submitResponseTsMs ?? params.ackTsMs ?? null;
         return this.emit({
             eventType: 'SUBMIT_SUCCESS',
             pairKey: params.pairKey,
@@ -663,6 +676,11 @@ export class ObservabilityBus {
             detail: {
                 strategy: params.strategy,
                 txHash: params.txHash ?? null,
+                submit_ts_ms: params.submitTsMs ?? null,
+                submit_response_ts_ms: submitResponseTsMs,
+                ack_ts_ms: params.ackTsMs ?? submitResponseTsMs,
+                engine_result: params.engineResult ?? null,
+                ack_status: params.ackStatus ?? null,
             },
             nowMs: params.nowMs,
         });
@@ -677,8 +695,14 @@ export class ObservabilityBus {
         strategy: string;
         txHash?: string | null;
         errorCode?: string | null;
+        submitTsMs?: number | null;
+        submitResponseTsMs?: number | null;
+        ackTsMs?: number | null;
+        engineResult?: string | null;
+        ackStatus?: 'accepted' | 'queued' | 'rejected' | 'unknown' | null;
         nowMs?: number;
     }): ObservabilityEvent | null {
+        const submitResponseTsMs = params.submitResponseTsMs ?? params.ackTsMs ?? null;
         return this.emit({
             eventType: 'SUBMIT_FAIL',
             pairKey: params.pairKey,
@@ -687,6 +711,11 @@ export class ObservabilityBus {
                 strategy: params.strategy,
                 txHash: params.txHash ?? null,
                 errorCode: params.errorCode ?? null,
+                submit_ts_ms: params.submitTsMs ?? null,
+                submit_response_ts_ms: submitResponseTsMs,
+                ack_ts_ms: params.ackTsMs ?? submitResponseTsMs,
+                engine_result: params.engineResult ?? null,
+                ack_status: params.ackStatus ?? null,
             },
             nowMs: params.nowMs,
         });
@@ -762,6 +791,66 @@ export class ObservabilityBus {
                 pnlQuote: params.pnlQuote,
                 timestamp: params.timestamp ?? new Date(params.nowMs ?? Date.now()).toISOString(),
             },
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit MARKOUT_SCHEDULED when a post-fill markout horizon is queued.
+     */
+    emitMarkoutScheduled(params: {
+        pairKey: string;
+        runtimeState: string;
+        correlationId?: string | null;
+        detail: Record<string, unknown>;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'MARKOUT_SCHEDULED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            correlationId: params.correlationId,
+            detail: params.detail,
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit MARKOUT_RECORDED when a markout is computed successfully.
+     */
+    emitMarkoutRecorded(params: {
+        pairKey: string;
+        runtimeState: string;
+        correlationId?: string | null;
+        detail: Record<string, unknown>;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'MARKOUT_RECORDED',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            correlationId: params.correlationId,
+            detail: params.detail,
+            nowMs: params.nowMs,
+        });
+    }
+
+    /**
+     * Emit MARKOUT_MISSING when a markout cannot be computed before deadline.
+     */
+    emitMarkoutMissing(params: {
+        pairKey: string;
+        runtimeState: string;
+        correlationId?: string | null;
+        detail: Record<string, unknown>;
+        nowMs?: number;
+    }): ObservabilityEvent | null {
+        return this.emit({
+            eventType: 'MARKOUT_MISSING',
+            pairKey: params.pairKey,
+            runtimeState: params.runtimeState,
+            correlationId: params.correlationId,
+            detail: params.detail,
             nowMs: params.nowMs,
         });
     }

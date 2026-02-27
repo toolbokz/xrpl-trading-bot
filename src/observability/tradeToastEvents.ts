@@ -4,6 +4,7 @@ export type TradeToastSide = 'BUY' | 'SELL';
 export interface TradeToastEvent {
     type: TradeToastEventType;
     side?: TradeToastSide | undefined;
+    correlationId?: string | undefined;
     pair: string;
     baseCurrency: string;
     quoteCurrency: string;
@@ -14,4 +15,3 @@ export interface TradeToastEvent {
     pnlQuote?: number | undefined;
     timestamp: string;
 }
-

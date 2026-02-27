@@ -19,6 +19,11 @@ export interface OrderBookState {
     asks: BookOffer[];
     spread: number;
     lastUpdated: number;
+    /**
+     * Validated ledger index the latest book snapshot came from.
+     * Null when upstream does not provide ledger index metadata.
+     */
+    sourceLedgerIndex?: number | null;
 }
 
 /**

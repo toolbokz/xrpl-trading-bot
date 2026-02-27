@@ -1,9 +1,15 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { loadConfig } from '../../../../config';
 import { findInstrument as findPair, isValidPairKey } from '../../../../market/instrumentRegistry';
 import { getSharedClient, getCachedPrice, setCachedPrice } from '../../../lib/xrplClient';
 import { logger } from '../../../../analytics/logger';
+import {
+    getOrderBookFromRuntime,
+    isSingleProcessMode,
+    isRuntimeWarmingUp,
+} from '../../../lib/runtimeBridge';
 
 export const config = {
     api: { bodyParser: false },
@@ -57,6 +63,42 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
             });
         }
 
+        if (isSingleProcessMode()) {
+            const orderBook = getOrderBookFromRuntime(pairKey);
+            const topBid = orderBook?.bids?.[0];
+            const topAsk = orderBook?.asks?.[0];
+            if (topBid != null && topAsk != null) {
+                const bidPrice = Number(topBid.price) || 0;
+                const askPrice = Number(topAsk.price) || 0;
+                const midPrice = askPrice > 0 && bidPrice > 0 ? (askPrice + bidPrice) / 2 : askPrice || bidPrice;
+                const spreadBps = midPrice > 0 && askPrice > 0 && bidPrice > 0
+                    ? ((askPrice - bidPrice) / midPrice) * 10000
+                    : 0;
+
+                const priceResult = { midPrice, bidPrice, askPrice, spreadBps };
+                setCachedPrice(pairKey, priceResult);
+                return res.status(200).json({
+                    pair: pairKey,
+                    ...priceResult,
+                    timestamp: Date.now(),
+                    fromRuntime: true,
+                });
+            }
+
+            if (isRuntimeWarmingUp()) {
+                return res.status(200).json({
+                    pair: pairKey,
+                    midPrice: 0,
+                    bidPrice: 0,
+                    askPrice: 0,
+                    spreadBps: 0,
+                    timestamp: Date.now(),
+                    warmingUp: true,
+                    fromRuntime: true,
+                });
+            }
+        }
+
         // Check cache first
         const cached = getCachedPrice(pairKey);
         if (cached) {
@@ -68,7 +110,7 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
             });
         }
 
-        // Get shared client (reuses connection)
+        // Get shared client (reuses connection) in dual-process mode
         const client = await getSharedClient(cfg.xrpl.endpoint);
 
         const baseCurrency = pair.base.currency;
@@ -197,4 +239,4 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
     }
 }
 
-export default withLocalApi(handler, { methods: ['GET'], skipAudit: true });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

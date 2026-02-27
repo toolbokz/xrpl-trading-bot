@@ -4,5 +4,6 @@
  */
 
 export { withLocalApi, isLocalRequest, jsonError } from './withLocalApi';
+export { withApiRouteContext } from './withApiRouteContext';
 export type { LocalRequest, LocalApiConfig } from './types';
 export { logAudit, logSensitiveAction } from './audit';

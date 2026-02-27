@@ -33,10 +33,48 @@ export interface StrategyFunnelRecorder {
 
 export type StrategyDecisionFunnelMap = Record<string, StrategyDecisionFunnel>;
 
+export interface SubmitOfferCreateIntent {
+    flags: number;
+    flagsDecoded: string[];
+    takerGets: string | Record<string, unknown> | null;
+    takerPays: string | Record<string, unknown> | null;
+    feeDrops: string | null;
+    sequence: number | null;
+    lastLedgerSequence: number | null;
+}
+
 export interface StrategySubmitTelemetryEvent {
     strategy: string;
     pairKey: string;
     stage: 'attempt' | 'success' | 'fail';
+    tradeId?: string | null;
+    side?: 'buy' | 'sell';
+    amountBase?: number;
+    intentPrice?: number;
+    baselineTsMs?: number | null;
+    baselineBestBid?: number | null;
+    baselineBestAsk?: number | null;
+    baselineMid?: number | null;
+    baselineSpreadBps?: number | null;
+    baselineSource?: string | null;
+    expectedPrice?: number | null;
+    expectedRule?: string | null;
+    priceConvention?: 'quote_per_base' | 'base_per_quote' | null;
+    baselineBookAgeMs?: number | null;
+    submitTsMs?: number;
+    submitResponseTsMs?: number;
+    ackTsMs?: number;
+    validatedTsMs?: number;
+    nodeEndpoint?: string | null;
+    feeDrops?: string | null;
+    sequence?: number | null;
+    offerCreateIntent?: SubmitOfferCreateIntent | null;
+    submitResult?: {
+        engine_result?: string | null;
+        engine_result_code?: number | null;
+        engine_result_message?: string | null;
+    } | null;
+    ackStatus?: 'accepted' | 'queued' | 'rejected' | 'unknown';
     txHash?: string | null;
     errorCode?: string | null;
 }

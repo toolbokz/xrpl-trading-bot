@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
+import { withApiRouteContext } from '../../../../lib/localApi/withApiRouteContext';
 import { getAdaptiveLearner, AdaptiveTuning, PerformanceRow } from '../../../../../analytics/adaptiveLearner';
 import { isAdaptiveEnabled } from '../../../../../analytics/adaptiveConfig';
 import { FlowRegime } from '../../../../../market/flowMetrics';
@@ -78,4 +79,4 @@ function handler(req: LocalRequest, res: NextApiResponse<ExplainApiResponse | { 
     }
 }
 
-export default withLocalApi(handler);
+export default withLocalApi(withApiRouteContext(handler));

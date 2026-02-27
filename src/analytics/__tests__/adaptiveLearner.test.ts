@@ -104,7 +104,7 @@ describe('recommendTuning', () => {
             const result = recommendTuning({ perfRow, config: defaultConfig });
 
             expect(result.disabledRegimes).toContain('chaotic');
-            expect(result.reason).toContain('disable chaotic');
+            expect(result.reason).toContain('disabled: chaotic');
         });
 
         it('should disable illiquid regime with negative score', () => {
@@ -117,7 +117,7 @@ describe('recommendTuning', () => {
             const result = recommendTuning({ perfRow, config: defaultConfig });
 
             expect(result.disabledRegimes).toContain('illiquid');
-            expect(result.reason).toContain('disable illiquid');
+            expect(result.reason).toContain('disabled: illiquid');
         });
 
         it('should not disable normal regime even with negative score', () => {

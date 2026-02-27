@@ -1,8 +1,10 @@
 import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest, logSensitiveAction } from '../../../lib/localApi';
+import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { loadConfig } from '../../../../config';
 import { getSharedClient } from '../../../lib/xrplClient';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
+import { isSingleProcessMode } from '../../../lib/runtimeBridge';
 import { logger } from '../../../../analytics/logger';
 import { validateBody, ordersUpdateSchema, ordersCancelSchema } from '../../../lib/validation/schemas';
 
@@ -17,6 +19,40 @@ interface ActiveOffer {
     price: number;
     createdAt: number; // ledger index when created
     age: number; // seconds since creation
+}
+
+function buildUnavailableOrdersResponse(requestId: string, message: string) {
+    return {
+        orders: [],
+        autoManageEnabled: globalAutoManage._autoManageEnabled,
+        stalenessThresholdSec: globalAutoManage._stalenessThresholdSec,
+        cancelledCount: 0,
+        requestId,
+        message,
+    };
+}
+
+function isClientReady(client: { isConnected?: () => boolean } | null): boolean {
+    if (!client || typeof client.isConnected !== 'function') return false;
+    return client.isConnected();
+}
+
+function isTransientXrplConnectionError(err: unknown): boolean {
+    if (!(err instanceof Error)) return false;
+    const name = err.name?.toLowerCase() ?? '';
+    const message = err.message?.toLowerCase() ?? '';
+
+    if (name.includes('disconnected') || name.includes('notconnected') || name.includes('timeout')) {
+        return true;
+    }
+
+    return (
+        message.includes('websocket is not open') ||
+        message.includes('readystate 0') ||
+        message.includes('readystate 2') ||
+        message.includes('websocket was closed') ||
+        message.includes('connect() timed out')
+    );
 }
 
 // Auto-manage settings stored in memory (per-session)
@@ -112,13 +148,30 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
 
     // GET: Fetch active orders and optionally auto-cancel stale ones
     try {
-        // Use shared client to avoid rate limiting and connection leaks
-        const client = await getSharedClient(cfg.xrpl.endpoint);
+        const runtime = ensureRuntimeHooks();
+        const isSingle = isSingleProcessMode();
+
+        // In single-process mode, always use the runtime-owned client.
+        // In dual-process mode, keep legacy shared-client behavior.
+        const client = isSingle
+            ? runtime.getClient()
+            : await getSharedClient(cfg.xrpl.endpoint);
+
+        if (!client) {
+            return res.status(200).json(
+                buildUnavailableOrdersResponse(req.requestId, 'Runtime XRPL client not ready')
+            );
+        }
+
+        if (!isClientReady(client)) {
+            return res.status(200).json(
+                buildUnavailableOrdersResponse(req.requestId, 'Runtime XRPL client reconnecting')
+            );
+        }
 
         // Try to get wallet address from runtime if available
         let walletAddress: string | null = null;
         try {
-            const runtime = ensureRuntimeHooks();
             walletAddress = runtime.getWalletAddress();
         } catch {
             // Runtime not initialized, try to get from config
@@ -126,14 +179,9 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
 
         // If no wallet address from runtime, we can't fetch orders
         if (!walletAddress) {
-            return res.status(200).json({
-                orders: [],
-                autoManageEnabled: globalAutoManage._autoManageEnabled,
-                stalenessThresholdSec: globalAutoManage._stalenessThresholdSec,
-                cancelledCount: 0,
-                requestId: req.requestId,
-                message: 'Bot not running or wallet not configured',
-            });
+            return res.status(200).json(
+                buildUnavailableOrdersResponse(req.requestId, 'Bot not running or wallet not configured')
+            );
         }
 
         // Get current ledger for age calculation
@@ -234,6 +282,13 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
             requestId: req.requestId,
         });
     } catch (err: unknown) {
+        if (isTransientXrplConnectionError(err)) {
+            logger.warn({ err, requestId: req.requestId }, 'Orders API transient XRPL connection issue');
+            return res.status(200).json(
+                buildUnavailableOrdersResponse(req.requestId, 'XRPL connection in transition, retrying')
+            );
+        }
+
         const errorMessage = err instanceof Error ? err.message : 'Failed to fetch orders';
         logger.error({ err, requestId: req.requestId }, 'Orders API error');
         res.status(500).json({
@@ -246,4 +301,4 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
     }
 }
 
-export default withLocalApi(handler, { methods: ['GET', 'POST', 'DELETE'] });
+export default withLocalApi(withApiRouteContext(handler), { methods: ['GET', 'POST', 'DELETE'] });

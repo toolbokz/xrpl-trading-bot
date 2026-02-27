@@ -23,9 +23,21 @@ describe('execution quality persistence', () => {
             side: 'sell',
             strategy: 'scalper',
             source: 'bot',
+            venue: 'XRPL',
             intentPrice: 1.37,
             expectedPrice: 1.37,
             expectedPriceSource: 'intent',
+            baselineTs: 1770000000000,
+            baselineBestBid: 1.3698,
+            baselineBestAsk: 1.3702,
+            baselineMid: 1.37,
+            baselineSpreadBps: 2.92,
+            baselineSource: 'orderbook_snapshot',
+            expectedRule: 'SELL->best_bid',
+            slippageBaselineUsed: 'best_bid',
+            priceConvention: 'quote_per_base',
+            baselineBookAgeMs: 120,
+            fillTs: 1770000007000,
             decisionMid: 1.37,
             decisionBid: 1.3698,
             decisionAsk: 1.3702,
@@ -34,6 +46,7 @@ describe('execution quality persistence', () => {
             filledBase: 0.25,
             filledQuote: 0.34275,
             status: 'FILLED',
+            repriceApplied: true,
         });
 
         expect(id).toBeTruthy();
@@ -44,6 +57,11 @@ describe('execution quality persistence', () => {
         expect(rows[0]?.filledBase).toBeCloseTo(0.25, 8);
         expect(rows[0]?.filledQuote).toBeCloseTo(0.34275, 8);
         expect(rows[0]?.fillPrice).toBeCloseTo(1.371, 8);
+        expect(rows[0]?.venue).toBe('XRPL');
+        expect(rows[0]?.baselineTs).toBe(1770000000000);
+        expect(rows[0]?.expectedRule).toBe('SELL->best_bid');
+        expect(rows[0]?.priceConvention).toBe('quote_per_base');
+        expect(rows[0]?.repriceApplied).toBe(1);
     });
 
     it('supports pair-key alias filtering for execution quality events', async () => {

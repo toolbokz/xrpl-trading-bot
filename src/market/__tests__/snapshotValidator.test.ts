@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SnapshotValidator } from '../snapshotValidator';
 import { OrderBookSnapshot, DepthLevel } from '../models';
+import { BOOK_CROSS_EPS_ABS } from '../bookValidationEpsilon';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -76,10 +77,24 @@ describe('SnapshotValidator', () => {
         expect(result.reasons.some(r => r.includes('negative-spread'))).toBe(true);
     });
 
+    it('accepts tiny negative spread within epsilon', () => {
+        const result = validator.validate(validSnapshot({ spreadBps: -0.0004 }));
+        expect(result.valid).toBe(true);
+        expect(result.reasons).toEqual([]);
+    });
+
     it('rejects crossed book (bid >= ask)', () => {
         const result = validator.validate(validSnapshot({ bestBid: 0.52, bestAsk: 0.50 }));
         expect(result.valid).toBe(false);
         expect(result.reasons.some(r => r.includes('crossed-book'))).toBe(true);
+    });
+
+    it('accepts epsilon crossing as valid', () => {
+        const bestAsk = 1;
+        const bestBid = bestAsk + (BOOK_CROSS_EPS_ABS / 2);
+        const result = validator.validate(validSnapshot({ bestBid, bestAsk, spreadBps: 0 }));
+        expect(result.valid).toBe(true);
+        expect(result.reasons).toEqual([]);
     });
 
     it('rejects empty book (no depth)', () => {

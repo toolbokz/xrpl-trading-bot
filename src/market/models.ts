@@ -1,5 +1,6 @@
 import { OrderBookState } from '../utils/types';
 import { Trade } from './tradeTape';
+import { BOOK_CROSS_EPS_ABS } from './bookValidationEpsilon';
 
 export interface DepthLevel {
     price: number;
@@ -52,10 +53,19 @@ const clamp = (value: number, min: number, max: number): number => Math.max(min,
 const sanitizePositive = (value: number): number => (Number.isFinite(value) && value > 0 ? value : 0);
 
 const computeSpreadBps = (bestBid: number, bestAsk: number): number => {
-    if (bestBid <= 0 || bestAsk <= 0 || bestAsk < bestBid) {
+    if (bestBid <= 0 || bestAsk <= 0) {
         return 0;
     }
-    return ((bestAsk - bestBid) / bestAsk) * 10_000;
+
+    const diff = bestAsk - bestBid;
+    if (diff < 0) {
+        if (Math.abs(diff) <= BOOK_CROSS_EPS_ABS) {
+            return 0;
+        }
+        return 0;
+    }
+
+    return (diff / bestAsk) * 10_000;
 };
 
 const computeDepthNotionalNearTop = (
@@ -163,7 +173,7 @@ export const normalizeOrderBookSnapshot = (
 
     const bestBid = bids[0]?.price ?? 0;
     const bestAsk = asks[0]?.price ?? 0;
-    const spreadBps = sanitizePositive(state.spread) || computeSpreadBps(bestBid, bestAsk);
+    const spreadBps = computeSpreadBps(bestBid, bestAsk);
     const stalenessMs = Math.max(0, ingestTimeMs - eventTimeMs);
     const depthNotional1Pct = computeDepthNotionalNearTop(bids, asks, bestBid, bestAsk);
     const healthScore = computeHealthScoreFromSignals(stalenessMs, spreadBps, depthNotional1Pct);
