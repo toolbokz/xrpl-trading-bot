@@ -32,6 +32,7 @@ const DEFAULT_ENDPOINTS = [
     'wss://xrplcluster.com',
     'wss://s1.ripple.com',
     'wss://s2.ripple.com',
+    'wss://162.159.153.233',
 ];
 
 /** Parse endpoint list from environment or config */

@@ -30,6 +30,15 @@ const TAB_LABELS: Record<TradeStatusTab, string> = {
     rejected: 'Rejected',
 };
 
+type TimeframeTab = '24h' | '7d' | '1m' | '3m';
+
+const TIMEFRAME_OPTIONS: { key: TimeframeTab; label: string; ms: number }[] = [
+    { key: '24h', label: '24H', ms: 24 * 60 * 60 * 1000 },
+    { key: '7d', label: '7D', ms: 7 * 24 * 60 * 60 * 1000 },
+    { key: '1m', label: '1M', ms: 30 * 24 * 60 * 60 * 1000 },
+    { key: '3m', label: '3M', ms: 90 * 24 * 60 * 60 * 1000 },
+];
+
 /** Max trades to display per tab (scrollable). */
 const MAX_VISIBLE_PER_TAB = 100;
 /** Number of rows visible without scrolling (sets container height). */
@@ -188,11 +197,12 @@ export function TradeHistoryDiagnosticsPanel({
     const [error, setError] = useState<string | null>(null);
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<TradeStatusTab>('all');
+    const [timeframe, setTimeframe] = useState<TimeframeTab>('24h');
     const scrollRef = useRef<HTMLDivElement>(null);
 
     const fetchDiagnostics = useCallback(async () => {
         try {
-            const res = await fetch('/api/analytics/trade-diagnostics?limit=100', { cache: 'no-store' });
+            const res = await fetch('/api/analytics/trade-diagnostics?limit=500', { cache: 'no-store' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             if (data?.diagnostics) {
@@ -230,10 +240,18 @@ export function TradeHistoryDiagnosticsPanel({
         return 'neutral';
     }, [diagnostics]);
 
-    /* ────── Tab counts ────── */
+    /* ────── Time-frame filtered diagnostics ────── */
+    const timeFilteredDiagnostics = useMemo(() => {
+        const option = TIMEFRAME_OPTIONS.find(o => o.key === timeframe);
+        if (!option) return diagnostics;
+        const cutoff = Date.now() - option.ms;
+        return diagnostics.filter(d => d.timestamp >= cutoff);
+    }, [diagnostics, timeframe]);
+
+    /* ────── Tab counts (computed on time-filtered set) ────── */
     const tabCounts = useMemo(() => {
         const counts: Record<TradeStatusTab, number> = { all: 0, filled: 0, partial: 0, rejected: 0 };
-        for (const d of diagnostics) {
+        for (const d of timeFilteredDiagnostics) {
             counts.all++;
             switch (d.status?.toUpperCase()) {
                 case 'FILLED': counts.filled++; break;
@@ -242,16 +260,16 @@ export function TradeHistoryDiagnosticsPanel({
             }
         }
         return counts;
-    }, [diagnostics]);
+    }, [timeFilteredDiagnostics]);
 
-    /* ────── Filtered diagnostics per active tab (capped at MAX_VISIBLE_PER_TAB) ────── */
+    /* ────── Filtered diagnostics per active status tab (capped at MAX_VISIBLE_PER_TAB) ────── */
     const filteredDiagnostics = useMemo(() => {
-        if (activeTab === 'all') return diagnostics.slice(0, MAX_VISIBLE_PER_TAB);
+        if (activeTab === 'all') return timeFilteredDiagnostics.slice(0, MAX_VISIBLE_PER_TAB);
         const statusKey = activeTab.toUpperCase();
-        return diagnostics
+        return timeFilteredDiagnostics
             .filter(d => d.status?.toUpperCase() === statusKey)
             .slice(0, MAX_VISIBLE_PER_TAB);
-    }, [diagnostics, activeTab]);
+    }, [timeFilteredDiagnostics, activeTab]);
 
     const toggleExpand = (id: string) => {
         setExpandedId(prev => prev === id ? null : id);
@@ -267,10 +285,31 @@ export function TradeHistoryDiagnosticsPanel({
             fillHeight
             actions={
                 <PanelBadge tone={panelTone}>
-                    {diagnostics.length} trade{diagnostics.length !== 1 ? 's' : ''}
+                    {timeFilteredDiagnostics.length} trade{timeFilteredDiagnostics.length !== 1 ? 's' : ''}
                 </PanelBadge>
             }
         >
+            {/* ────── Time-frame filter tabs ────── */}
+            <div className="mb-1 flex items-center gap-0.5 rounded bg-white/5 p-0.5">
+                {TIMEFRAME_OPTIONS.map((opt) => {
+                    const isActive = timeframe === opt.key;
+                    return (
+                        <button
+                            key={opt.key}
+                            onClick={() => { setTimeframe(opt.key); scrollRef.current?.scrollTo({ top: 0 }); }}
+                            className={clsx(
+                                'rounded px-2 py-0.5 text-[10px] font-medium transition-colors',
+                                isActive
+                                    ? 'bg-violet-500/30 text-violet-300'
+                                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/5',
+                            )}
+                        >
+                            {opt.label}
+                        </button>
+                    );
+                })}
+            </div>
+
             {/* ────── Status filter tabs ────── */}
             <div className="mb-1.5 flex items-center gap-0.5 rounded bg-white/5 p-0.5">
                 {(Object.keys(TAB_LABELS) as TradeStatusTab[]).map((tab) => {

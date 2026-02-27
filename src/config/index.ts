@@ -178,6 +178,44 @@ export interface StrategyConfig {
      * cover the cost of the round-trip spread + fees. (default: 2)
      */
     minTakeProfitBps: number;
+
+    // ── Edge-vs-Cost Gate ────────────────────────────────────────────────
+
+    /**
+     * Enable the edge-vs-cost gate for scalper BUY entries.
+     * When enabled, the scalper estimates the expected directional edge (in bps)
+     * from flow signals and only enters when edge > half-spread + surplus buffer.
+     * This prevents IOC taker entries where the crossing cost exceeds the
+     * predicted move. (default: true)
+     */
+    edgeCostGateEnabled: boolean;
+
+    /**
+     * Scaling factor: maps the composite flow signal strength [0,1] to expected
+     * directional price movement in bps.
+     *   expectedEdgeBps = compositeSignal × edgeEstimateMultiplierBps
+     * Calibrate against observed markout data. (default: 30)
+     */
+    edgeEstimateMultiplierBps: number;
+
+    /**
+     * Minimum surplus (in bps) that expected edge must exceed the half-spread
+     * crossing cost.  edge - halfSpread >= edgeMinSurplusBps.  (default: 2)
+     */
+    edgeMinSurplusBps: number;
+
+    /**
+     * Minimum depth imbalance (bidDepth - askDepth) / total required alongside
+     * the flow-alpha check.  Positive values ensure the book is tilted in the
+     * trade direction.  (default: 0.10)
+     */
+    edgeMinDepthImbalance: number;
+
+    /**
+     * Require buy aggression ratio (buyCount/totalCount) to be above this
+     * threshold before allowing BUY entry. (default: 0.55)
+     */
+    edgeMinBuyAggressionRatio: number;
 }
 
 export interface VolatilityStopConfig {
@@ -357,6 +395,13 @@ export const loadConfig = (): AppConfig => {
 
         // Minimum profit gate for take-profit exits
         minTakeProfitBps: clamp(toNumber(process.env.SCALPER_MIN_TAKE_PROFIT_BPS, 2), 0, 100),
+
+        // Edge-vs-cost gate
+        edgeCostGateEnabled: toBool(process.env.EDGE_COST_GATE_ENABLED as EnvBool, true),
+        edgeEstimateMultiplierBps: Math.max(0, toNumber(process.env.EDGE_ESTIMATE_MULTIPLIER_BPS, 30)),
+        edgeMinSurplusBps: toNumber(process.env.EDGE_MIN_SURPLUS_BPS, 2),
+        edgeMinDepthImbalance: clamp(toNumber(process.env.EDGE_MIN_DEPTH_IMBALANCE, 0.10), -1, 1),
+        edgeMinBuyAggressionRatio: clamp(toNumber(process.env.EDGE_MIN_BUY_AGGRESSION_RATIO, 0.55), 0, 1),
     };
 
     const flow: FlowConfig = {

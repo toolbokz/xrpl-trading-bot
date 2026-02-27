@@ -19,7 +19,7 @@ import { GovernancePanel } from '../components/GovernancePanel';
 import { RegimeHeatmapPanel } from '../components/RegimeHeatmapPanel';
 import { AdaptivePanel } from '../components/AdaptivePanel';
 import { VolatilityStopPanel } from '../components/VolatilityStopPanel';
-import { ScannerPanel } from '../components/ScannerPanel';
+// ScannerPanel removed — scanner disabled
 import { RiskStressPanel } from '../components/RiskStressPanel';
 import { ExecutionQualityPanel } from '../components/ExecutionQualityPanel';
 import { EdgeAttributionPanel } from '../components/EdgeAttributionPanel';
@@ -37,7 +37,7 @@ import { useRiskStress } from '../lib/hooks/useRiskStress';
 import { useSpreadModel } from '../lib/hooks/useSpreadModel';
 
 type BotStatus = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
-type ToolTab = 'tape' | 'radar' | 'diagnostics';
+type ToolTab = 'tape' | 'diagnostics';
 type DrawerTab = 'logs';
 type DiagnosticsTab = 'execution' | 'risk' | 'policy' | 'latency' | 'trades';
 
@@ -55,6 +55,9 @@ interface BotState {
     strategy: string;
     pnlTotal: number;
     pnlToday: number;
+    /** FIFO round-trip realized PnL (entry→exit, actual fill prices). */
+    roundTripPnl: number;
+    roundTripPnlToday: number;
     winRate: number;
     openPosition: string;
     spreadBps: number;
@@ -81,6 +84,8 @@ const createInitialBotState = (): BotState => ({
     strategy: 'orderbook-scalper',
     pnlTotal: 0,
     pnlToday: 0,
+    roundTripPnl: 0,
+    roundTripPnlToday: 0,
     winRate: 0,
     openPosition: 'Flat',
     spreadBps: 0,
@@ -315,6 +320,8 @@ function DashboardPageContent() {
                     ...prev,
                     pnlTotal: data.stats.totalPnl || 0,
                     pnlToday: data.stats.todayPnl || 0,
+                    roundTripPnl: data.stats.roundTripPnl || 0,
+                    roundTripPnlToday: data.stats.roundTripPnlToday || 0,
                     winRate: data.stats.winRate || 0,
                     tradeCount: data.stats.totalTrades || 0,
                 }));
@@ -386,8 +393,6 @@ function DashboardPageContent() {
         if (!connected && !marketHealth.data) warnings.push('xrpl-unknown');
         if (marketHealth.data?.orderBook.stale) warnings.push('book-stale');
         if (marketHealth.data?.tradeTape.stale) warnings.push('tape-stale');
-        if (bgView?.health.degraded) warnings.push('scanner-degraded');
-        if ((bgView?.fairValue.sources.length ?? 0) < 1) warnings.push('low-samples');
         if (bot.risk.killSwitch) warnings.push('kill-switch');
         if (bot.status === 'ERROR') warnings.push('runtime-error');
         if (riskStress.data.hardRiskState === 'BLOCKED') warnings.push('hard-risk-blocked');
@@ -395,7 +400,7 @@ function DashboardPageContent() {
         if (riskStress.data.consecutiveFailures >= 5) warnings.push('consec-failures');
         if (!marketHealth.data?.overall.healthy) warnings.push('market-unhealthy');
         return warnings;
-    }, [connected, marketHealth.data, bgView?.health.degraded, bgView?.fairValue.sources.length, bot.risk.killSwitch, bot.status, riskStress.data.hardRiskState, riskStress.data.executionAllowed, riskStress.data.consecutiveFailures]);
+    }, [connected, marketHealth.data, bot.risk.killSwitch, bot.status, riskStress.data.hardRiskState, riskStress.data.executionAllowed, riskStress.data.consecutiveFailures]);
 
     const severity = useMemo(() => {
         if (bot.status === 'ERROR') return 3;
@@ -417,8 +422,7 @@ function DashboardPageContent() {
         const exposurePct = bot.risk.maxExposure > 0
             ? Math.min(999, (bot.risk.currentExposure / bot.risk.maxExposure) * 100)
             : 0;
-        const scannerState = !bgView ? 'OFF' : bgView.health.degraded ? 'ERR' : 'OK';
-        const scannerTone = !bgView ? 'neutral' : bgView.health.degraded ? 'warn' : 'ok';
+
         const volatilityStop = runtimeCache.data?.snapshot?.volatilityStop ?? null;
         const volatilityReadyValue = !volatilityStop
             ? 'N/A'
@@ -479,8 +483,8 @@ function DashboardPageContent() {
         return [
             { key: 'state', label: 'Run', value: bot.status, tone: bot.status === 'RUNNING' ? 'ok' : bot.status === 'ERROR' ? 'bad' : 'warn' },
             { key: 'net', label: 'Net', value: networkLabel === 'testnet' ? 'TEST' : networkLabel === 'mainnet' ? 'MAIN' : networkLabel.toUpperCase(), tone: networkLabel === 'testnet' ? 'warn' : 'neutral' },
-            { key: 'today', label: 'P&L Today', value: fmtSigned(bot.pnlToday, 6), tone: bot.pnlToday >= 0 ? 'ok' : 'bad' },
-            { key: 'session', label: 'Session', value: fmtSigned(bot.pnlTotal, 6), tone: bot.pnlTotal >= 0 ? 'ok' : 'bad' },
+            { key: 'today', label: 'P&L Today', value: fmtSigned(bot.roundTripPnlToday, 6), tone: bot.roundTripPnlToday >= 0 ? 'ok' : 'bad' },
+            { key: 'session', label: 'Session', value: fmtSigned(bot.roundTripPnl, 6), tone: bot.roundTripPnl >= 0 ? 'ok' : 'bad' },
             { key: 'win', label: 'Win', value: `${bot.winRate.toFixed(1)}%`, tone: bot.winRate >= 50 ? 'ok' : 'neutral' },
             { key: 'trades', label: 'Trades', value: String(bot.tradeCount), tone: 'neutral' },
             { key: 'position', label: 'Pos', value: `${bot.openPosition} ${bot.risk.currentExposure.toFixed(0)}`, tone: 'neutral' },
@@ -503,10 +507,9 @@ function DashboardPageContent() {
             { key: 'vol-ready', label: 'Vol Ready', value: volatilityReadyValue, tone: volatilityReadyTone },
             { key: 'vol-bps', label: 'Vol', value: volatilityBpsValue, tone: volatilityReadyTone },
             { key: 'stop-bps', label: 'Stop Bps', value: stopLossBpsValue, tone: volatilityStop?.enabled ? 'warn' : 'neutral' },
-            { key: 'scanner', label: 'Scanner', value: scannerState, tone: scannerTone },
-            { key: 'samples', label: 'Samples', value: String(bgView?.fairValue.sources.length ?? 0), tone: (bgView?.fairValue.sources.length ?? 0) < 1 ? 'warn' : 'neutral' },
+
         ] as Array<{ key: string; label: string; value: string; tone: 'ok' | 'bad' | 'warn' | 'neutral' }>;
-    }, [bot.status, bot.network, bot.pnlToday, bot.pnlTotal, bot.winRate, bot.tradeCount, bot.openPosition, bot.baseBalance, bot.baseCurrency, bot.quoteBalance, bot.quoteCurrency, bot.risk.currentExposure, bot.risk.maxExposure, bot.risk.killSwitch, connected, riskStress.data.hardRiskState, riskStress.data.executionAllowed, riskStress.data.dailyLossCurrent, riskStress.data.dailyLossLimit, riskStress.data.consecutiveFailures, riskStress.data.feedHealthy, bgView, marketHealth.data, runtimeCache.data?.snapshot?.volatilityStop]);
+    }, [bot.status, bot.network, bot.roundTripPnlToday, bot.roundTripPnl, bot.winRate, bot.tradeCount, bot.openPosition, bot.baseBalance, bot.baseCurrency, bot.quoteBalance, bot.quoteCurrency, bot.risk.currentExposure, bot.risk.maxExposure, bot.risk.killSwitch, connected, riskStress.data.hardRiskState, riskStress.data.executionAllowed, riskStress.data.dailyLossCurrent, riskStress.data.dailyLossLimit, riskStress.data.consecutiveFailures, riskStress.data.feedHealthy, bgView, marketHealth.data, runtimeCache.data?.snapshot?.volatilityStop]);
 
     const activePairPriceDisplay = useMemo(() => {
         const pairLabel = selectedPairKey || `${bot.baseCurrency}/${bot.quoteCurrency || 'QUOTE'}`;
@@ -523,7 +526,6 @@ function DashboardPageContent() {
 
     const toolTabs: Array<{ id: ToolTab; label: string }> = [
         { id: 'tape', label: 'Tape' },
-        { id: 'radar', label: 'Scanner' },
         { id: 'diagnostics', label: 'Diagnostics' },
     ];
 
@@ -986,12 +988,6 @@ function DashboardPageContent() {
                     {activeToolTab === 'tape' && (
                         <div id="tool-panel-tape" role="tabpanel">
                             <TradeTapePanel pairKey={selectedPairKey || undefined} maxRows={120} />
-                        </div>
-                    )}
-
-                    {activeToolTab === 'radar' && (
-                        <div id="tool-panel-radar" role="tabpanel">
-                            <ScannerPanel />
                         </div>
                     )}
 

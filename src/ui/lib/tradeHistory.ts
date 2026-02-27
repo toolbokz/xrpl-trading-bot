@@ -175,6 +175,10 @@ export interface TradeStats {
     winRate: number;
     totalPnl: number;
     todayPnl: number;
+    /** FIFO round-trip realized PnL using actual fill prices (entry→exit). */
+    roundTripPnl: number;
+    /** FIFO round-trip realized PnL for today only. */
+    roundTripPnlToday: number;
     avgWin: number;
     avgLoss: number;
     largestWin: number;
@@ -196,6 +200,11 @@ function executedQty(trade: Trade): number {
     return Number.isFinite(qty) && qty > 0 ? qty : 0;
 }
 
+/** Actual fill price from trace data, falling back to submitted price. */
+function effectiveFillPrice(trade: Trade): number {
+    return trade.trace?.fill_snapshot?.avg_price ?? trade.price;
+}
+
 // resolveEffectivePnl is imported from the shared analytics module above.
 // Re-export for backward compatibility with tests or other UI-side consumers.
 export { resolveEffectivePnl } from '../../analytics/resolveEffectivePnl';
@@ -215,7 +224,9 @@ export function computeFallbackRealizedPnl(trades: Trade[], todayTimestamp: numb
 
     for (const trade of fills) {
         const qty = executedQty(trade);
-        const grossQuote = trade.price * qty;
+        // Use actual fill price (from trace data) instead of submitted intent price.
+        const fillPrice = effectiveFillPrice(trade);
+        const grossQuote = fillPrice * qty;
         const fee = Number.isFinite(trade.fee) && trade.fee > 0 ? trade.fee : 0;
         const pairLots = lotsByPair.get(trade.pair) ?? [];
 
@@ -233,7 +244,7 @@ export function computeFallbackRealizedPnl(trades: Trade[], todayTimestamp: numb
             const lot = pairLots[0]!;
             const matchQty = Math.min(remaining, lot.qty);
             const feePart = fee * (matchQty / qty);
-            const proceeds = (trade.price * matchQty) - feePart;
+            const proceeds = (fillPrice * matchQty) - feePart;
             const cost = lot.unitCost * matchQty;
             realized += (proceeds - cost);
 
@@ -396,6 +407,10 @@ class WebTradeHistoryService {
             todayPnl = fallback.today;
         }
 
+        // Always compute FIFO round-trip PnL using actual fill prices.
+        // This gives true position-based realized P&L (entry→exit).
+        const roundTrip = computeFallbackRealizedPnl(trades, todayTimestamp);
+
         const winPnls = wins.map((w) => w.effectivePnl!);
         const lossPnls = losses.map((l) => l.effectivePnl!);
 
@@ -418,6 +433,8 @@ class WebTradeHistoryService {
                 : 0,
             totalPnl,
             todayPnl,
+            roundTripPnl: roundTrip.total,
+            roundTripPnlToday: roundTrip.today,
             avgWin,
             avgLoss,
             largestWin,

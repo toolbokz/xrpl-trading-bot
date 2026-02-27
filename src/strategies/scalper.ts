@@ -19,6 +19,9 @@ import { computeFinalOrderSizeXrp, loadOrderSizingConfig, type CpMode } from '..
 interface PositionState {
     side: 'flat' | 'long' | 'short';
     entryPrice?: number | undefined;
+    /** Actual filled base amount from the entry BUY. Used to size the exit SELL
+     *  so we always sell exactly what we bought, regardless of multiplier drift. */
+    entrySize?: number | undefined;
     cooldownUntil?: number | undefined;
 }
 
@@ -363,6 +366,69 @@ export class ScalperStrategy implements Strategy {
                 }, 'Scalper: 🔬 Flow-alpha filter PASSED — directional edge confirmed');
             }
 
+            // ─────────────────────────────────────────────────────────────────
+            // Edge-vs-Cost Gate
+            // Estimates expected directional edge from composite flow signals
+            // and only enters when that edge exceeds the crossing cost (half-
+            // spread) by a configurable surplus.  This is the core gate that
+            // prevents spread-donation trades.
+            // ─────────────────────────────────────────────────────────────────
+            if (this.config.edgeCostGateEnabled && flow) {
+                // Composite signal: weighted blend of flow imbalance, depth
+                // imbalance and buy aggression ratio (re-centered to [0,1]).
+                const flowWeight = 0.40;
+                const depthWeight = 0.35;
+                const aggressionWeight = 0.25;
+                const aggressionScore = (flow.buyAggressionRatio - 0.5) * 2; // map [0.5,1] → [0,1]
+                const compositeSignal = Math.max(0,
+                    flowWeight * flow.imbalance
+                    + depthWeight * flow.depthImbalance
+                    + aggressionWeight * aggressionScore
+                );
+
+                const multiplier = this.config.edgeEstimateMultiplierBps ?? 30;
+                const expectedEdgeBps = compositeSignal * multiplier;
+                const halfSpreadBps = spreadBps / 2;
+                const surplusRequired = this.config.edgeMinSurplusBps ?? 2;
+                const edgeSurplus = expectedEdgeBps - halfSpreadBps;
+
+                // Also gate on structural depth & aggression floors
+                const depthOk = flow.depthImbalance >= (this.config.edgeMinDepthImbalance ?? 0.10);
+                const aggressionOk = flow.buyAggressionRatio >= (this.config.edgeMinBuyAggressionRatio ?? 0.55);
+
+                if (edgeSurplus < surplusRequired || !depthOk || !aggressionOk) {
+                    logger.info({
+                        compositeSignal: compositeSignal.toFixed(4),
+                        expectedEdgeBps: expectedEdgeBps.toFixed(2),
+                        halfSpreadBps: halfSpreadBps.toFixed(2),
+                        edgeSurplus: edgeSurplus.toFixed(2),
+                        surplusRequired,
+                        depthImbalance: flow.depthImbalance.toFixed(3),
+                        depthOk,
+                        buyAggressionRatio: flow.buyAggressionRatio.toFixed(3),
+                        aggressionOk,
+                    }, 'Scalper: 🚫 Edge-vs-cost gate BLOCKED entry — expected edge does not cover crossing cost');
+                    reject('edgeCostGate', {
+                        compositeSignal,
+                        expectedEdgeBps,
+                        halfSpreadBps,
+                        edgeSurplus,
+                        depthImbalance: flow.depthImbalance,
+                        buyAggressionRatio: flow.buyAggressionRatio,
+                    });
+                    return;
+                }
+
+                logger.info({
+                    compositeSignal: compositeSignal.toFixed(4),
+                    expectedEdgeBps: expectedEdgeBps.toFixed(2),
+                    halfSpreadBps: halfSpreadBps.toFixed(2),
+                    edgeSurplus: edgeSurplus.toFixed(2),
+                    depthImbalance: flow.depthImbalance.toFixed(3),
+                    buyAggressionRatio: flow.buyAggressionRatio.toFixed(3),
+                }, 'Scalper: ✅ Edge-vs-cost gate PASSED — expected edge covers crossing cost');
+            }
+
             // Apply skew to entry price: positive imbalance → bid less aggressively
             const entryBasePrice = bestBid * (1.0001 - skewFactor);
             const entryCrossFactor = 1 + ((this.config.entryCrossBps ?? 0) / 10_000);
@@ -392,10 +458,15 @@ export class ScalperStrategy implements Strategy {
                 // The depth reprice system may silently move the price 10-20 bps higher;
                 // using the intended price causes false take-profit exits.
                 const actualEntryPrice = res.fillResult?.effectivePrice ?? price;
-                this.position = { side: 'long', entryPrice: actualEntryPrice };
+                // Track actual filled size so the exit SELL uses the real position,
+                // not a freshly-computed size that may differ due to multiplier drift.
+                const actualEntrySize = res.fillResult?.baseFilled ?? adjustedPositionSize;
+                this.position = { side: 'long', entryPrice: actualEntryPrice, entrySize: actualEntrySize };
                 logger.info({
                     intendedPrice: price.toFixed(6),
                     actualEntryPrice: actualEntryPrice.toFixed(6),
+                    intendedSize: adjustedPositionSize.toFixed(4),
+                    actualEntrySize: actualEntrySize.toFixed(4),
                     repricedBps: actualEntryPrice !== price
                         ? (((actualEntryPrice - price) / price) * 10_000).toFixed(2)
                         : '0.00',
@@ -413,6 +484,10 @@ export class ScalperStrategy implements Strategy {
         }
 
         if (this.position.side === 'long' && this.position.entryPrice) {
+            // Use the actual filled entry size for the exit, not the freshly-computed
+            // adjustedPositionSize which may have drifted due to regime/adaptive/CP changes.
+            const exitSize = this.position.entrySize ?? adjustedPositionSize;
+
             // Apply skew to exit price: positive imbalance → ask more aggressively
             const targetExitBase = bestAsk * (0.9999 + skewFactor);
             const exitCrossFactor = 1 - ((this.config.exitCrossBps ?? 0) / 10_000);
@@ -472,17 +547,19 @@ export class ScalperStrategy implements Strategy {
                 logger.info({
                     side: 'SELL',
                     price: targetExit.toFixed(6),
-                    amount: adjustedPositionSize.toFixed(4),
+                    amount: exitSize.toFixed(4),
+                    entrySize: this.position.entrySize?.toFixed(4) ?? 'unknown',
+                    computedSize: adjustedPositionSize.toFixed(4),
                     reason: exitReason,
                     exitCrossBps: this.config.exitCrossBps ?? 0,
-                }, 'Scalper: 🚀 Placing SELL order');
+                }, 'Scalper: 🚀 Placing SELL order (using entry fill size)');
                 markCandidateBuilt();
-                markApproved('sell', adjustedPositionSize, 'bestAsk');
+                markApproved('sell', exitSize, 'bestAsk');
 
                 const res = await this.executor.placeOffer({
                     side: 'sell',
                     price: targetExit,
-                    amount: adjustedPositionSize,
+                    amount: exitSize,
                     strategy: this.name,
                     flags: getExecutionOrderFlags(),
                     sizePreComposed: true,

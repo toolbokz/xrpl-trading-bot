@@ -1,7 +1,7 @@
 /**
  * GET /api/analytics/trade-diagnostics
  *
- * Returns post-trade diagnostics for the last N trades (default 10, max 50).
+ * Returns post-trade diagnostics for the last N trades (default 10, max 2000).
  * Diagnostics are derived on read from the stored trade history — no separate
  * persistence is needed. The pure function `buildDiagnosticsForTrades` runs
  * over the trade array, sorts newest-first, and caps at `limit`.
@@ -49,11 +49,11 @@ async function handler(
 
     try {
         const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 10;
-        const limit = Math.max(1, Math.min(100, Number.isFinite(rawLimit) ? rawLimit : 10));
+        const limit = Math.max(1, Math.min(2000, Number.isFinite(rawLimit) ? rawLimit : 10));
         const pair = typeof req.query.pair === 'string' ? req.query.pair : undefined;
 
         // Fetch more trades than limit to guarantee we have enough after filtering
-        const fetchCount = Math.max(limit * 2, 100);
+        const fetchCount = Math.max(limit * 2, 200);
         const trades = pair
             ? tradeHistory.getTradesByPair(pair, fetchCount)
             : tradeHistory.getRecentTrades(fetchCount);
