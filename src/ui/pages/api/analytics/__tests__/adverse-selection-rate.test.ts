@@ -79,6 +79,11 @@ describe('GET /api/analytics/adverse-selection-rate', () => {
     });
 
     it('uses cache for identical filters', () => {
+        // Pin Date.now so the computed sinceMs is identical across calls,
+        // producing the same cache key.
+        const now = Date.now();
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+
         const req1 = createMockReq({ pairKey: 'XRP/RLUSD', windowMs: '60000' });
         const req2 = createMockReq({ pairKey: 'XRP/RLUSD', windowMs: '60000' });
         const res1 = createMockRes();
@@ -91,5 +96,7 @@ describe('GET /api/analytics/adverse-selection-rate', () => {
         expect(res2.statusCode).toBe(200);
         expect(mockQuerySnapshots).toHaveBeenCalledTimes(1);
         expect(mockComputeAdverseSelectionRate).toHaveBeenCalledTimes(1);
+
+        vi.restoreAllMocks();
     });
 });

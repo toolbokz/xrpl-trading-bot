@@ -41,6 +41,8 @@ import {
     ExecutionQualityQueryFilters,
     EdgeAttributionQueryFilters,
     getFeedbackDb,
+    queryExecutionQualityEventsWithMissingHorizons,
+    queryEdgeAttributionEventsWithMissingHorizons,
 } from './feedbackDb';
 import { FlowMetrics, FlowRegime, hasAdverseSelectionRisk } from '../market/flowMetrics';
 import { OrderBookState } from '../utils/types';
@@ -649,6 +651,9 @@ const SNAPSHOT_FLUSH_INTERVAL_TICKS = Math.max(
     parseInt(process.env.SNAPSHOT_FLUSH_INTERVAL ?? '5', 10) || 5,
 );
 
+/** Maximum wall-clock seconds between snapshot flushes (safety net). */
+const SNAPSHOT_FLUSH_MAX_INTERVAL_MS = 30_000;
+
 class FeedbackEngine {
     private initialized = false;
     private pruneIntervalId: NodeJS.Timeout | null = null;
@@ -656,6 +661,8 @@ class FeedbackEngine {
     private snapshotBuffer: MarketSnapshotRecord[] = [];
     /** Tick counter for snapshot flush scheduling. */
     private snapshotTickCounter = 0;
+    /** Timestamp of the last snapshot flush (ms). */
+    private lastSnapshotFlushMs = Date.now();
 
     /**
      * Initialize the feedback engine (lazy, called on first use)
@@ -674,6 +681,14 @@ class FeedbackEngine {
 
             // Initial prune on startup
             setTimeout(() => this.prune(), 30000);
+
+            // Backfill any execution quality events whose drift/impact fields
+            // are null because snapshots were unavailable when markout timers
+            // originally fired (e.g. snapshot flush lag).
+            setTimeout(() => {
+                this.backfillMissingHorizons();
+                this.backfillMissingEdgeAttributionHorizons();
+            }, 5000);
 
             return true;
         } catch (err) {
@@ -719,7 +734,9 @@ class FeedbackEngine {
             this.snapshotBuffer.push(snapshot);
             this.snapshotTickCounter++;
 
-            if (this.snapshotTickCounter >= SNAPSHOT_FLUSH_INTERVAL_TICKS) {
+            const wallElapsed = Date.now() - this.lastSnapshotFlushMs;
+            if (this.snapshotTickCounter >= SNAPSHOT_FLUSH_INTERVAL_TICKS
+                || wallElapsed >= SNAPSHOT_FLUSH_MAX_INTERVAL_MS) {
                 this.flushSnapshots();
             }
         } catch (err) {
@@ -749,6 +766,7 @@ class FeedbackEngine {
         } finally {
             this.snapshotBuffer = [];
             this.snapshotTickCounter = 0;
+            this.lastSnapshotFlushMs = Date.now();
         }
     }
 
@@ -1047,6 +1065,153 @@ class FeedbackEngine {
         } catch (err) {
             logger.warn({ err, pairKey: input.pairKey, txHash: input.txHash }, 'Failed to record execution quality event');
             return null;
+        }
+    }
+
+    /**
+     * One-time backfill: re-compute drift/impact for fills whose horizon
+     * fields are null because market snapshots weren't in SQLite when
+     * the original markout timer fired.
+     *
+     * Uses progressively wider tolerance windows: first tries the normal
+     * tight window, then falls back to wider windows to handle snapshot
+     * gaps (e.g. from flush-interval misconfiguration).
+     */
+    backfillMissingHorizons(): void {
+        if (!this.ensureInitialized()) return;
+        try {
+            const events = queryExecutionQualityEventsWithMissingHorizons(500);
+            if (events.length === 0) return;
+            let patched = 0;
+
+            // Progressive tolerance windows: normal → medium → wide
+            // Cap at 1 hour — beyond that, drift is too inaccurate.
+            const tolerances1m = [120_000, 600_000, 3_600_000];
+            const tolerances5m = [180_000, 600_000, 3_600_000];
+            /** Maximum acceptable distance (ms) between target time and snapshot. */
+            const MAX_SNAP_DISTANCE_MS = 3_600_000;
+
+            for (const evt of events) {
+                if (!evt.fillTs || !evt.fillPrice || !evt.decisionMid || !evt.side) continue;
+                const pair = canonicalizePairKey(evt.pairKeyCanonical);
+
+                let midAfter1m: number | null = null;
+                for (const tol of tolerances1m) {
+                    const snap = getSnapshotNear(pair, evt.fillTs + 60_000, tol);
+                    if (snap?.midPrice != null && snap.midPrice > 0
+                        && Math.abs(snap.ts - (evt.fillTs + 60_000)) <= MAX_SNAP_DISTANCE_MS) {
+                        midAfter1m = snap.midPrice;
+                        break;
+                    }
+                }
+
+                let midAfter5m: number | null = null;
+                for (const tol of tolerances5m) {
+                    const snap = getSnapshotNear(pair, evt.fillTs + 300_000, tol);
+                    if (snap?.midPrice != null && snap.midPrice > 0
+                        && Math.abs(snap.ts - (evt.fillTs + 300_000)) <= MAX_SNAP_DISTANCE_MS) {
+                        midAfter5m = snap.midPrice;
+                        break;
+                    }
+                }
+
+                if (midAfter1m == null && midAfter5m == null) continue;
+                const realizedSpreadBps1m = computeRealizedSpreadBps(evt.side, evt.fillPrice, evt.decisionMid, midAfter1m);
+                const realizedSpreadBps5m = computeRealizedSpreadBps(evt.side, evt.fillPrice, evt.decisionMid, midAfter5m);
+                const impactBps1m = computeImpactBps(evt.side, evt.decisionMid, midAfter1m);
+                const impactBps5m = computeImpactBps(evt.side, evt.decisionMid, midAfter5m);
+                updateExecutionQualityHorizonsDb({
+                    id: evt.id,
+                    realizedSpreadBps1m,
+                    realizedSpreadBps5m,
+                    impactBps1m,
+                    impactBps5m,
+                });
+                patched++;
+            }
+            if (patched > 0) {
+                logger.info({ patched, total: events.length }, 'Backfilled missing execution quality horizons');
+            }
+        } catch (err) {
+            logger.warn({ err }, 'Failed to backfill missing execution quality horizons');
+        }
+    }
+
+    /**
+     * One-time backfill: re-compute drift/pnl for edge attribution events
+     * whose horizon fields are null.
+     */
+    backfillMissingEdgeAttributionHorizons(): void {
+        if (!this.ensureInitialized()) return;
+        try {
+            const events = queryEdgeAttributionEventsWithMissingHorizons(500);
+            if (events.length === 0) return;
+            let patched = 0;
+
+            const tolerances = [120_000, 600_000, 3_600_000];
+            const MAX_SNAP_DISTANCE_MS = 3_600_000;
+
+            for (const evt of events) {
+                if (!evt.fillPrice || !evt.midDecision || !evt.side || !evt.baseFilled) continue;
+                const pair = canonicalizePairKey(evt.pairKeyCanonical);
+                const fillTs = evt.ts; // Use event timestamp as fill time approximation
+
+                let midFill1m: number | null = null;
+                for (const tol of tolerances) {
+                    const snap = getSnapshotNear(pair, fillTs + 60_000, tol);
+                    if (snap?.midPrice != null && snap.midPrice > 0
+                        && Math.abs(snap.ts - (fillTs + 60_000)) <= MAX_SNAP_DISTANCE_MS) {
+                        midFill1m = snap.midPrice;
+                        break;
+                    }
+                }
+
+                let midFill5m: number | null = null;
+                for (const tol of tolerances) {
+                    const snap = getSnapshotNear(pair, fillTs + 300_000, tol);
+                    if (snap?.midPrice != null && snap.midPrice > 0
+                        && Math.abs(snap.ts - (fillTs + 300_000)) <= MAX_SNAP_DISTANCE_MS) {
+                        midFill5m = snap.midPrice;
+                        break;
+                    }
+                }
+
+                if (midFill1m == null && midFill5m == null) continue;
+
+                const metrics = buildEdgeAttributionMetrics({
+                    side: evt.side,
+                    midDecision: evt.midDecision,
+                    fillPrice: evt.fillPrice,
+                    baseFilled: evt.baseFilled,
+                    strategyFair: null,
+                    midDecision1m: midFill1m, // approximation: use fill+1m snap for decision+1m
+                    midDecision5m: midFill5m,
+                    midFill1m,
+                    midFill5m,
+                });
+
+                updateEdgeAttributionHorizonsDb({
+                    id: evt.id,
+                    mid1m: midFill1m,
+                    mid5m: midFill5m,
+                    signalEdgeBpsExPost1m: metrics.signalEdgeBpsExPost1m,
+                    signalEdgeBpsExPost5m: metrics.signalEdgeBpsExPost5m,
+                    driftBps1m: metrics.driftBps1m,
+                    driftBps5m: metrics.driftBps5m,
+                    pnlDriftQuote1m: metrics.pnlDriftQuote1m,
+                    pnlTotalQuote1m: metrics.pnlTotalQuote1m,
+                    pnlDriftQuote5m: metrics.pnlDriftQuote5m,
+                    pnlTotalQuote5m: metrics.pnlTotalQuote5m,
+                    hasHorizon1m: metrics.hasHorizon1m ? 1 : 0,
+                    hasHorizon5m: metrics.hasHorizon5m ? 1 : 0,
+                });
+                patched++;
+            }
+            if (patched > 0) {
+                logger.info({ patched, total: events.length }, 'Backfilled missing edge attribution horizons');
+            }
+        } catch (err) {
+            logger.warn({ err }, 'Failed to backfill missing edge attribution horizons');
         }
     }
 

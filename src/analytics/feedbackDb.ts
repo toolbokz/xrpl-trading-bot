@@ -1614,6 +1614,60 @@ export function getSnapshotNear(pairKey: string, ts: number, toleranceMs: number
 }
 
 /**
+ * Return FILLED execution quality events that have null drift/impact fields
+ * and have the data needed to recompute them (fillTs, fillPrice, decisionMid, side).
+ * Used by the startup horizon backfill.
+ */
+export function queryExecutionQualityEventsWithMissingHorizons(
+    maxRows: number = 500,
+): Pick<ExecutionQualityEventRecord, 'id' | 'pairKeyCanonical' | 'side' | 'fillPrice' | 'decisionMid' | 'fillTs'>[] {
+    const db = getFeedbackDb();
+    try {
+        return db.prepare(`
+            SELECT id, pairKeyCanonical, side, fillPrice, decisionMid, fillTs
+            FROM execution_quality_events
+            WHERE status IN ('FILLED', 'PARTIAL')
+              AND (impactBps1m IS NULL OR impactBps5m IS NULL)
+              AND fillPrice IS NOT NULL
+              AND decisionMid IS NOT NULL
+              AND fillTs IS NOT NULL
+              AND side IS NOT NULL
+            ORDER BY ts DESC
+            LIMIT ?
+        `).all(maxRows) as Pick<ExecutionQualityEventRecord, 'id' | 'pairKeyCanonical' | 'side' | 'fillPrice' | 'decisionMid' | 'fillTs'>[];
+    } catch (err) {
+        logger.warn({ err }, 'Failed to query events with missing horizons');
+        return [];
+    }
+}
+
+/**
+ * Return edge attribution events that have null drift fields and enough
+ * data to recompute them.  Used by the startup horizon backfill.
+ */
+export function queryEdgeAttributionEventsWithMissingHorizons(
+    maxRows: number = 500,
+): Pick<EdgeAttributionEventRecord, 'id' | 'ts' | 'pairKeyCanonical' | 'side' | 'fillPrice' | 'midDecision' | 'baseFilled'>[] {
+    const db = getFeedbackDb();
+    try {
+        return db.prepare(`
+            SELECT id, ts, pairKeyCanonical, side, fillPrice, midDecision, baseFilled
+            FROM edge_attribution_events
+            WHERE (driftBps1m IS NULL OR driftBps5m IS NULL)
+              AND fillPrice IS NOT NULL
+              AND midDecision IS NOT NULL
+              AND side IS NOT NULL
+              AND baseFilled IS NOT NULL
+            ORDER BY ts DESC
+            LIMIT ?
+        `).all(maxRows) as Pick<EdgeAttributionEventRecord, 'id' | 'ts' | 'pairKeyCanonical' | 'side' | 'fillPrice' | 'midDecision' | 'baseFilled'>[];
+    } catch (err) {
+        logger.warn({ err }, 'Failed to query edge attribution events with missing horizons');
+        return [];
+    }
+}
+
+/**
  * Count records for statistics
  */
 export function countRecords(): {
