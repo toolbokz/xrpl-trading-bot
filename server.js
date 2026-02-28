@@ -76,10 +76,28 @@ function enforceLocalOnly() {
     }
 }
 
+// AWS Secrets Manager: load credentials before config is parsed
+async function loadAwsSecrets() {
+    const secretName = process.env.AWS_SECRET_NAME;
+    if (!secretName) return; // Feature disabled
+
+    try {
+        // Dynamic import — only loads the SDK when AWS_SECRET_NAME is set
+        const { maybeLoadAwsSecrets } = require('./dist/aws/secretsManager');
+        await maybeLoadAwsSecrets();
+    } catch (err) {
+        console.error('❌ AWS Secrets Manager failed:', err.message || err);
+        process.exit(1);
+    }
+}
+
 // Main startup
 async function main() {
     console.log('🔒 Trading Bot Dashboard - Localhost Only Server');
     console.log('');
+
+    // Load credentials from AWS Secrets Manager (if configured)
+    await loadAwsSecrets();
 
     // Security gate
     enforceLocalOnly();

@@ -1,0 +1,173 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  XRPL Trading Bot — EC2 instance with Secrets Manager integration.
+  Access the dashboard via SSH tunnel: ssh -L 3000:127.0.0.1:3000 ec2-user@<ip>
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.micro, t3.small, t3.medium, t3.large]
+    Description: EC2 instance size. t3.small recommended for production.
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: SSH key pair for EC2 access.
+
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+    Description: Amazon Linux 2023 AMI (latest).
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to launch the instance in.
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet (public or private with NAT for XRPL WebSocket access).
+
+  AllowedSshCidr:
+    Type: String
+    Default: '0.0.0.0/0'
+    Description: >
+      CIDR range allowed to SSH to the instance.
+      Use your IP (e.g. 203.0.113.42/32) for best security.
+
+  WalletSecretName:
+    Type: String
+    Default: xrpl-trading-bot/wallet
+    Description: Name of the Secrets Manager secret containing wallet credentials.
+
+Resources:
+  # ── Security Group ──────────────────────────────────────────
+  BotSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: XRPL Trading Bot — SSH only (dashboard via tunnel)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedSshCidr
+          Description: SSH access
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS (XRPL WebSocket, npm, Secrets Manager)
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP (package mirrors)
+      Tags:
+        - Key: Name
+          Value: xrpl-bot-sg
+
+  # ── IAM Role ────────────────────────────────────────────────
+  BotInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: xrpl-bot-ec2-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: xrpl-bot-secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${WalletSecretName}-*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/xrpl-trading-bot/*'
+
+  BotInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BotInstanceRole
+
+  # ── Secrets Manager Secret ─────────────────────────────────
+  WalletSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Ref WalletSecretName
+      Description: XRPL wallet credentials for the trading bot.
+      SecretString: '{"XRPL_SECRET_NUMBERS_MAINNET_ENC":"REPLACE_ME","XRPL_SECRET_PASSPHRASE":"REPLACE_ME"}'
+      Tags:
+        - Key: Application
+          Value: xrpl-trading-bot
+
+  # ── EC2 Instance ────────────────────────────────────────────
+  BotInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref BotInstanceProfile
+      SecurityGroupIds:
+        - !GetAtt BotSecurityGroup.GroupId
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            Encrypted: true
+      Tags:
+        - Key: Name
+          Value: xrpl-trading-bot
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          exec > /var/log/xrpl-bot-setup.log 2>&1
+          set -euo pipefail
+
+          echo "=== XRPL Trading Bot EC2 Setup ==="
+
+          # Install Node.js 20
+          curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+          yum install -y nodejs gcc gcc-c++ make git
+
+          # Create app user
+          useradd -r -s /usr/sbin/nologin -d /opt/xrpl-trading-bot xrpl-bot || true
+          mkdir -p /opt/xrpl-trading-bot/data
+          chown -R xrpl-bot:xrpl-bot /opt/xrpl-trading-bot
+
+          echo "=== Setup complete. Deploy bot code to /opt/xrpl-trading-bot ==="
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref BotInstance
+
+  PublicIp:
+    Description: Public IP (use with SSH tunnel)
+    Value: !GetAtt BotInstance.PublicIp
+
+  SshTunnelCommand:
+    Description: SSH tunnel command for dashboard access
+    Value: !Sub 'ssh -L 3000:127.0.0.1:3000 ec2-user@${BotInstance.PublicIp}'
+
+  SecretArn:
+    Description: Secrets Manager secret ARN
+    Value: !Ref WalletSecret

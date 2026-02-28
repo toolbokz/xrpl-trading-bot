@@ -9,9 +9,9 @@
         "build:backend": "tsc -p tsconfig.json",
         "build:frontend": "next build src/ui",
         "build": "npm run build:backend && npm run build:frontend",
-        "start": "NODE_ENV=production BOT_LOCAL_ONLY=true SINGLE_PROCESS_MODE=true node server.js",
+        "start": "NODE_ENV=production BOT_LOCAL_ONLY=false SINGLE_PROCESS_MODE=true node server.js",
         "dev": "BOT_LOCAL_ONLY=true SINGLE_PROCESS_MODE=true next dev src/ui -H 127.0.0.1",
-        "dashboard": "BOT_LOCAL_ONLY=true SINGLE_PROCESS_MODE=true node server.js",
+        "dashboard": "BOT_LOCAL_ONLY=false SINGLE_PROCESS_MODE=true node server.js",
         "lint": "next lint src/ui --no-inline-config",
         "faucet": "ts-node --transpile-only scripts/createTestnetWallet.ts",
         "sync:instruments": "ts-node --transpile-only scripts/syncInstrumentRegistrySeeds.ts",
@@ -28,6 +28,7 @@
         "node": ">=20"
     },
     "dependencies": {
+        "@aws-sdk/client-secrets-manager": "^3.1000.0",
         "better-sqlite3": "^12.6.2",
         "clsx": "^2.1.1",
         "dotenv": "^16.4.5",

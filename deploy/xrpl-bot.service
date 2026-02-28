@@ -1,0 +1,55 @@
+[Unit]
+Description=XRPL Trading Bot
+Documentation=https://github.com/your-org/xrpl-trading-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xrpl-bot
+Group=xrpl-bot
+WorkingDirectory=/opt/xrpl-trading-bot
+
+# The bot runs as Next.js custom server (single process)
+ExecStart=/usr/bin/node server.js
+
+# Environment
+Environment=NODE_ENV=production
+Environment=BOT_LOCAL_ONLY=false
+Environment=BOT_ALLOW_REMOTE=true
+Environment=SINGLE_PROCESS_MODE=true
+Environment=PORT=3000
+
+# AWS Secrets Manager (set these to enable remote secret loading)
+# Environment=AWS_SECRET_NAME=xrpl-trading-bot/wallet
+# Environment=AWS_REGION=ap-southeast-2
+
+# Load .env file (secrets should be in Secrets Manager, not here)
+EnvironmentFile=-/opt/xrpl-trading-bot/.env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/xrpl-trading-bot/data
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Resource limits
+LimitNOFILE=65536
+
+# Logging (stdout/stderr → journalctl)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xrpl-bot
+
+[Install]
+WantedBy=multi-user.target
