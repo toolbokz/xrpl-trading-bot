@@ -125,7 +125,10 @@ export function AdvancedPanel() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ changes }),
             });
-            const data: SaveResult = await res.json();
+            const raw = await res.json();
+            const data: SaveResult = res.ok
+                ? raw
+                : { ok: false, applied: [], blocked: [], message: raw?.error || `HTTP ${res.status}` };
             setSaveResult(data);
             if (data.ok) {
                 setEdits(new Map());
@@ -276,9 +279,9 @@ export function AdvancedPanel() {
                 >
                     {saveResult.ok ? <Check size={14} className="inline mr-1" /> : <AlertTriangle size={14} className="inline mr-1" />}
                     {saveResult.message}
-                    {saveResult.blocked.length > 0 && (
+                    {(saveResult.blocked?.length ?? 0) > 0 && (
                         <span className="ml-2 text-xs text-slate-400">
-                            (blocked: {saveResult.blocked.join(', ')})
+                            (blocked: {saveResult.blocked!.join(', ')})
                         </span>
                     )}
                 </div>
