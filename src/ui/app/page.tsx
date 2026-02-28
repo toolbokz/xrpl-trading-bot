@@ -27,6 +27,7 @@ import { LatencyImpactPanel } from '../components/LatencyImpactPanel';
 import { SlippageRealismPanel } from '../components/SlippageRealismPanel';
 import { AttributionCompletenessPanel } from '../components/AttributionCompletenessPanel';
 import { TradeHistoryDiagnosticsPanel } from '../components/TradeHistoryDiagnosticsPanel';
+import { AdvancedPanel } from '../components/AdvancedPanel';
 import { useOrderBook } from '../lib/hooks/useOrderBook';
 import { RuntimeCacheProvider, useRuntimeCache } from '../lib/hooks/useRuntimeCache';
 import { RuntimeEventsProvider, useRuntimeEvents } from '../lib/hooks/useRuntimeEvents';
@@ -37,7 +38,7 @@ import { useRiskStress } from '../lib/hooks/useRiskStress';
 import { useSpreadModel } from '../lib/hooks/useSpreadModel';
 
 type BotStatus = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
-type ToolTab = 'tape' | 'diagnostics';
+type ToolTab = 'tape' | 'diagnostics' | 'advanced';
 type DrawerTab = 'logs';
 type DiagnosticsTab = 'execution' | 'risk' | 'policy' | 'latency' | 'trades';
 
@@ -170,7 +171,7 @@ function DashboardPageContent() {
 
     useEffect(() => {
         const savedToolTab = window.localStorage.getItem('xrpl.toolTab') as ToolTab | null;
-        if (savedToolTab && ['tape', 'radar', 'diagnostics'].includes(savedToolTab)) {
+        if (savedToolTab && ['tape', 'radar', 'diagnostics', 'advanced'].includes(savedToolTab)) {
             setActiveToolTab(savedToolTab);
         }
         const savedDrawerTab = window.localStorage.getItem('xrpl.drawerTab') as DrawerTab | null;
@@ -527,6 +528,7 @@ function DashboardPageContent() {
     const toolTabs: Array<{ id: ToolTab; label: string }> = [
         { id: 'tape', label: 'Tape' },
         { id: 'diagnostics', label: 'Diagnostics' },
+        { id: 'advanced', label: 'Advanced' },
     ];
 
     const drawerTabs: Array<{ id: DrawerTab; label: string; icon: typeof ListOrdered }> = [
@@ -994,6 +996,12 @@ function DashboardPageContent() {
                     {activeToolTab === 'diagnostics' && (
                         <div id="tool-panel-diagnostics" role="tabpanel">
                             {diagnosticsPanel}
+                        </div>
+                    )}
+
+                    {activeToolTab === 'advanced' && (
+                        <div id="tool-panel-advanced" role="tabpanel">
+                            <AdvancedPanel />
                         </div>
                     )}
                 </div>
