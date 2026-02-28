@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
-import { Settings, Save, RotateCcw, ChevronDown, ChevronRight, AlertTriangle, Check, Loader2 } from 'lucide-react';
+import { Settings, Save, RotateCcw, ChevronDown, ChevronRight, AlertTriangle, Check, Loader2, Power } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // Types mirrored from the API route
@@ -55,6 +55,10 @@ export function AdvancedPanel() {
     const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
     // Search filter
     const [search, setSearch] = useState('');
+    // Restart state
+    const [restarting, setRestarting] = useState(false);
+    const [restartConfirm, setRestartConfirm] = useState(false);
+    const [restartMessage, setRestartMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
     const pendingCount = edits.size;
 
@@ -132,6 +136,36 @@ export function AdvancedPanel() {
             setSaveResult({ ok: false, applied: [], blocked: [], message: (err as Error).message });
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleRestart = async () => {
+        setRestarting(true);
+        setRestartConfirm(false);
+        setRestartMessage(null);
+        try {
+            // Step 1: Kill the bot
+            const killRes = await fetch('/api/bot/kill', { method: 'POST' });
+            const killData = await killRes.json();
+            if (!killRes.ok) {
+                throw new Error(killData?.error || 'Failed to stop bot');
+            }
+
+            // Step 2: Brief pause for cleanup
+            await new Promise((r) => setTimeout(r, 2000));
+
+            // Step 3: Start the bot
+            const runRes = await fetch('/api/bot/run', { method: 'POST' });
+            const runData = await runRes.json();
+            if (!runRes.ok) {
+                throw new Error(runData?.error || 'Failed to start bot');
+            }
+
+            setRestartMessage({ ok: true, text: `Bot restarted successfully (${runData.state || 'RUNNING'}). New settings are now active.` });
+        } catch (err) {
+            setRestartMessage({ ok: false, text: `Restart failed: ${(err as Error).message}` });
+        } finally {
+            setRestarting(false);
         }
     };
 
@@ -250,8 +284,8 @@ export function AdvancedPanel() {
                 </div>
             )}
 
-            {/* Groups */}
-            <div className="space-y-2">
+            {/* Groups — 3-column grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                 {filteredGroups.map((group) => {
                     const isExpanded = expanded.has(group.id);
                     const groupHasEdits = group.settings.some((s) => edits.has(s.key));
@@ -259,30 +293,30 @@ export function AdvancedPanel() {
                         <div
                             key={group.id}
                             className={clsx(
-                                'rounded-lg border',
+                                'rounded-lg border flex flex-col',
                                 groupHasEdits ? 'border-amber-500/20' : 'border-white/[0.06]',
                             )}
                         >
                             <button
                                 onClick={() => toggleGroup(group.id)}
-                                className="flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-white/[0.02]"
+                                className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.02]"
                             >
                                 {isExpanded ? (
-                                    <ChevronDown size={14} className="text-slate-500 shrink-0" />
+                                    <ChevronDown size={13} className="text-slate-500 shrink-0" />
                                 ) : (
-                                    <ChevronRight size={14} className="text-slate-500 shrink-0" />
+                                    <ChevronRight size={13} className="text-slate-500 shrink-0" />
                                 )}
-                                <span className="text-sm font-medium text-slate-200">{group.label}</span>
-                                <span className="text-xs text-slate-500">{group.settings.length} settings</span>
+                                <span className="text-xs font-medium text-slate-200 truncate">{group.label}</span>
+                                <span className="text-[10px] text-slate-500 shrink-0">{group.settings.length}</span>
                                 {groupHasEdits && (
-                                    <span className="ml-auto rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-300">
+                                    <span className="ml-auto rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] text-amber-300 shrink-0">
                                         modified
                                     </span>
                                 )}
                             </button>
 
                             {isExpanded && (
-                                <div className="border-t border-white/[0.04] px-4 pb-3 pt-2 space-y-3">
+                                <div className="border-t border-white/[0.04] px-3 pb-3 pt-2 space-y-2.5 flex-1">
                                     {group.settings.map((setting) => (
                                         <SettingRow
                                             key={setting.key}
@@ -304,12 +338,63 @@ export function AdvancedPanel() {
                 </div>
             )}
 
-            {/* Restart reminder */}
-            <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-xs text-slate-500">
-                <AlertTriangle size={12} className="inline mr-1 text-amber-500/60" />
-                Changes are written to the <code className="text-slate-400">.env</code> file. You must{' '}
-                <strong className="text-slate-300">restart the bot</strong> (
-                <code className="text-slate-400">sudo systemctl restart xrpl-bot</code>) for changes to take effect.
+            {/* Restart section */}
+            <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-3 space-y-3">
+                <div className="flex items-center justify-between gap-4">
+                    <div className="text-xs text-slate-500">
+                        <AlertTriangle size={12} className="inline mr-1 text-amber-500/60" />
+                        Changes are written to the <code className="text-slate-400">.env</code> file.
+                        The bot must be restarted for changes to take effect.
+                    </div>
+
+                    {!restartConfirm ? (
+                        <button
+                            onClick={() => setRestartConfirm(true)}
+                            disabled={restarting || pendingCount > 0}
+                            className={clsx(
+                                'flex items-center gap-1.5 rounded-md border px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors',
+                                pendingCount > 0
+                                    ? 'border-white/5 text-slate-600 cursor-not-allowed'
+                                    : 'border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20',
+                                restarting && 'opacity-50 cursor-not-allowed',
+                            )}
+                            title={pendingCount > 0 ? 'Save your changes before restarting' : 'Restart bot to apply .env changes'}
+                        >
+                            {restarting ? <Loader2 size={13} className="animate-spin" /> : <Power size={13} />}
+                            {restarting ? 'Restarting…' : 'Restart Bot'}
+                        </button>
+                    ) : (
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-amber-300">Restart now?</span>
+                            <button
+                                onClick={handleRestart}
+                                className="flex items-center gap-1 rounded border border-red-500/30 bg-red-500/15 px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/25"
+                            >
+                                <Power size={12} /> Yes, restart
+                            </button>
+                            <button
+                                onClick={() => setRestartConfirm(false)}
+                                className="rounded border border-white/10 px-3 py-1.5 text-xs text-slate-400 hover:bg-white/5"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    )}
+                </div>
+
+                {restartMessage && (
+                    <div
+                        className={clsx(
+                            'rounded-md border px-3 py-2 text-xs',
+                            restartMessage.ok
+                                ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300'
+                                : 'border-red-500/20 bg-red-500/5 text-red-300',
+                        )}
+                    >
+                        {restartMessage.ok ? <Check size={12} className="inline mr-1" /> : <AlertTriangle size={12} className="inline mr-1" />}
+                        {restartMessage.text}
+                    </div>
+                )}
             </div>
         </div>
     );
