@@ -276,8 +276,16 @@ export const ENV_GROUPS: EnvGroup[] = [
 function envFilePath(): string {
     // Use the deployed env file (the one the service actually reads).
     const deployed = '/opt/xrpl-trading-bot/.env';
-    if (fs.existsSync(deployed)) return deployed;
-    // Fallback for dev
+    if (fs.existsSync(deployed)) {
+        try {
+            fs.accessSync(deployed, fs.constants.R_OK | fs.constants.W_OK);
+            return deployed;
+        } catch {
+            // File exists but is not writable (e.g. ProtectSystem=strict).
+            // Fall through to CWD-based path.
+        }
+    }
+    // Fallback for dev or when deployed path is not writable
     return path.resolve(process.cwd(), '.env');
 }
 
