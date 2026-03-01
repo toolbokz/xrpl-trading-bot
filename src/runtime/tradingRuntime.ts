@@ -128,6 +128,7 @@ import { EntryGate, loadEntryGateConfig } from '../strategies/entryGate';
 import { getInstruments, findInstrument, isValidPairKey } from '../market/instrumentRegistry';
 import { SpreadDistributionSampler, type SpreadDistributionSnapshot } from '../analytics/spreadDistribution';
 import { BackgroundMarketScanner } from '../market/backgroundScanner/backgroundMarketScanner';
+import { tradeHistory } from '../analytics/tradeHistory';
 import type { BackgroundScannerSnapshot } from '../market/backgroundScanner/types';
 import { AccountTradeIngestionService } from '../analytics/accountTradeIngestion';
 import { VolatilityEstimator, resolveAdaptiveStopLossBps } from '../market/volatilityEstimator';
@@ -790,6 +791,13 @@ export class TradingRuntime {
                     discoveryMinVolumeUsd: config.xrpl.minVolumeUsd ?? 10_000,
                 });
                 this.backgroundScanner.start();
+            }
+
+            // Initialize S3-backed trade history (if configured)
+            try {
+                await tradeHistory.initFromCloud();
+            } catch (err) {
+                logger.warn({ err }, 'Failed to load trade history from S3 — continuing with local data');
             }
 
             logger.info('Trading runtime started');
@@ -2263,6 +2271,13 @@ export class TradingRuntime {
             feedbackEngine.shutdown();
         } catch (err) {
             logger.warn({ err }, 'Failed to close feedback engine');
+        }
+
+        // Flush trade history to S3 (if configured)
+        try {
+            await tradeHistory.shutdown();
+        } catch (err) {
+            logger.warn({ err }, 'Failed to flush trade history to S3 during shutdown');
         }
 
         // Stop adaptive learning scheduler

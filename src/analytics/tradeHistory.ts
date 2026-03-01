@@ -4,6 +4,7 @@ import { logger } from './logger';
 import { canonicalizePairKey } from '../xrpl/currency';
 import { classifyPnl, warnOnPoorClassifiability, type ClassifiabilityReport } from './metricUtils';
 import { resolveEffectivePnl } from './resolveEffectivePnl';
+import { getS3TradeStore, resetS3TradeStore, type S3TradeStore } from '../aws/s3TradeStore';
 
 export interface Trade {
     id: string;
@@ -750,6 +751,8 @@ class TradeHistoryService {
     private trades: Trade[] = [];
     private filePath: string;
     private initialized = false;
+    private s3Store: S3TradeStore | null = null;
+    private s3Initialized = false;
 
     constructor() {
         this.filePath = path.resolve(process.cwd(), TRADES_FILE);
@@ -758,7 +761,80 @@ class TradeHistoryService {
     private init(): void {
         if (this.initialized) return;
         this.initialized = true;
+        // Lazily resolve S3 store on first use
+        if (!this.s3Initialized) {
+            this.s3Initialized = true;
+            try {
+                this.s3Store = getS3TradeStore();
+            } catch (err) {
+                logger.warn({ err }, '[tradeHistory] Failed to initialize S3 trade store — falling back to local only');
+            }
+        }
         this.loadFromDisk();
+    }
+
+    /**
+     * Async initialization: loads trade history from S3 if configured,
+     * merging with any local data.  Call once at startup before the
+     * first tick.  If not called, the service falls back to sync
+     * local-only behavior.
+     */
+    async initFromCloud(): Promise<void> {
+        if (!this.s3Initialized) {
+            this.s3Initialized = true;
+            try {
+                this.s3Store = getS3TradeStore();
+            } catch (err) {
+                logger.warn({ err }, '[tradeHistory] Failed to initialize S3 trade store');
+            }
+        }
+
+        if (!this.s3Store) return;
+
+        try {
+            const s3Data = await this.s3Store.load();
+            if (s3Data && s3Data.length > 0) {
+                // Merge S3 data with local data (local wins on hash conflicts)
+                const localHashes = new Set(this.trades.map(t => t.hash).filter(Boolean));
+                let merged = 0;
+                for (const raw of s3Data) {
+                    const hash = typeof (raw as Record<string, unknown>)?.hash === 'string'
+                        ? (raw as Record<string, unknown>).hash as string
+                        : undefined;
+                    if (hash && localHashes.has(hash)) continue; // local copy wins
+                    // For simplicity, accept S3 records that have at minimum an id
+                    if (typeof (raw as Record<string, unknown>)?.id === 'string') {
+                        this.trades.push(raw as Trade);
+                        merged++;
+                    }
+                }
+                if (merged > 0) {
+                    this.trades = dedupeTradesByHash(this.trades);
+                    this.trades = this.trades.slice(-MAX_TRADES_IN_MEMORY);
+                    logger.info({ merged, total: this.trades.length }, '[tradeHistory] Merged S3 trade history with local');
+                }
+            }
+        } catch (err) {
+            logger.warn({ err }, '[tradeHistory] Failed to load trade history from S3 — continuing with local data');
+        }
+    }
+
+    /**
+     * Flush any in-flight S3 upload and release resources.
+     * Call during graceful shutdown.
+     */
+    async shutdown(): Promise<void> {
+        if (this.s3Store) {
+            try {
+                // Ensure the latest state is uploaded
+                this.s3Store.save(this.trades);
+                await this.s3Store.waitForPendingUpload();
+                logger.info('[tradeHistory] Final S3 sync complete');
+            } catch (err) {
+                logger.warn({ err }, '[tradeHistory] Failed to flush trade history to S3 during shutdown');
+            }
+        }
+        resetS3TradeStore();
     }
 
     private loadFromDisk(): void {
@@ -857,6 +933,15 @@ class TradeHistoryService {
             fs.writeFileSync(this.filePath, JSON.stringify(this.trades, null, 2), 'utf8');
         } catch (err) {
             logger.error({ err }, 'Failed to save trade history to disk');
+        }
+
+        // Async S3 sync (fire-and-forget, coalesced internally)
+        if (this.s3Store) {
+            try {
+                this.s3Store.save(this.trades);
+            } catch (err) {
+                logger.warn({ err }, '[tradeHistory] Failed to queue S3 trade history upload');
+            }
         }
     }
 
