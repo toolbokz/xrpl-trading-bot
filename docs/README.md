@@ -30,6 +30,10 @@ This folder mixes **architecture references**, **operational runbooks**, and **s
 - **Purpose:** Current-stage readiness audit focused on data learning rather than alpha claims.
 - **Function:** Evaluates whether the repo can measure edge quality, control reject churn, protect reserves, sustain runtime stability, and produce statistically usable trade data with post-fill coverage.
 
+## docs/test-mode-hardening-runbook-30d.md
+- **Purpose:** Implementation-ready 30-day XRPL test-mode hardening runbook.
+- **Function:** Provides daily execution checklists, shift handoff packet, incident ticket template, XRPL edge-case scenario cards, phase gate thresholds, readiness scoring, and Go/No-Go criteria for latency-sensitive enablement.
+
 ---
 
 ## Suggested reading order
@@ -39,3 +43,4 @@ This folder mixes **architecture references**, **operational runbooks**, and **s
 4. `xrpl-reality-readiness-audit.md` (current readiness posture)
 5. `small-balance-survival.md` (operating profile)
 6. `security-api-auth.md` + `security-key-rotation.md` (security operations)
+7. test-mode-hardening-runbook-30d.md (daily hardening execution)

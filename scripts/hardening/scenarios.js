@@ -1,0 +1,112 @@
+const SCENARIOS = {
+    S1: {
+        id: 'S1',
+        title: 'Partial fill bursts within single ledger window',
+        phase: 'Phase 3',
+        objective: 'Verify cumulative fill aggregation and deterministic terminal state under fragmented fills.',
+        recommendedInjection: 'Inject synthetic fragmented fills mapped to the same validated ledger index.',
+        expectedBehavior: [
+            'No duplicate economic action per intent',
+            'Filled quantity/value aggregate exactly',
+            'Terminal lifecycle state achieved once',
+        ],
+        failureSignatures: [
+            'fill-double-count',
+            'negative-residual-size',
+            'duplicate-terminal-transition',
+        ],
+        requiredMetrics: ['ORDER_FILLED', 'SUBMIT_SUCCESS', 'reconcile_lag_ms'],
+    },
+    S2: {
+        id: 'S2',
+        title: 'Cancel/replace collision before ledger close',
+        phase: 'Phase 3',
+        objective: 'Validate single active successor and lineage integrity when cancel/replace collide pre-close.',
+        recommendedInjection: 'Issue cancel + replace around expected close boundary with jittered ordering.',
+        expectedBehavior: [
+            'At most one active successor order',
+            'No orphan order state',
+            'No active map mismatch after reconciliation',
+        ],
+        failureSignatures: ['orphan-order', 'dual-active-orders', 'lineage-break'],
+        requiredMetrics: ['EXECUTION_BLOCKED', 'SUBMIT_ATTEMPT', 'SUBMIT_SUCCESS'],
+    },
+    S3: {
+        id: 'S3',
+        title: 'Network jitter near submission boundary',
+        phase: 'Phase 2/3',
+        objective: 'Ensure deterministic lifecycle under boundary jitter and variable inclusion ledger.',
+        recommendedInjection: 'Inject 200-1200ms network jitter around submission windows.',
+        expectedBehavior: [
+            'Submission classification remains coherent',
+            'No timeout false-positive cascade',
+            'Reconciliation converges without drift',
+        ],
+        failureSignatures: ['boundary-misclassification', 'timeout-false-positive-storm'],
+        requiredMetrics: ['SUBMIT_ATTEMPT', 'SUBMIT_SUCCESS', 'SUBMIT_FAIL'],
+    },
+    S4: {
+        id: 'S4',
+        title: 'Ledger close variance spikes',
+        phase: 'Phase 2/3',
+        objective: 'Validate staleness controls and halt/recovery behavior during close-time variance spikes.',
+        recommendedInjection: 'Simulate close interval variance from 2s to 8s in clustered spikes.',
+        expectedBehavior: [
+            'No stale-feed trading',
+            'Feed stale/recovered transitions are bounded',
+            'No repeated halt thrash',
+        ],
+        failureSignatures: ['stale-feed-trading', 'halt-thrash'],
+        requiredMetrics: ['FEED_STALE', 'FEED_RECOVERED', 'EXECUTION_BLOCKED'],
+    },
+    S5: {
+        id: 'S5',
+        title: 'Restart during open exposure',
+        phase: 'Phase 3/4',
+        objective: 'Confirm state rebuild parity and no exposure drift across restart.',
+        recommendedInjection: 'Restart runtime/service while open intents exist; validate replay restoration.',
+        expectedBehavior: [
+            'Exposure parity restored after rebuild',
+            'Open-order map parity restored',
+            'No duplicate replay side-effects',
+        ],
+        failureSignatures: ['exposure-parity-error', 'duplicate-replay', 'open-order-parity-error'],
+        requiredMetrics: ['XRPL_DISCONNECTED', 'XRPL_RECONNECTED', 'RISK_BLOCK'],
+    },
+    S6: {
+        id: 'S6',
+        title: 'Reconciliation mismatch during volatility',
+        phase: 'Phase 3',
+        objective: 'Ensure drift correction converges quickly under volatile conditions.',
+        recommendedInjection: 'Drive rapid spread/depth changes with delayed fill visibility.',
+        expectedBehavior: [
+            'Drift correction converges <= 2 cycles',
+            'No oscillating over-correction',
+            'No cap breach from unresolved drift',
+        ],
+        failureSignatures: ['drift-oscillation', 'non-convergent-correction', 'cap-breach'],
+        requiredMetrics: ['ORDER_FILLED', 'RISK_BLOCK', 'EXECUTION_BLOCKED'],
+    },
+};
+
+const TRACKED_EVENT_TYPES = [
+    'SUBMIT_ATTEMPT',
+    'SUBMIT_SUCCESS',
+    'SUBMIT_FAIL',
+    'ORDER_PLACED',
+    'ORDER_FILLED',
+    'EXECUTION_BLOCKED',
+    'EXECUTION_ALLOWED',
+    'RISK_BLOCK',
+    'FEED_STALE',
+    'FEED_RECOVERED',
+    'XRPL_DISCONNECTED',
+    'XRPL_RECONNECTED',
+    'STRATEGY_REJECTED',
+    'STRATEGY_APPROVED',
+];
+
+module.exports = {
+    SCENARIOS,
+    TRACKED_EVENT_TYPES,
+};
