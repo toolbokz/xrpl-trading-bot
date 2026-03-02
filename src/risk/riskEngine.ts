@@ -17,6 +17,8 @@ export class RiskEngine {
     private lastResetDate: string;
     private reserveConfig: ReserveConfig;
     private exposureTracker: ExposureTracker | null = null;
+    /** Last known XRP balance from reserve check (drops → XRP). */
+    private _lastXrpBalance: number | null = null;
 
     constructor(private readonly risk: RiskConfig, private readonly client: Client) {
         // Initialize to current UTC date
@@ -128,9 +130,18 @@ export class RiskEngine {
                 ownerCount: requirement.ownerCount,
             }, 'Below dynamic reserve floor; halting');
             this.risk.emergencyShutdown = true;
+            this._lastXrpBalance = requirement.balanceXRP;
             return false;
         }
+        if (requirement) {
+            this._lastXrpBalance = requirement.balanceXRP;
+        }
         return true;
+    }
+
+    /** Last XRP balance observed during reserve check (null if no check yet). */
+    getLastXrpBalance(): number | null {
+        return this._lastXrpBalance;
     }
 
     approveIntent(intent: TradeIntent, pair: TradingPair): boolean {

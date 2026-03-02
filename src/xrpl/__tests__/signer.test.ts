@@ -90,21 +90,24 @@ describe('LedgerSigner', () => {
 });
 
 describe('KmsSigner', () => {
-    it('throws SignerNotImplementedError on signTx', async () => {
-        const signer = new KmsSigner('key-123');
-        await expect(signer.signTx({} as any)).rejects.toThrow(SignerNotImplementedError);
+    it('rejects signTx without KMS connectivity', async () => {
+        const signer = new KmsSigner('key-123', 'us-east-1');
+        // signTx will try to call getAddress() first which calls KMS
+        await expect(signer.signTx({} as any)).rejects.toThrow();
     });
 
-    it('reports not ready', async () => {
+    it('reports not ready without KMS connectivity', async () => {
         const signer = new KmsSigner('key-123');
+        // isReady() tries to connect to KMS — should fail without real credentials
         expect(await signer.isReady()).toBe(false);
     });
 
-    it('getReadinessReport shows credentials', () => {
+    it('getReadinessReport shows credentials and not-yet-initialized', () => {
         const report = new KmsSigner('key-123').getReadinessReport();
+        // Not ready until isReady()/getAddress() is called
         expect(report.ready).toBe(false);
         expect(report.hasCredentials).toBe(true);
-        expect(report.reason).toContain('aws-sdk');
+        expect(report.reason).toContain('not yet initialized');
     });
 });
 
@@ -131,9 +134,10 @@ describe('assertSignerReady', () => {
         await expect(assertSignerReady(signer)).rejects.toThrow(SignerNotImplementedError);
     });
 
-    it('fails for KmsSigner (not implemented)', async () => {
+    it('fails for KmsSigner without KMS connectivity', async () => {
         const signer = new KmsSigner('key-123');
-        await expect(assertSignerReady(signer)).rejects.toThrow(SignerNotImplementedError);
+        // assertSignerReady checks readinessReport: ready=false → throws
+        await expect(assertSignerReady(signer)).rejects.toThrow();
     });
 
     it('skips check when SIGNER_SKIP_READY_CHECK=true', async () => {

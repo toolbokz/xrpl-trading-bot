@@ -263,7 +263,7 @@ export function computeFallbackRealizedPnl(trades: Trade[], todayTimestamp: numb
     return { total, today };
 }
 
-const TRADES_FILE = 'trade_history.json';
+const TRADES_FILE = path.join('data', 'trade_history.json');
 
 /**
  * Read-only trade history service for the web API.
@@ -275,11 +275,13 @@ class WebTradeHistoryService {
     private cachedTrades: Trade[] = [];
 
     private getFilePath(): string {
-        // Try multiple locations
+        // Try multiple locations (data/ is the canonical write path)
         const locations = [
             path.resolve(process.cwd(), TRADES_FILE),
             path.resolve(process.cwd(), '..', TRADES_FILE),
             path.resolve(__dirname, '..', '..', TRADES_FILE),
+            // Legacy fallback: root-level trade_history.json
+            path.resolve(process.cwd(), 'trade_history.json'),
         ];
 
         for (const loc of locations) {

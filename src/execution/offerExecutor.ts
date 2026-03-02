@@ -1,6 +1,7 @@
 import { Client, Wallet, TransactionMetadata, Amount, IssuedCurrencyAmount, dropsToXrp } from 'xrpl';
 import { ExecutionResult, OrderBookState, PartialFillResult } from '../utils/types';
 import { RiskEngine } from '../risk/riskEngine';
+import type { Signer } from '../xrpl/signer';
 import { StrategyConfig, TradingPair } from '../config';
 import { executionLog as logger } from '../analytics/logger';
 import {
@@ -468,6 +469,11 @@ export class OfferExecutor {
     private botTxHashSink: ((hash: string) => void) | null = null;
     private submitTelemetrySink: ((event: StrategySubmitTelemetryEvent) => void) | null = null;
 
+    /** Optional Signer for KMS/hardware signing. When set, used instead of wallet.sign(). */
+    private _signer: Signer | null = null;
+    /** Cached address from signer (resolved once, then reused). */
+    private _signerAddress: string | null = null;
+
     constructor(
         private readonly client: Client,
         private readonly wallet: Wallet | null,
@@ -476,6 +482,37 @@ export class OfferExecutor {
         private pair: TradingPair,
         private readonly strategyConfig?: StrategyConfig
     ) { }
+
+    /**
+     * Inject a Signer for production signing (KMS, Ledger, Xumm).
+     * When set, signTx() is delegated to the signer instead of Wallet.sign().
+     */
+    setSigner(signer: Signer): void {
+        this._signer = signer;
+    }
+
+    /** Resolve the account address — prefers signer, falls back to wallet. */
+    private async resolveAddress(): Promise<string | null> {
+        if (this._signer) {
+            if (!this._signerAddress) {
+                this._signerAddress = await this._signer.getAddress();
+            }
+            return this._signerAddress;
+        }
+        return this.wallet?.classicAddress ?? null;
+    }
+
+    /** Sign a prepared transaction — prefers signer, falls back to wallet. */
+    private async signTransaction(prepared: any): Promise<{ tx_blob: string; hash: string }> {
+        if (this._signer) {
+            const result = await this._signer.signTx(prepared);
+            return { tx_blob: result.tx_blob, hash: result.hash ?? '' };
+        }
+        if (!this.wallet) {
+            throw new Error('No wallet or signer available for signing');
+        }
+        return this.wallet.sign(prepared);
+    }
 
     private readonly executionMode = getExecutionMode();
     private readonly depthCheckLevels: number = Math.max(1, Math.min(100, parseInt(process.env.EXECUTION_DEPTH_LEVELS ?? '25', 10) || 25));
@@ -1112,7 +1149,7 @@ export class OfferExecutor {
                     reason: paperMinSizeGate.reason,
                 }, 'Rejected paper order by minimum size gate');
 
-                tradeHistory.recordTrade({
+                const recordedReject = tradeHistory.recordTrade({
                     pair: pairSymbol,
                     side: normalizedIntent.side as 'BUY' | 'SELL',
                     price: normalizedIntent.price,
@@ -1127,6 +1164,24 @@ export class OfferExecutor {
                     paper: true,
                     status: 'REJECTED',
                     source: 'bot',
+                });
+
+                // Write trace so diagnostics panel shows context for rejections too
+                tradeHistory.upsertTradeTrace({
+                    tradeId: recordedReject.id,
+                    patch: {
+                        decision_ts_ms: baselineDecisionTs,
+                        baseline_ts_ms: expectedBaseline.baselineTsMs,
+                        baseline_best_bid: expectedBaseline.baselineBestBid ?? null,
+                        baseline_best_ask: expectedBaseline.baselineBestAsk ?? null,
+                        baseline_mid: expectedBaseline.baselineMid ?? null,
+                        baseline_spread_bps: expectedBaseline.baselineSpreadBps ?? null,
+                        baseline_source: expectedBaseline.baselineSource,
+                        expected_price: expectedBaseline.expectedPrice ?? null,
+                        expected_rule: expectedBaseline.expectedRule,
+                        outcome: 'rejected',
+                        outcome_reason: rejectReason,
+                    },
                 });
 
                 try {
@@ -1166,7 +1221,9 @@ export class OfferExecutor {
                 status: 'FILLED',
             });
 
-            if (marketDataReadiness.warning || expectedBaseline.baselineSource === 'intent_fallback') {
+            // Always write execution trace for paper trades so diagnostics panel is populated
+            {
+                const paperSubmitTs = Date.now();
                 tradeHistory.upsertTradeTrace({
                     tradeId: recordedPaperTrade.id,
                     patch: {
@@ -1181,12 +1238,23 @@ export class OfferExecutor {
                         expected_rule: expectedBaseline.expectedRule,
                         price_convention: expectedBaseline.priceConvention,
                         baseline_book_age_ms: expectedBaseline.baselineBookAgeMs ?? null,
+                        submit_ts_ms: paperSubmitTs,
+                        submit_response_ts_ms: paperSubmitTs,
+                        ack_ts_ms: paperSubmitTs,
+                        validated_ts_ms: paperSubmitTs,
                         tx_type: 'OfferCreate',
                         ack_status: 'accepted',
                         outcome: 'filled',
-                        outcome_reason: marketDataReadiness.warning === 'STALE_MARKET_DATA'
-                            ? 'stale_market_data'
-                            : 'no_market_data',
+                        outcome_reason: marketDataReadiness.warning
+                            ? (marketDataReadiness.warning === 'STALE_MARKET_DATA'
+                                ? 'stale_market_data'
+                                : 'no_market_data')
+                            : 'paper_simulated',
+                        submit_result: {
+                            engine_result: 'tesSUCCESS',
+                            engine_result_code: 0,
+                            engine_result_message: 'Paper trade: simulated perfect fill.',
+                        },
                     },
                 });
             }
@@ -1298,7 +1366,7 @@ export class OfferExecutor {
 
             return { accepted: true, reason: 'paper-mode' };
         }
-        if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
+        if (!this.wallet && !this._signer) return { accepted: false, reason: 'wallet-missing' };
 
         if (!Number.isFinite(normalizedIntent.price) || normalizedIntent.price <= 0 || !Number.isFinite(normalizedIntent.amount) || normalizedIntent.amount <= 0) {
             return { accepted: false, reason: 'invalid-params' };
@@ -1743,10 +1811,11 @@ export class OfferExecutor {
             const normalized = normalizeIntent(intentForSubmission);
             const txCore = buildOfferCreate(normalized);
 
+            const resolvedAccount = await this.resolveAddress();
             const tx: any = {
                 ...txCore,
                 TransactionType: 'OfferCreate',
-                Account: this.wallet.classicAddress,
+                Account: resolvedAccount,
                 Flags: this.mapFlags(executionFlags),
                 LastLedgerSequence: await this.computeLastLedgerSequence(),
             };
@@ -1875,10 +1944,11 @@ export class OfferExecutor {
 
             return { accepted: true };
         }
-        if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
+        if (!this.wallet && !this._signer) return { accepted: false, reason: 'wallet-missing' };
+        const cancelAccount = await this.resolveAddress();
         const tx: any = {
             TransactionType: 'OfferCancel',
-            Account: this.wallet.classicAddress,
+            Account: cancelAccount,
             OfferSequence: offerSequence,
         };
         return this.submitWithGuards(tx);
@@ -3141,7 +3211,7 @@ export class OfferExecutor {
         let offerCreateIntent: TradeOfferCreateIntent | null = null;
 
         try {
-            if (!this.wallet) return { accepted: false, reason: 'wallet-missing' };
+            if (!this.wallet && !this._signer) return { accepted: false, reason: 'wallet-missing' };
 
             if (intentFingerprint) {
                 const nowMs = Date.now();
@@ -3195,7 +3265,7 @@ export class OfferExecutor {
 
             // Ensure required fields are present before autofill; Account must be set.
             if (!tx.Account) {
-                tx.Account = this.wallet.classicAddress;
+                tx.Account = await this.resolveAddress();
             }
 
             const safeTx = {
@@ -3505,7 +3575,7 @@ export class OfferExecutor {
             if (intentFingerprint) {
                 this.rememberIntentFingerprint(intentFingerprint, Date.now());
             }
-            const signed = this.wallet.sign(prepared);
+            const signed = await this.signTransaction(prepared);
             txHash = signed.hash;
             feeDrops = typeof prepared.Fee === 'string' ? prepared.Fee : null;
             sequence = typeof prepared.Sequence === 'number' && Number.isFinite(prepared.Sequence)

@@ -14,6 +14,7 @@ import { AMMArbitrageStrategy } from '../strategies/ammArbitrage';
 import { PathArbitrageStrategy } from '../strategies/pathArbitrage';
 import { Strategy, StrategyRegimePolicyContext } from '../strategies/types';
 import { getWallet, initWallet } from '../xrpl/wallet';
+import { createSignerFromEnv, assertSignerReady, type Signer } from '../xrpl/signer';
 import { ExecutionResult } from '../utils/types';
 import { closeBreakerStore } from '../persistence/breakerStore';
 import { enforceLocalOnly } from '../security/localOnly';
@@ -523,17 +524,43 @@ export class TradingRuntime {
             const client = xrpl.getClient();
             const wallet: Wallet | null = config.paperTrading ? null : getWallet();
 
+            // Create signer for live mode (KMS, Xumm, or Ledger)
+            let signer: Signer | null = null;
+            let signerAddress: string | null = null;
+            if (!config.paperTrading) {
+                try {
+                    signer = createSignerFromEnv();
+                    await assertSignerReady(signer);
+                    signerAddress = await signer.getAddress();
+                    logger.info({ signerType: signer.type, address: signerAddress }, 'Signer initialized');
+                } catch (err) {
+                    // If signer creation fails but we have a wallet (testnet seed), log and continue
+                    if (wallet) {
+                        logger.warn({ err }, 'Signer creation failed, falling back to wallet.sign()');
+                        signer = null;
+                    } else {
+                        throw err;
+                    }
+                }
+            }
+
+            // Effective address: signer address takes priority, then wallet
+            const effectiveAddress = signerAddress ?? wallet?.classicAddress ?? null;
+
             const tracker = new OrderBookTracker(xrpl, config.tradingPair);
             const risk = new RiskEngine(config.risk, client);
             const executor = new OfferExecutor(client, wallet, risk, config.paperTrading, config.tradingPair, config.strategy);
+            if (signer) {
+                executor.setSigner(signer);
+            }
             const amm = new AMMService(client);
 
             // Initialize trade tape for capturing executed trades
             const tradeTape = new TradeTape(config.tradingPair);
-            const tradeTapeService = new TradeTapeService(tradeTape, config.tradingPair, wallet?.classicAddress ?? null);
+            const tradeTapeService = new TradeTapeService(tradeTape, config.tradingPair, effectiveAddress);
             const accountTradeIngestion = new AccountTradeIngestionService(
                 config.tradingPair,
-                wallet?.classicAddress ?? null,
+                effectiveAddress,
             );
 
             // Set global reference for API routes
@@ -663,7 +690,7 @@ export class TradingRuntime {
             try {
                 risk.setExposureTracker(this.exposureTracker);
             } catch { /* best-effort */ }
-            this.walletAddress = wallet?.classicAddress ?? null;
+            this.walletAddress = effectiveAddress;
             this.started = true;
 
             // FSM: SUBSCRIBING_FEEDS → WARMING_MARKET_CACHE
@@ -885,6 +912,18 @@ export class TradingRuntime {
                 // Track balance snapshot freshness for health scoring
                 this.lastBalanceSnapshotMs = Date.now();
                 this.lastBalanceLedgerIndex = this.xrpl?.getLedgerIndex() ?? 0;
+
+                // Populate balance cache so /api/runtime/balances returns data
+                const xrpBal = this.risk.getLastXrpBalance();
+                if (xrpBal != null) {
+                    const balPairKey = `${this.baseConfig.tradingPair.baseCurrency}/${this.baseConfig.tradingPair.quoteCurrency}`;
+                    this.cacheRegistry.updateBalance(balPairKey, {
+                        xrpBalance: xrpBal,
+                        quoteBalance: 0,  // quote balance requires account_lines; wallet API handles it
+                        quoteCurrency: this.baseConfig.tradingPair.quoteCurrency,
+                        ledgerIndex: this.lastBalanceLedgerIndex,
+                    });
+                }
 
                 // Edge-detect: balance was stale, now refreshed
                 if (this.lastBalanceStale) {

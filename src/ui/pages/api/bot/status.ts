@@ -3,6 +3,7 @@ import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { botController } from '../../../lib/botController';
 import { ensureRuntimeHooks } from '../../../lib/runtimeHooks';
+import { loadConfig } from '../../../../config';
 
 export const config = {
     api: { bodyParser: false },
@@ -11,7 +12,13 @@ export const config = {
 function handler(req: LocalRequest, res: NextApiResponse) {
     ensureRuntimeHooks();
     const state = botController.getState();
-    res.status(200).json({ state, message: `Bot state is ${state.toLowerCase()}`, requestId: req.requestId });
+    const cfg = loadConfig();
+    res.status(200).json({
+        state,
+        paperTrading: cfg.paperTrading,
+        message: `Bot state is ${state.toLowerCase()}`,
+        requestId: req.requestId,
+    });
 }
 
 export default withLocalApi(withApiRouteContext(handler), { methods: ['GET'], skipAudit: true });

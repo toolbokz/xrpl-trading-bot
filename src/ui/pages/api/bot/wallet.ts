@@ -128,6 +128,7 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
     try {
         const cfg = loadConfig();
         const network = cfg.xrpl.network?.toUpperCase() || 'MAINNET';
+        const paperTrading = cfg.paperTrading;
 
         // Allow override via query params (from frontend's selected pair)
         const queryBase = typeof req.query.base === 'string' ? req.query.base : null;
@@ -199,6 +200,7 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
                             balance: tl.balance,
                         })),
                         fromRuntime: true,
+                        paperTrading,
                     });
                 }
             }
@@ -216,6 +218,7 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
                 trustLines: [],
                 fromRuntime: true,
                 warmingUp: true,
+                paperTrading,
             });
         }
 
@@ -384,6 +387,7 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
             quoteBalance,
             quoteCurrency: quoteCurrencyDisplay,
             requestId: req.requestId,
+            paperTrading,
         });
     } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to fetch wallet info';
@@ -399,6 +403,7 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
             quoteBalance: 0,
             quoteCurrency: '',
             requestId: req.requestId,
+            paperTrading: true, // safe default on error
         });
     }
 }

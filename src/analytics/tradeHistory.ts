@@ -267,7 +267,7 @@ function computeFallbackRealizedPnl(trades: Trade[], todayTimestamp: number): Re
 }
 
 const MAX_TRADES_IN_MEMORY = 1000;
-const TRADES_FILE = 'trade_history.json';
+const TRADES_FILE = path.join('data', 'trade_history.json');
 
 type TradeInput = Omit<Trade, 'id' | 'timestamp'>;
 

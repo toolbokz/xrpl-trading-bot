@@ -261,6 +261,9 @@ function DashboardPageContent() {
             if (data?.state) {
                 updateStatus((data.state as BotStatus) || 'STOPPED', data.message);
             }
+            if (typeof data?.paperTrading === 'boolean') {
+                setBot((prev) => ({ ...prev, paper: data.paperTrading }));
+            }
         } catch {
             setActionMessage('Unable to fetch bot status');
         }

@@ -8,8 +8,10 @@
  * - KmsSigner: Uses cloud KMS (AWS/GCP/Azure)
  */
 
-import { Wallet, Transaction, Client } from 'xrpl';
+import { Wallet, Transaction, Client, encode, encodeForSigning, hashes } from 'xrpl';
 import { walletFromSecretNumbers } from 'xrpl/dist/npm/Wallet/walletFromSecretNumbers';
+import { deriveAddress } from 'ripple-keypairs';
+import { createHash } from 'crypto';
 
 export interface SignedTransaction {
     tx_blob: string;
@@ -248,59 +250,351 @@ export class LedgerSigner implements Signer {
 }
 
 /**
- * KmsSigner - Uses cloud Key Management Service (AWS KMS).
+ * KmsSigner — Production-grade AWS KMS signing for XRPL.
  *
- * HARD FAILURE: This signer requires @aws-sdk/client-kms.
- * The XRPL private key must be stored as an asymmetric key in KMS
- * with ECDSA_SHA_256 signing permissions (secp256k1).
+ * The KMS key MUST be:
+ *   - Key spec: ECC_SECG_P256K1 (secp256k1)
+ *   - Key usage: SIGN_VERIFY
+ *   - Signing algorithm: ECDSA_SHA_256
  *
- * When implemented, the flow is:
- * 1. Call KMS GetPublicKey to derive the XRPL r-address
- * 2. Serialize transaction for signing (per XRPL spec)
- * 3. Call KMS Sign with ECDSA_SHA_256
- * 4. Construct the signed transaction blob with DER signature
+ * Flow:
+ * 1. GetPublicKey → DER-encoded SubjectPublicKeyInfo
+ * 2. Extract raw 33-byte compressed secp256k1 public key
+ * 3. deriveAddress(compressedPubKeyHex) → XRPL classic address
+ * 4. For signing: encodeForSigning(tx) → SHA-512Half → KMS Sign → DER sig → tx_blob
  */
 export class KmsSigner implements Signer {
     readonly type = 'kms' as const;
     private _keyId: string;
     private _region: string;
+    private _kmsClient: any | null = null;
+    /** Cached compressed public key (33 bytes, hex-encoded) */
+    private _compressedPubKeyHex: string | null = null;
+    /** Cached XRPL classic address (KMS-derived or overridden via accountAddress) */
+    private _address: string | null = null;
+    /**
+     * When set, getAddress() returns this address instead of the KMS-derived one.
+     * Used for Regular Key mode: the KMS key signs on behalf of an existing account.
+     */
+    private _accountAddress: string | null;
 
-    constructor(keyId: string, region = 'us-east-1') {
+    constructor(keyId: string, region = 'us-east-1', accountAddress?: string) {
         this._keyId = keyId;
         this._region = region;
+        this._accountAddress = accountAddress ?? null;
     }
 
-    /** Get KMS configuration for future implementation */
-    protected getKmsConfig(): { keyId: string; region: string } {
-        return { keyId: this._keyId, region: this._region };
+    /** Lazily create the KMS client (avoids import at module load time). */
+    private async getKmsClient(): Promise<any> {
+        if (this._kmsClient) return this._kmsClient;
+        const { KMSClient } = await import('@aws-sdk/client-kms');
+        this._kmsClient = new KMSClient({ region: this._region });
+        return this._kmsClient;
+    }
+
+    /**
+     * Fetch the public key from KMS and derive the XRPL address.
+     *
+     * KMS returns a DER-encoded SubjectPublicKeyInfo structure.
+     * For ECC_SECG_P256K1, the raw public key is a 65-byte uncompressed
+     * point (04 || x || y). We compress it to 33 bytes (02/03 || x).
+     */
+    /**
+     * Ensure the KMS public key is fetched and cached.
+     * Must be called before signing (signTx calls it automatically).
+     */
+    private async ensurePubKey(): Promise<void> {
+        if (this._compressedPubKeyHex) return;
+
+        const client = await this.getKmsClient();
+        const { GetPublicKeyCommand } = await import('@aws-sdk/client-kms');
+
+        const response = await client.send(new GetPublicKeyCommand({
+            KeyId: this._keyId,
+        }));
+
+        if (!response.PublicKey) {
+            throw new Error('KMS GetPublicKey returned no public key data');
+        }
+
+        // Validate key spec
+        if (response.KeySpec !== 'ECC_SECG_P256K1') {
+            throw new Error(
+                `KMS key spec is "${response.KeySpec}", expected "ECC_SECG_P256K1". ` +
+                'Create a new KMS key with Key spec: ECC_SECG_P256K1 (secp256k1).'
+            );
+        }
+
+        // Parse the DER-encoded SubjectPublicKeyInfo to extract raw public key
+        const derBytes = new Uint8Array(response.PublicKey);
+        const rawPubKey = extractPublicKeyFromDer(derBytes);
+
+        // Compress the public key (65 bytes uncompressed → 33 bytes compressed)
+        const compressed = compressPublicKey(rawPubKey);
+        this._compressedPubKeyHex = Buffer.from(compressed).toString('hex').toUpperCase();
+
+        // Derive address from KMS key (used as fallback when no accountAddress)
+        const kmsAddr = deriveAddress(this._compressedPubKeyHex);
+        if (!this._accountAddress) {
+            this._address = kmsAddr;
+        } else {
+            this._address = this._accountAddress;
+        }
     }
 
     async getAddress(): Promise<string> {
-        throw new SignerNotImplementedError(
-            'kms',
-            'Install @aws-sdk/client-kms and implement GetPublicKey → XRPL address derivation.',
-        );
+        if (this._address) return this._address;
+        await this.ensurePubKey();
+        return this._address!;
     }
 
-    async signTx(_tx: Transaction): Promise<SignedTransaction> {
-        throw new SignerNotImplementedError(
-            'kms',
-            'Install @aws-sdk/client-kms and implement KMS Sign → XRPL tx_blob construction.',
-        );
+    /**
+     * Sign an XRPL transaction using AWS KMS.
+     *
+     * XRPL signing flow:
+     * 1. Serialize tx for signing via encodeForSigning()
+     * 2. SHA-512 hash and take first 32 bytes (SHA-512Half)
+     * 3. Send the 32-byte hash to KMS for ECDSA_SHA_256 signing
+     *    (KMS signs the raw hash — we do NOT double-hash)
+     * 4. Convert KMS DER signature to XRPL canonical form
+     * 5. Attach SigningPubKey + TxnSignature, encode to tx_blob
+     */
+    async signTx(tx: Transaction): Promise<SignedTransaction> {
+        // Ensure we have the public key cached
+        await this.ensurePubKey();
+
+        // Step 1: Serialize the transaction for signing
+        const serializedHex = encodeForSigning(tx);
+        const serializedBytes = Buffer.from(serializedHex, 'hex');
+
+        // Step 2: SHA-512Half (first 32 bytes of SHA-512)
+        const sha512 = createHash('sha512').update(serializedBytes).digest();
+        const hashToSign = sha512.subarray(0, 32);
+
+        // Step 3: Sign with KMS using ECDSA_SHA_256
+        // We pass a pre-computed 32-byte hash. KMS with ECDSA_SHA_256
+        // and MessageType=DIGEST signs the raw bytes directly.
+        const client = await this.getKmsClient();
+        const { SignCommand } = await import('@aws-sdk/client-kms');
+
+        const signResponse = await client.send(new SignCommand({
+            KeyId: this._keyId,
+            Message: hashToSign,
+            MessageType: 'DIGEST',
+            SigningAlgorithm: 'ECDSA_SHA_256',
+        }));
+
+        if (!signResponse.Signature) {
+            throw new Error('KMS Sign returned no signature data');
+        }
+
+        // Step 4: Convert DER signature to XRPL canonical hex
+        const derSig = new Uint8Array(signResponse.Signature);
+        const { r, s } = parseDerSignature(derSig);
+        const canonicalSig = canonicalizeSignature(r, s);
+        const sigHex = Buffer.from(canonicalSig).toString('hex').toUpperCase();
+
+        // Step 5: Attach signature and public key to transaction
+        const signedTx = {
+            ...tx,
+            SigningPubKey: this._compressedPubKeyHex!,
+            TxnSignature: sigHex,
+        };
+
+        // Encode to tx_blob
+        const txBlob = encode(signedTx);
+
+        // Compute transaction hash
+        const txHash = hashes.hashSignedTx(txBlob);
+
+        return {
+            tx_blob: txBlob,
+            hash: txHash,
+        };
     }
 
     async isReady(): Promise<boolean> {
-        return false;
+        try {
+            // Verify we can reach KMS and the key exists
+            await this.ensurePubKey();
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     getReadinessReport(): SignerReadinessReport {
+        const mode = this._accountAddress ? 'regular-key' : 'direct';
         return {
             type: 'kms',
-            ready: false,
-            reason: 'AWS KMS SDK not installed. Run: npm install @aws-sdk/client-kms',
+            ready: !!this._compressedPubKeyHex,
+            reason: this._compressedPubKeyHex
+                ? `KMS signer ready (${mode}), address: ${this._address}`
+                : 'KMS signer not yet initialized — call isReady() to connect',
             hasCredentials: !!this._keyId,
         };
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DER / secp256k1 helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Extract the raw public key bytes from a DER-encoded SubjectPublicKeyInfo.
+ *
+ * For secp256k1, the structure is:
+ * SEQUENCE {
+ *   SEQUENCE { OID ecPublicKey, OID secp256k1 }
+ *   BIT STRING { 0x04 || x (32 bytes) || y (32 bytes) }
+ * }
+ *
+ * The raw uncompressed public key (65 bytes) starts after the BIT STRING
+ * tag, length, and unused-bits byte.
+ */
+function extractPublicKeyFromDer(der: Uint8Array): Uint8Array {
+    let offset = 0;
+
+    // Outer SEQUENCE
+    if (der[offset] !== 0x30) throw new Error('Expected SEQUENCE tag in DER public key');
+    offset++;
+    offset += derLengthSize(der, offset);
+
+    // Inner SEQUENCE (algorithm identifier) — skip it
+    if (der[offset] !== 0x30) throw new Error('Expected inner SEQUENCE tag');
+    offset++;
+    const innerLen = derReadLength(der, offset);
+    offset += derLengthSize(der, offset) + innerLen;
+
+    // BIT STRING containing the public key
+    if (der[offset] !== 0x03) throw new Error('Expected BIT STRING tag for public key');
+    offset++;
+    const bitStringLen = derReadLength(der, offset);
+    offset += derLengthSize(der, offset);
+
+    // First byte of BIT STRING is unused bits count (should be 0)
+    const unusedBits = der[offset];
+    if (unusedBits !== 0) throw new Error(`Unexpected unused bits: ${unusedBits}`);
+    offset++;
+
+    const rawKey = der.slice(offset, offset + bitStringLen - 1);
+
+    if (rawKey.length !== 65 || rawKey[0] !== 0x04) {
+        throw new Error(
+            `Expected 65-byte uncompressed public key (04 || x || y), got ${rawKey.length} bytes ` +
+            `starting with 0x${rawKey[0]?.toString(16)}`
+        );
+    }
+
+    return rawKey;
+}
+
+/**
+ * Compress a 65-byte uncompressed secp256k1 public key to 33 bytes.
+ * Format: (02 if y is even, 03 if y is odd) || x
+ */
+function compressPublicKey(uncompressed: Uint8Array): Uint8Array {
+    if (uncompressed.length !== 65 || uncompressed[0] !== 0x04) {
+        throw new Error('Expected 65-byte uncompressed key starting with 0x04');
+    }
+    const x = uncompressed.slice(1, 33);
+    const yLastByte = uncompressed[64]!;
+    const prefix = (yLastByte & 1) === 0 ? 0x02 : 0x03;
+    const compressed = new Uint8Array(33);
+    compressed[0] = prefix;
+    compressed.set(x, 1);
+    return compressed;
+}
+
+/**
+ * Parse a DER-encoded ECDSA signature into r and s components.
+ * DER format: 0x30 <len> 0x02 <rLen> <r> 0x02 <sLen> <s>
+ */
+function parseDerSignature(der: Uint8Array): { r: Uint8Array; s: Uint8Array } {
+    let offset = 0;
+
+    if (der[offset] !== 0x30) throw new Error('Expected SEQUENCE tag in DER signature');
+    offset++;
+    offset += derLengthSize(der, offset); // skip length
+
+    // R component
+    if (der[offset] !== 0x02) throw new Error('Expected INTEGER tag for R');
+    offset++;
+    const rLen = der[offset]!;
+    offset++;
+    const r = der.slice(offset, offset + rLen);
+    offset += rLen;
+
+    // S component
+    if (der[offset] !== 0x02) throw new Error('Expected INTEGER tag for S');
+    offset++;
+    const sLen = der[offset]!;
+    offset++;
+    const s = der.slice(offset, offset + sLen);
+
+    return { r, s };
+}
+
+/**
+ * The secp256k1 curve order N.
+ * All ECDSA s-values must be in the lower half (s <= N/2) for XRPL.
+ */
+const SECP256K1_ORDER = BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141');
+const SECP256K1_HALF_ORDER = SECP256K1_ORDER / 2n;
+
+/**
+ * Ensure the ECDSA signature is in canonical (low-S) form as required by XRPL.
+ * If s > N/2, replace s with N - s.
+ * Returns the signature as a fixed 64-byte buffer (32 bytes r + 32 bytes s).
+ */
+function canonicalizeSignature(r: Uint8Array, s: Uint8Array): Uint8Array {
+    let rBig = bytesToBigInt(r);
+    let sBig = bytesToBigInt(s);
+
+    // Enforce low-S
+    if (sBig > SECP256K1_HALF_ORDER) {
+        sBig = SECP256K1_ORDER - sBig;
+    }
+
+    // Encode as fixed 32-byte big-endian values
+    const result = new Uint8Array(64);
+    bigIntToBytes32(rBig, result, 0);
+    bigIntToBytes32(sBig, result, 32);
+    return result;
+}
+
+function bytesToBigInt(bytes: Uint8Array): bigint {
+    let hex = '';
+    for (const b of bytes) {
+        hex += b.toString(16).padStart(2, '0');
+    }
+    return hex.length > 0 ? BigInt('0x' + hex) : 0n;
+}
+
+function bigIntToBytes32(value: bigint, target: Uint8Array, offset: number): void {
+    const hex = value.toString(16).padStart(64, '0');
+    for (let i = 0; i < 32; i++) {
+        target[offset + i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+}
+
+/** Read a DER length value and return it. */
+function derReadLength(buf: Uint8Array, offset: number): number {
+    const first = buf[offset]!;
+    if (first < 0x80) return first;
+    const numBytes = first & 0x7f;
+    let len = 0;
+    for (let i = 0; i < numBytes; i++) {
+        len = (len << 8) | (buf[offset + 1 + i] ?? 0);
+    }
+    return len;
+}
+
+/** Return the number of bytes used to encode a DER length at the given offset. */
+function derLengthSize(buf: Uint8Array, offset: number): number {
+    const first = buf[offset]!;
+    if (first < 0x80) return 1;
+    return 1 + (first & 0x7f);
 }
 
 /**
@@ -335,7 +629,7 @@ export function createSignerFromEnv(): Signer {
     // Mainnet / production: require non-seed signer
     if (isMainnetContext()) {
         if (kmsKeyId) {
-            return new KmsSigner(kmsKeyId, process.env.AWS_REGION);
+            return new KmsSigner(kmsKeyId, process.env.AWS_REGION, process.env.KMS_ACCOUNT_ADDRESS);
         }
         if (xummApiKey) {
             return new XummSigner(
