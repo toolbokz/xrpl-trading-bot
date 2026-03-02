@@ -10,9 +10,10 @@ dist/
 
 # Environment variable files
 .env
-.env.spam
-.env.development
-.env.production
+.env.testnet
+.env.mainnet
+.env.testnet.local.example
+.env.mainnet.local.example
 
 # Logs and debug files
 npm-debug.log*

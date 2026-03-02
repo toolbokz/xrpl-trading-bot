@@ -27,6 +27,7 @@ import { LatencyImpactPanel } from '../components/LatencyImpactPanel';
 import { SlippageRealismPanel } from '../components/SlippageRealismPanel';
 import { AttributionCompletenessPanel } from '../components/AttributionCompletenessPanel';
 import { TradeHistoryDiagnosticsPanel } from '../components/TradeHistoryDiagnosticsPanel';
+import { HardeningPanel } from '../components/HardeningPanel';
 import { AdvancedPanel } from '../components/AdvancedPanel';
 import { useOrderBook } from '../lib/hooks/useOrderBook';
 import { RuntimeCacheProvider, useRuntimeCache } from '../lib/hooks/useRuntimeCache';
@@ -40,7 +41,7 @@ import { useSpreadModel } from '../lib/hooks/useSpreadModel';
 type BotStatus = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
 type ToolTab = 'tape' | 'diagnostics' | 'advanced';
 type DrawerTab = 'logs';
-type DiagnosticsTab = 'execution' | 'risk' | 'policy' | 'latency' | 'trades';
+type DiagnosticsTab = 'execution' | 'risk' | 'policy' | 'latency' | 'trades' | 'hardening';
 
 interface BotState {
     status: BotStatus;
@@ -179,7 +180,7 @@ function DashboardPageContent() {
             setDrawerTab(savedDrawerTab);
         }
         const savedDiagnosticsTab = window.localStorage.getItem('xrpl.diagnosticsTab') as DiagnosticsTab | null;
-        if (savedDiagnosticsTab && ['execution', 'risk', 'policy', 'latency', 'trades'].includes(savedDiagnosticsTab)) {
+        if (savedDiagnosticsTab && ['execution', 'risk', 'policy', 'latency', 'trades', 'hardening'].includes(savedDiagnosticsTab)) {
             setActiveDiagnosticsTab(savedDiagnosticsTab);
         }
 
@@ -540,6 +541,7 @@ function DashboardPageContent() {
         { id: 'policy', label: 'Policy' },
         { id: 'latency', label: 'Latency' },
         { id: 'trades', label: 'Trade History' },
+        { id: 'hardening', label: 'Hardening' },
     ];
 
     const onToolTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -755,6 +757,17 @@ function DashboardPageContent() {
                             pollInterval={10_000}
                             enabled={diagnosticsVisible && activeDiagnosticsTab === 'trades'}
                             refreshSeq={tradeRefreshSeq}
+                        />
+                    </div>
+                </section>
+            )}
+
+            {activeDiagnosticsTab === 'hardening' && (
+                <section className="space-y-3">
+                    <div className="min-h-[480px]">
+                        <HardeningPanel
+                            pollInterval={60_000}
+                            enabled={diagnosticsVisible && activeDiagnosticsTab === 'hardening'}
                         />
                     </div>
                 </section>

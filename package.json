@@ -6,6 +6,12 @@
     "main": "dist/index.js",
     "type": "commonjs",
     "scripts": {
+        "env:use:testnet": "node scripts/use-env-profile.js testnet",
+        "env:use:mainnet": "node scripts/use-env-profile.js mainnet",
+        "env:use:mainnet:force": "node scripts/use-env-profile.js mainnet --force",
+        "dev:testnet": "npm run env:use:testnet && npm run dev",
+        "start:testnet": "npm run env:use:testnet && BOT_LOCAL_ONLY=true SINGLE_PROCESS_MODE=true node server.js",
+        "start:mainnet": "CONFIRM_MAINNET=YES npm run env:use:mainnet && NODE_ENV=production BOT_LOCAL_ONLY=true SINGLE_PROCESS_MODE=true node server.js",
         "build:backend": "tsc -p tsconfig.json",
         "build:frontend": "next build src/ui",
         "build": "npm run build:backend && npm run build:frontend",

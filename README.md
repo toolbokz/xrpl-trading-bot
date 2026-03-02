@@ -84,6 +84,23 @@ PAPER_TRADING=false
 XRPL_SEED_TESTNET=sEd...your-testnet-seed
 ```
 
+### Safer Profile Workflow (recommended)
+
+This repo includes separate profile files and guarded switch commands:
+
+- `npm run env:use:testnet` → copies `.env.testnet` (or `.env.testnet.local`) to `.env`
+- `CONFIRM_MAINNET=YES npm run env:use:mainnet` → copies `.env.mainnet` (or `.env.mainnet.local`) to `.env`
+
+The mainnet switch requires explicit confirmation and creates a timestamped backup of existing `.env`.
+
+Convenience commands:
+
+```bash
+npm run dev:testnet
+npm run start:testnet
+npm run start:mainnet
+```
+
 ### Run
 
 ```bash

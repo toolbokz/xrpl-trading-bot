@@ -313,17 +313,17 @@ function lintEnv(parsed: ParsedEnv): Issue[] {
 
     // 5) Execution min-order sanity overlaps (matches your bot feature intent)
     const featureMinOrderSanity = boolVal("FEATURE_EXECUTION_MIN_ORDER_SANITY");
-    const execMinBase = numVal("EXECUTION_MIN_BASE");
-    const execMinQuote = numVal("EXECUTION_MIN_QUOTE");
+    const execMinBase = numVal("EXECUTION_MIN_BASE_XRP");
+    const execMinQuote = numVal("EXECUTION_MIN_QUOTE_RLUSD");
 
     if (featureMinOrderSanity === true) {
         if (execMinBase === undefined || execMinBase <= 0) {
             pushIssue(issues, {
                 severity: "warn",
                 code: "MIN_ORDER_SANITY_NO_MIN_BASE",
-                message: "FEATURE_EXECUTION_MIN_ORDER_SANITY=true but EXECUTION_MIN_BASE is missing or non-positive.",
-                key: "EXECUTION_MIN_BASE",
-                line: lineOf("EXECUTION_MIN_BASE"),
+                message: "FEATURE_EXECUTION_MIN_ORDER_SANITY=true but EXECUTION_MIN_BASE_XRP is missing or non-positive.",
+                key: "EXECUTION_MIN_BASE_XRP",
+                line: lineOf("EXECUTION_MIN_BASE_XRP"),
             });
         }
 
@@ -331,9 +331,9 @@ function lintEnv(parsed: ParsedEnv): Issue[] {
             pushIssue(issues, {
                 severity: "warn",
                 code: "MIN_ORDER_SANITY_NO_MIN_QUOTE",
-                message: "FEATURE_EXECUTION_MIN_ORDER_SANITY=true but EXECUTION_MIN_QUOTE is missing or non-positive.",
-                key: "EXECUTION_MIN_QUOTE",
-                line: lineOf("EXECUTION_MIN_QUOTE"),
+                message: "FEATURE_EXECUTION_MIN_ORDER_SANITY=true but EXECUTION_MIN_QUOTE_RLUSD is missing or non-positive.",
+                key: "EXECUTION_MIN_QUOTE_RLUSD",
+                line: lineOf("EXECUTION_MIN_QUOTE_RLUSD"),
             });
         }
     } else if (featureMinOrderSanity === false) {
@@ -341,9 +341,9 @@ function lintEnv(parsed: ParsedEnv): Issue[] {
             pushIssue(issues, {
                 severity: "info",
                 code: "MIN_BASE_SET_WHILE_SANITY_DISABLED",
-                message: "EXECUTION_MIN_BASE is set but FEATURE_EXECUTION_MIN_ORDER_SANITY=false.",
-                key: "EXECUTION_MIN_BASE",
-                line: lineOf("EXECUTION_MIN_BASE"),
+                message: "EXECUTION_MIN_BASE_XRP is set but FEATURE_EXECUTION_MIN_ORDER_SANITY=false.",
+                key: "EXECUTION_MIN_BASE_XRP",
+                line: lineOf("EXECUTION_MIN_BASE_XRP"),
             });
         }
 
@@ -351,9 +351,9 @@ function lintEnv(parsed: ParsedEnv): Issue[] {
             pushIssue(issues, {
                 severity: "info",
                 code: "MIN_QUOTE_SET_WHILE_SANITY_DISABLED",
-                message: "EXECUTION_MIN_QUOTE is set but FEATURE_EXECUTION_MIN_ORDER_SANITY=false.",
-                key: "EXECUTION_MIN_QUOTE",
-                line: lineOf("EXECUTION_MIN_QUOTE"),
+                message: "EXECUTION_MIN_QUOTE_RLUSD is set but FEATURE_EXECUTION_MIN_ORDER_SANITY=false.",
+                key: "EXECUTION_MIN_QUOTE_RLUSD",
+                line: lineOf("EXECUTION_MIN_QUOTE_RLUSD"),
             });
         }
     }
