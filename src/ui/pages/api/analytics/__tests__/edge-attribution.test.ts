@@ -117,6 +117,7 @@ describe('GET /api/analytics/edge-attribution', () => {
             side: 'sell',
             source: 'bot',
             bucketMs: 300000,
+            paperMode: false,
         });
     });
 
@@ -133,6 +134,7 @@ describe('GET /api/analytics/edge-attribution', () => {
         expect(mockGetEdgeAttributionAnalytics).toHaveBeenCalledWith({
             pairKey: 'XRP/RLUSD',
             side: 'buy',
+            paperMode: false,
         });
     });
 

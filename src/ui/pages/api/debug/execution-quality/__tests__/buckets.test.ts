@@ -102,7 +102,7 @@ describe('GET /api/debug/execution-quality/buckets', () => {
         handler(req, res);
 
         expect(res.statusCode).toBe(200);
-        expect(mockGetRecentTrades).toHaveBeenCalledWith(500);
+        expect(mockGetRecentTrades).toHaveBeenCalledWith(500, false);
         expect(res.body.limit).toBe(500);
         expect(res.body.totalTradesAnalyzed).toBe(3);
         expect(res.body.buckets).toEqual({
@@ -149,7 +149,7 @@ describe('GET /api/debug/execution-quality/buckets', () => {
         handler(req, res);
 
         expect(res.statusCode).toBe(200);
-        expect(mockGetRecentTrades).toHaveBeenCalledWith(2);
+        expect(mockGetRecentTrades).toHaveBeenCalledWith(2, false);
         expect(res.body.limit).toBe(2);
         expect(res.body.totalTradesAnalyzed).toBe(2);
     });

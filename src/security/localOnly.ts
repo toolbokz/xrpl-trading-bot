@@ -182,12 +182,17 @@ export function isLocalhostAddress(address: string): boolean {
 export function loadLocalOnlyConfig(): LocalOnlyConfig {
     const hostname = os.hostname();
     const networkInterfaces = getNetworkInterfaces();
+    const forceLocalOnly = process.env.BOT_LOCAL_ONLY === 'true';
+
+    // When BOT_LOCAL_ONLY=true, suppress cloud detection.
+    // The server is bound to 127.0.0.1 so cloud hosting is safe.
+    const cloudPlatform = forceLocalOnly ? null : detectCloudPlatform();
 
     return {
         allowRemote: process.env.BOT_ALLOW_REMOTE === 'true',
-        forceLocalOnly: process.env.BOT_LOCAL_ONLY === 'true',
+        forceLocalOnly,
         nodeEnv: process.env.NODE_ENV || 'development',
-        cloudPlatform: detectCloudPlatform(),
+        cloudPlatform,
         isContainer: detectContainer(),
         hostname,
         networkInterfaces,
@@ -216,8 +221,8 @@ export function enforceLocalOnly(_context: string = 'Bot'): void {
         return; // Allow execution with warning
     }
 
-    // Block cloud platforms unconditionally
-    if (config.cloudPlatform) {
+    // Block cloud platforms unless explicitly locked to localhost
+    if (config.cloudPlatform && !config.forceLocalOnly) {
         throw new CloudExecutionBlockedError(config.cloudPlatform);
     }
 
@@ -282,7 +287,7 @@ export function getLocalOnlyStatus(): {
         };
     }
 
-    if (config.cloudPlatform) {
+    if (config.cloudPlatform && !config.forceLocalOnly) {
         return {
             isLocal: false,
             reason: `Running on cloud platform: ${config.cloudPlatform}`,

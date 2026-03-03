@@ -2,6 +2,7 @@ import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { feedbackEngine, CostSummary } from '../../../../analytics/feedbackEngine';
+import { loadConfig } from '../../../../config';
 
 export const config = {
     api: { bodyParser: false },
@@ -53,7 +54,7 @@ function handler(req: LocalRequest, res: NextApiResponse<CostRealismApiResponse 
         // Parse query parameters
         const { pair, strategy, sinceMs } = req.query;
 
-        const filters: { pairKey?: string; strategy?: string; sinceMs?: number } = {};
+        const filters: { pairKey?: string; strategy?: string; sinceMs?: number; paperMode?: boolean } = {};
 
         if (typeof pair === 'string' && pair.trim()) {
             filters.pairKey = pair.trim();
@@ -69,6 +70,8 @@ function handler(req: LocalRequest, res: NextApiResponse<CostRealismApiResponse 
                 filters.sinceMs = parsed;
             }
         }
+
+        filters.paperMode = loadConfig().paperTrading;
 
         // Get cost summary from feedback engine
         const costs = feedbackEngine.getCostSummary(filters);

@@ -386,6 +386,16 @@ async function handler(req: LocalRequest, res: NextApiResponse) {
 
             fs.writeFileSync(filePath, content, 'utf-8');
 
+            // Sync applied changes into process.env so that the next
+            // loadConfig() (e.g. after a bot restart) sees the new values
+            // without requiring a full server restart.
+            for (const key of applied) {
+                const newVal = changes[key];
+                if (newVal !== undefined) {
+                    process.env[key] = String(newVal);
+                }
+            }
+
             void logSensitiveAction(
                 req.requestId,
                 'env-settings-update',

@@ -70,11 +70,16 @@ export interface LocalOnlyConfig {
 }
 
 export function loadLocalOnlyConfig(): LocalOnlyConfig {
-    const cloudPlatform = isCloudEnvironment();
+    const rawCloudPlatform = isCloudEnvironment();
+    const forceLocalOnly = process.env.BOT_LOCAL_ONLY === 'true';
+
+    // When BOT_LOCAL_ONLY=true, suppress cloud detection.
+    // The server is bound to 127.0.0.1 so cloud hosting is safe.
+    const cloudPlatform = forceLocalOnly ? null : rawCloudPlatform;
 
     return {
         allowRemote: process.env.BOT_ALLOW_REMOTE === 'true',
-        forceLocalOnly: process.env.BOT_LOCAL_ONLY === 'true',
+        forceLocalOnly,
         isProduction: process.env.NODE_ENV === 'production',
         cloudPlatform,
         cloudCheck: {
@@ -104,7 +109,7 @@ export function validateLocalhostRequest(req: NextApiRequest): LocalhostCheckRes
         };
     }
 
-    if (config.cloudPlatform) {
+    if (config.cloudPlatform && !config.forceLocalOnly) {
         return {
             allowed: false,
             reason: `Remote access disabled: Cloud platform ${config.cloudPlatform}`,
@@ -170,7 +175,7 @@ export function validateServerStartup(): { allowed: boolean; reason: string } {
         return { allowed: true, reason: 'BOT_ALLOW_REMOTE override' };
     }
 
-    if (config.cloudPlatform) {
+    if (config.cloudPlatform && !config.forceLocalOnly) {
         return {
             allowed: false,
             reason: `Cloud platform detected: ${config.cloudPlatform}`,

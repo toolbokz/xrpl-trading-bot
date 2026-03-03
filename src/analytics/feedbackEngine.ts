@@ -214,6 +214,8 @@ export interface ExecutionQualityFilters {
     includeNonExecutionEvidence?: boolean;
     includeStrategies?: string[];
     excludeStrategies?: string[];
+    /** Filter by paper mode: true = paper only, false = live only, undefined = all */
+    paperMode?: boolean;
 }
 
 export interface ExecutionQualitySummary {
@@ -369,6 +371,8 @@ export interface EdgeAttributionFilters {
     side?: 'buy' | 'sell';
     source?: 'bot' | 'manual' | 'unknown';
     bucketMs?: number;
+    /** Filter by paper mode: true = paper only, false = live only, undefined = all */
+    paperMode?: boolean;
 }
 
 export interface EdgeAttributionSummary {
@@ -544,6 +548,8 @@ export interface RegimeHeatmapOptions {
     minTrades?: number;
     /** Include per-strategy breakdown */
     byStrategy?: boolean;
+    /** Filter by paper mode: true = paper only, false = live only, undefined = all */
+    paperMode?: boolean;
 }
 
 /**
@@ -777,6 +783,7 @@ class FeedbackEngine {
         if (!this.ensureInitialized()) return null;
 
         try {
+            const paperFlag = process.env.PAPER_TRADING === 'true' ? 1 : 0;
             const event: TradeEventRecord = {
                 id: generateId(),
                 ts: Date.now(),
@@ -830,6 +837,7 @@ class FeedbackEngine {
                 entryLocalExtreme: input.entryLocalExtreme ?? null,
                 postSignal1s: input.postSignal1s ?? null,
                 postSignal3s: input.postSignal3s ?? null,
+                paper: paperFlag,
             };
 
             const insertedId = insertTradeEvent(event);
@@ -894,6 +902,7 @@ class FeedbackEngine {
         if (!this.ensureInitialized()) return;
 
         try {
+            const paperFlag = process.env.PAPER_TRADING === 'true' ? 1 : 0;
             const eventRecords: TradeEventRecord[] = events.map(input => ({
                 id: generateId(),
                 ts: Date.now(),
@@ -947,6 +956,7 @@ class FeedbackEngine {
                 entryLocalExtreme: input.entryLocalExtreme ?? null,
                 postSignal1s: input.postSignal1s ?? null,
                 postSignal3s: input.postSignal3s ?? null,
+                paper: paperFlag,
             }));
 
             let snapshotRecord: MarketSnapshotRecord | undefined;
@@ -987,6 +997,7 @@ class FeedbackEngine {
         if (!this.ensureInitialized()) return null;
 
         try {
+            const paperFlag = process.env.PAPER_TRADING === 'true' ? 1 : 0;
             const canonicalPair = canonicalizePairKey(input.pairKey);
             const aliases = getPairKeyAliases(canonicalPair);
             const metrics = buildExecutionQualityMetrics({
@@ -1059,6 +1070,7 @@ class FeedbackEngine {
                 submitToValidatedMs: input.submitToValidatedMs ?? null,
                 decisionToValidatedMs: input.decisionToValidatedMs ?? null,
                 repriceApplied: input.repriceApplied == null ? null : (input.repriceApplied ? 1 : 0),
+                paper: paperFlag,
             };
 
             return insertExecutionQualityEvent(event);
@@ -1252,6 +1264,7 @@ class FeedbackEngine {
         if (!this.ensureInitialized()) return null;
 
         try {
+            const paperFlag = process.env.PAPER_TRADING === 'true' ? 1 : 0;
             const canonicalPair = canonicalizePairKey(input.pairKey);
             const aliases = getPairKeyAliases(canonicalPair);
             const metrics = buildEdgeAttributionMetrics({
@@ -1303,6 +1316,7 @@ class FeedbackEngine {
                 hasDecisionSnapshot: metrics.hasDecisionSnapshot ? 1 : 0,
                 hasHorizon1m: 0,
                 hasHorizon5m: 0,
+                paper: paperFlag,
             };
 
             return insertEdgeAttributionEvent(event);
@@ -1558,7 +1572,9 @@ class FeedbackEngine {
 
         try {
             const sinceMs = Date.now() - lookbackHours * 60 * 60 * 1000;
-            const events = queryTradeEvents({ sinceMs });
+            const queryFilters: QueryFilters = { sinceMs };
+            if (options.paperMode != null) queryFilters.paperMode = options.paperMode;
+            const events = queryTradeEvents(queryFilters);
 
             // Filter to bot fills only
             const fills = events.filter(e =>
@@ -1870,18 +1886,25 @@ class FeedbackEngine {
             if (filters.strategy) queryFilters.strategy = filters.strategy;
             if (filters.side) queryFilters.side = filters.side;
             if (filters.source) queryFilters.source = filters.source;
+            if (filters.paperMode != null) queryFilters.paperMode = filters.paperMode;
 
             const rawEvents = queryExecutionQualityEvents(queryFilters);
             const includeNonExecutionEvidence = filters.includeNonExecutionEvidence === true;
 
+            // When paperMode is explicitly set, DB-level filtering handles it.
+            // Fall back to in-memory isPaperTradeEvent only when paperMode is unset.
             const nonPaperEvents: ExecutionQualityEventRecord[] = [];
             let excludedPaperTrades = 0;
-            for (const event of rawEvents) {
-                if (isPaperTradeEvent(event)) {
-                    excludedPaperTrades += 1;
-                } else {
-                    nonPaperEvents.push(event);
+            if (filters.paperMode == null) {
+                for (const event of rawEvents) {
+                    if (isPaperTradeEvent(event)) {
+                        excludedPaperTrades += 1;
+                    } else {
+                        nonPaperEvents.push(event);
+                    }
                 }
+            } else {
+                nonPaperEvents.push(...rawEvents);
             }
 
             const strategyFilterOptions: {
@@ -2066,6 +2089,7 @@ class FeedbackEngine {
             if (filters.strategy) queryFilters.strategy = filters.strategy;
             if (filters.side) queryFilters.side = filters.side;
             if (filters.source) queryFilters.source = filters.source;
+            if (filters.paperMode != null) queryFilters.paperMode = filters.paperMode;
 
             const events = queryEdgeAttributionEvents(queryFilters);
             const unknownCount = events.filter((e) => e.hasDecisionSnapshot !== 1).length;
@@ -2650,6 +2674,8 @@ class FeedbackEngine {
     getRollingRiskMetrics(params: {
         pairKey?: string;
         lookbackTrades: number;
+        /** Filter by paper mode: true = paper only, false = live only, undefined = all */
+        paperMode?: boolean;
     }): {
         tradesCount: number;
         profitFactor: number;
@@ -2674,6 +2700,7 @@ class FeedbackEngine {
             if (params.pairKey) {
                 filters.pairKey = params.pairKey;
             }
+            if (params.paperMode != null) filters.paperMode = params.paperMode;
 
             const events = queryTradeEvents(filters);
 

@@ -5,6 +5,7 @@ import { computeAdverseSelectionRate, computeAdverseSelectionRateFromTrades } fr
 import { querySnapshots, queryTradeEvents } from '../../../../analytics/feedbackDb';
 import { canonicalizePairKey } from '../../../../xrpl/currency';
 import { buildAnalyticsCacheKey, getAnalyticsCacheTtlMs, getCachedAnalytics, setCachedAnalytics } from './_cache';
+import { loadConfig } from '../../../../config';
 
 export const config = {
     api: { bodyParser: false },
@@ -78,10 +79,11 @@ function handler(
             });
         }
 
-        const filters: { pairKey?: string; sinceMs?: number } = { sinceMs };
+        const filters: { pairKey?: string; sinceMs?: number; paperMode?: boolean } = { sinceMs };
         if (canonicalPairKey) {
             filters.pairKey = canonicalPairKey;
         }
+        filters.paperMode = loadConfig().paperTrading;
 
         const snapshots = querySnapshots(filters);
 

@@ -141,6 +141,7 @@ describe('GET /api/analytics/execution-quality', () => {
             bucketMs: 300000,
             includeNonExecutionEvidence: false,
             excludeStrategies: ['account-ingestion'],
+            paperMode: false,
         });
     });
 
@@ -162,6 +163,7 @@ describe('GET /api/analytics/execution-quality', () => {
             sinceMs: expectedSinceMs,
             includeNonExecutionEvidence: false,
             excludeStrategies: ['account-ingestion'],
+            paperMode: false,
         });
         vi.useRealTimers();
     });
@@ -180,6 +182,7 @@ describe('GET /api/analytics/execution-quality', () => {
             pairKey: 'XRP/RLUSD',
             includeNonExecutionEvidence: true,
             excludeStrategies: ['account-ingestion'],
+            paperMode: false,
         });
     });
 
@@ -197,6 +200,7 @@ describe('GET /api/analytics/execution-quality', () => {
             pairKey: 'XRP/RLUSD',
             includeNonExecutionEvidence: false,
             excludeStrategies: ['account-ingestion', 'manual-import'],
+            paperMode: false,
         });
     });
 
@@ -216,6 +220,7 @@ describe('GET /api/analytics/execution-quality', () => {
             includeNonExecutionEvidence: false,
             includeStrategies: ['amm-arb', 'scalper'],
             excludeStrategies: [],
+            paperMode: false,
         });
     });
 

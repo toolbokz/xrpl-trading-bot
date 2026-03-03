@@ -1117,9 +1117,12 @@ class TradeHistoryService {
         return index >= 0 ? this.trades[index]! : null;
     }
 
-    getRecentTrades(limit = 50): Trade[] {
+    getRecentTrades(limit = 50, paperMode?: boolean): Trade[] {
         this.init();
-        return this.trades.slice(-limit).reverse();
+        const source = typeof paperMode === 'boolean'
+            ? this.trades.filter(t => t.paper === paperMode)
+            : this.trades;
+        return source.slice(-limit).reverse();
     }
 
     getAllTrades(): Trade[] {
@@ -1133,24 +1136,32 @@ class TradeHistoryService {
         return this.trades.some((t) => t.hash === hash);
     }
 
-    getTradesByPair(pair: string, limit = 50): Trade[] {
+    getTradesByPair(pair: string, limit = 50, paperMode?: boolean): Trade[] {
         this.init();
         const canonical = canonicalizePairKey(pair);
-        return this.trades
+        let source = this.trades;
+        if (typeof paperMode === 'boolean') {
+            source = source.filter(t => t.paper === paperMode);
+        }
+        return source
             .filter(t => canonicalizePairKey(t.pair) === canonical)
             .slice(-limit)
             .reverse();
     }
 
-    getStats(): TradeStats {
+    getStats(paperMode?: boolean): TradeStats {
         this.init();
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
         const todayTimestamp = todayStart.getTime();
 
+        const filteredTrades = typeof paperMode === 'boolean'
+            ? this.trades.filter(t => t.paper === paperMode)
+            : this.trades;
+
         // Include both FILLED and PARTIAL executions (Fix A).
         // Exclude REJECTED/PENDING — those are non-executions.
-        const executed = this.trades.filter(
+        const executed = filteredTrades.filter(
             (t) => t.status === 'FILLED' || t.status === 'PARTIAL',
         );
 
@@ -1209,7 +1220,7 @@ class TradeHistoryService {
 
         // If no trade has a non-zero effective PnL, use the lot-based fallback
         if (classifiable === 0 && breakeven === 0 && unclassifiable === executed.length) {
-            const fallback = computeFallbackRealizedPnl(this.trades, todayTimestamp);
+            const fallback = computeFallbackRealizedPnl(filteredTrades, todayTimestamp);
             totalPnl = fallback.total;
             todayPnl = fallback.today;
         }
@@ -1228,7 +1239,7 @@ class TradeHistoryService {
         const largestLoss = lossPnls.length > 0 ? Math.min(...lossPnls) : 0;
 
         return {
-            totalTrades: this.trades.length,
+            totalTrades: filteredTrades.length,
             winningTrades: wins.length,
             losingTrades: losses.length,
             winRate: classifiable > 0

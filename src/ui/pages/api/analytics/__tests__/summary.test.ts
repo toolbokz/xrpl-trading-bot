@@ -141,6 +141,7 @@ describe('GET /api/analytics/summary', () => {
         expect(mod.feedbackEngine.getAnalytics).toHaveBeenCalledWith({
             pairKey: 'XRP/USD',
             sinceMs: 1000000,
+            paperMode: false,
         });
     });
 

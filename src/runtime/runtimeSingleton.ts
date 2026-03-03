@@ -204,6 +204,17 @@ export async function ensureRuntimeStarted(): Promise<TradingRuntime> {
     globalThis.__xrplTradingBotIsStarting = true;
     globalThis.__xrplTradingBotStartPromise = (async () => {
         try {
+            // Re-read .env so that values changed via the Advanced Panel
+            // (env-settings API) since the last process start are picked up.
+            try {
+                const dotenv = require('dotenv') as typeof import('dotenv');
+                const path = require('path') as typeof import('path');
+                dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: true });
+                logger.info('[RuntimeSingleton] Reloaded .env before runtime start');
+            } catch (envErr) {
+                logger.warn({ err: envErr }, '[RuntimeSingleton] Failed to reload .env (non-fatal)');
+            }
+
             logger.info('[RuntimeSingleton] Starting TradingRuntime in single-process mode...');
 
             const config = loadConfig();

@@ -5,6 +5,7 @@ import { feedbackEngine } from '../../../../analytics/feedbackEngine';
 import { tradeHistory } from '../../../../analytics/tradeHistory';
 import { getRuntimeInstance } from '../../../lib/runtimeBridge';
 import type { ObservabilityEvent } from '../../../../observability/eventBus';
+import { loadConfig } from '../../../../config';
 
 export const config = {
     api: { bodyParser: false },
@@ -149,7 +150,8 @@ function handler(req: LocalRequest, res: NextApiResponse<DataWiringResponse | { 
     }
 
     try {
-        const trades = tradeHistory.getRecentTrades(200);
+        const paperMode = loadConfig().paperTrading;
+        const trades = tradeHistory.getRecentTrades(200, paperMode);
         const latestWithTrace = trades.find((trade) => trade.trace != null) ?? null;
         const latestTrace = latestWithTrace?.trace ?? null;
         const latestTracePresence = Object.fromEntries(
@@ -185,7 +187,7 @@ function handler(req: LocalRequest, res: NextApiResponse<DataWiringResponse | { 
             }
         }
 
-        const dataset = feedbackEngine.getLearningDataset({ sinceMs: Date.now() - (24 * 60 * 60 * 1000) });
+        const dataset = feedbackEngine.getLearningDataset({ sinceMs: Date.now() - (24 * 60 * 60 * 1000), paperMode });
         const datasetSample = dataset[0];
         const adaptiveEventKeys = datasetSample ? Object.keys(datasetSample.event).sort() : [];
         const adaptiveTrace = datasetSample?.trace ?? null;
@@ -198,6 +200,7 @@ function handler(req: LocalRequest, res: NextApiResponse<DataWiringResponse | { 
         const rollingMetrics = feedbackEngine.getRollingRiskMetrics({
             ...(latestWithTrace?.pair ? { pairKey: latestWithTrace.pair } : {}),
             lookbackTrades: 200,
+            paperMode,
         });
         const governanceMetricsKeys = Object.keys(rollingMetrics).sort();
         const governanceDecisionInputKeys = [
@@ -212,7 +215,7 @@ function handler(req: LocalRequest, res: NextApiResponse<DataWiringResponse | { 
             'consecutiveFailures',
         ];
 
-        const heatmap = feedbackEngine.getRegimeHeatmap({ lookbackHours: 24, minTrades: 1, byStrategy: true });
+        const heatmap = feedbackEngine.getRegimeHeatmap({ lookbackHours: 24, minTrades: 1, byStrategy: true, paperMode });
         const heatmapSampleCell = heatmap.global.normal;
         const heatmapCellKeys = heatmapSampleCell ? Object.keys(heatmapSampleCell).sort() : [];
 

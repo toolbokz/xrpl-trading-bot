@@ -324,21 +324,30 @@ class WebTradeHistoryService {
         return [];
     }
 
-    getRecentTrades(limit = 50): Trade[] {
-        const trades = this.loadTrades();
+    getRecentTrades(limit = 50, paperMode?: boolean): Trade[] {
+        let trades = this.loadTrades();
+        if (typeof paperMode === 'boolean') {
+            trades = trades.filter(t => t.paper === paperMode);
+        }
         return trades.slice(-limit).reverse();
     }
 
-    getTradesByPair(pair: string, limit = 50): Trade[] {
-        const trades = this.loadTrades();
+    getTradesByPair(pair: string, limit = 50, paperMode?: boolean): Trade[] {
+        let trades = this.loadTrades();
+        if (typeof paperMode === 'boolean') {
+            trades = trades.filter(t => t.paper === paperMode);
+        }
         return trades
             .filter(t => t.pair === pair)
             .slice(-limit)
             .reverse();
     }
 
-    getStats(): TradeStats {
-        const trades = this.loadTrades();
+    getStats(paperMode?: boolean): TradeStats {
+        let trades = this.loadTrades();
+        if (typeof paperMode === 'boolean') {
+            trades = trades.filter(t => t.paper === paperMode);
+        }
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
         const todayTimestamp = todayStart.getTime();

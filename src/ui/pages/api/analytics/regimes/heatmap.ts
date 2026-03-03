@@ -3,6 +3,7 @@ import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
 import { withApiRouteContext } from '../../../../lib/localApi/withApiRouteContext';
 import { feedbackEngine, RegimeHeatmapResponse } from '../../../../../analytics/feedbackEngine';
 import { buildAnalyticsCacheKey, getAnalyticsCacheTtlMs, getCachedAnalytics, setCachedAnalytics } from '../_cache';
+import { loadConfig } from '../../../../../config';
 
 export const config = {
     api: { bodyParser: false },
@@ -45,11 +46,13 @@ function handler(
         const includeStrategy = byStrategy !== 'false';
         const normalizedLookbackHours = isNaN(lookbackHours) ? 24 : lookbackHours;
         const normalizedMinTrades = isNaN(minTradesNum) ? 5 : minTradesNum;
+        const paperMode = loadConfig().paperTrading;
 
         const cacheKey = buildAnalyticsCacheKey('regimes-heatmap', {
             lookbackHours: normalizedLookbackHours,
             minTrades: normalizedMinTrades,
             byStrategy: includeStrategy,
+            paperMode,
         });
         const cached = getCachedAnalytics<Omit<RegimeHeatmapApiResponse, 'requestId' | 'timestamp'>>(cacheKey);
         if (cached) {
@@ -65,6 +68,7 @@ function handler(
             lookbackHours: normalizedLookbackHours,
             minTrades: normalizedMinTrades,
             byStrategy: includeStrategy,
+            paperMode,
         });
 
         const payload: Omit<RegimeHeatmapApiResponse, 'requestId' | 'timestamp'> = {

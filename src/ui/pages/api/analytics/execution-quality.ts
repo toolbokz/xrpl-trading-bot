@@ -20,6 +20,7 @@ import {
 } from '../../../../analytics/executionQualityEventFilters';
 import { canonicalizePairKey } from '../../../../xrpl/currency';
 import { buildAnalyticsCacheKey, getAnalyticsCacheTtlMs, getCachedAnalytics, setCachedAnalytics } from './_cache';
+import { loadConfig } from '../../../../config';
 
 export const config = {
     api: { bodyParser: false },
@@ -195,6 +196,8 @@ function handler(req: LocalRequest, res: NextApiResponse<ExecutionQualityApiResp
             filters.excludeStrategies = resolvedStrategyFilters.excludeStrategies;
         }
 
+        filters.paperMode = loadConfig().paperTrading;
+
         const cacheKey = buildAnalyticsCacheKey('execution-quality', {
             pairKey: filters.pairKey ? canonicalizePairKey(filters.pairKey) : null,
             sinceMs: filters.sinceMs ?? null,
@@ -205,6 +208,7 @@ function handler(req: LocalRequest, res: NextApiResponse<ExecutionQualityApiResp
             includeNonExecutionEvidence: filters.includeNonExecutionEvidence ?? false,
             includeStrategies: filters.includeStrategies ?? null,
             excludeStrategies: filters.excludeStrategies ?? [],
+            paperMode: filters.paperMode ?? null,
         });
         const cached = getCachedAnalytics<Omit<ExecutionQualityApiResponse, 'requestId' | 'timestamp'>>(cacheKey);
         if (cached) {

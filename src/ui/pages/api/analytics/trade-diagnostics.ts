@@ -23,6 +23,7 @@ import { withLocalApi, LocalRequest } from '../../../lib/localApi';
 import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { tradeHistory } from '../../../lib/tradeHistory';
 import { buildDiagnosticsForTrades, type PostTradeDiagnostic, type DiagnosticTradeInput } from '../../../../analytics/postTradeDiagnostic';
+import { loadConfig } from '../../../../config';
 
 export const config = {
     api: { bodyParser: false },
@@ -54,9 +55,10 @@ async function handler(
 
         // Fetch more trades than limit to guarantee we have enough after filtering
         const fetchCount = Math.max(limit * 2, 200);
+        const paperMode = loadConfig().paperTrading;
         const trades = pair
-            ? tradeHistory.getTradesByPair(pair, fetchCount)
-            : tradeHistory.getRecentTrades(fetchCount);
+            ? tradeHistory.getTradesByPair(pair, fetchCount, paperMode)
+            : tradeHistory.getRecentTrades(fetchCount, paperMode);
 
         const diagnostics = buildDiagnosticsForTrades(trades as unknown as DiagnosticTradeInput[], limit);
 

@@ -3,6 +3,7 @@ import { withLocalApi, LocalRequest } from '../../../../lib/localApi';
 import { withApiRouteContext } from '../../../../lib/localApi/withApiRouteContext';
 import { tradeHistory, Trade } from '../../../../lib/tradeHistory';
 import { explainOfferOutcome } from '../../../../../analytics/offerOutcomeExplainer';
+import { loadConfig } from '../../../../../config';
 
 export const config = {
     api: { bodyParser: false },
@@ -129,8 +130,9 @@ function handler(req: LocalRequest, res: NextApiResponse<BucketsResponse | Error
 
     try {
         const limit = parseLimit(firstQueryValue(req.query.limit as string | string[] | undefined));
+        const paperMode = loadConfig().paperTrading;
         const trades = tradeHistory
-            .getRecentTrades(limit)
+            .getRecentTrades(limit, paperMode)
             .filter(isExecutionRelevantTrade);
 
         const buckets: Record<string, number> = {};

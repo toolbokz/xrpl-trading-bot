@@ -193,6 +193,7 @@ async function getTradesFromDb(pairKey: string, limit: number): Promise<TradeDat
         const events = queryTradeEvents({
             pairKey,
             sinceMs,
+            paperMode: loadConfig().paperTrading,
         });
 
         return events

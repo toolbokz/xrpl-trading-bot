@@ -12,6 +12,7 @@ import {
 } from '../../../../analytics/feedbackEngine';
 import { canonicalizePairKey } from '../../../../xrpl/currency';
 import { buildAnalyticsCacheKey, getAnalyticsCacheTtlMs, getCachedAnalytics, setCachedAnalytics } from './_cache';
+import { loadConfig } from '../../../../config';
 
 export const config = {
     api: { bodyParser: false },
@@ -81,6 +82,7 @@ function handler(req: LocalRequest, res: NextApiResponse<EdgeAttributionApiRespo
             side?: 'buy' | 'sell';
             source?: 'bot' | 'manual' | 'unknown';
             bucketMs?: number;
+            paperMode?: boolean;
         } = {};
 
         const resolvedPair =
@@ -105,6 +107,9 @@ function handler(req: LocalRequest, res: NextApiResponse<EdgeAttributionApiRespo
         const parsedBucketMs = parsePositiveInt(bucketMs);
         if (parsedBucketMs != null) filters.bucketMs = parsedBucketMs;
 
+        const paperMode = loadConfig().paperTrading;
+        filters.paperMode = paperMode;
+
         const cacheKey = buildAnalyticsCacheKey('edge-attribution', {
             pairKey: filters.pairKey ? canonicalizePairKey(filters.pairKey) : null,
             sinceMs: filters.sinceMs ?? null,
@@ -112,6 +117,7 @@ function handler(req: LocalRequest, res: NextApiResponse<EdgeAttributionApiRespo
             side: filters.side ?? null,
             source: filters.source ?? null,
             bucketMs: filters.bucketMs ?? 60_000,
+            paperMode,
         });
         const cached = getCachedAnalytics<Omit<EdgeAttributionApiResponse, 'requestId' | 'timestamp'>>(cacheKey);
         if (cached) {

@@ -2,6 +2,7 @@ import type { NextApiResponse } from 'next';
 import { withLocalApi, LocalRequest, logSensitiveAction } from '../../../lib/localApi';
 import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { tradeHistory, Trade, TradeStats } from '../../../lib/tradeHistory';
+import { loadConfig } from '../../../../config';
 import { logger } from '../../../../analytics/logger';
 
 export const config = {
@@ -11,6 +12,7 @@ export const config = {
 interface TradesResponse {
     trades: Trade[];
     stats: TradeStats;
+    paperTrading: boolean;
     requestId?: string;
 }
 
@@ -28,12 +30,15 @@ async function handler(
             const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 50;
             const pair = typeof req.query.pair === 'string' ? req.query.pair : undefined;
 
-            const trades = pair
-                ? tradeHistory.getTradesByPair(pair, limit)
-                : tradeHistory.getRecentTrades(limit);
-            const stats = tradeHistory.getStats();
+            const cfg = loadConfig();
+            const paperMode = cfg.paperTrading;
 
-            return res.status(200).json({ trades, stats, requestId: req.requestId });
+            const trades = pair
+                ? tradeHistory.getTradesByPair(pair, limit, paperMode)
+                : tradeHistory.getRecentTrades(limit, paperMode);
+            const stats = tradeHistory.getStats(paperMode);
+
+            return res.status(200).json({ trades, stats, paperTrading: paperMode, requestId: req.requestId });
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Failed to fetch trades';
             logger.error({ err }, '[API /bot/trades] Error fetching trades');
@@ -48,7 +53,8 @@ async function handler(
             // Audit log sensitive action
             await logSensitiveAction(req.requestId, 'bot:trades_clear', {});
 
-            return res.status(200).json({ trades: [], stats: tradeHistory.getStats(), requestId: req.requestId });
+            const cfg = loadConfig();
+            return res.status(200).json({ trades: [], stats: tradeHistory.getStats(cfg.paperTrading), paperTrading: cfg.paperTrading, requestId: req.requestId });
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Failed to clear trades';
             logger.error({ err }, '[API /bot/trades] Error clearing trades');

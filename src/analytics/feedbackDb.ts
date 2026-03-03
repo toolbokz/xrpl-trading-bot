@@ -86,11 +86,14 @@ export interface TradeEventRecord {
     entryLocalExtreme: number | null; // 1 = true, 0 = false, null = unknown
     postSignal1s: number | null;
     postSignal3s: number | null;
+    /** 1 = paper trade, 0 = live trade, null = unknown/legacy */
+    paper: number | null;
 }
 
 /**
  * Market snapshot record for database storage
  */
+
 export interface MarketSnapshotRecord {
     id: string;
     ts: number;
@@ -172,6 +175,8 @@ export interface ExecutionQualityEventRecord {
     submitToValidatedMs: number | null;
     decisionToValidatedMs: number | null;
     repriceApplied?: number | null; // 1=true, 0=false, null=unknown
+    /** 1 = paper trade, 0 = live trade, null = unknown/legacy */
+    paper: number | null;
 }
 
 export interface EdgeAttributionEventRecord {
@@ -209,6 +214,8 @@ export interface EdgeAttributionEventRecord {
     hasDecisionSnapshot: number | null;
     hasHorizon1m: number | null;
     hasHorizon5m: number | null;
+    /** 1 = paper trade, 0 = live trade, null = unknown/legacy */
+    paper: number | null;
 }
 
 /**
@@ -529,6 +536,7 @@ const TRADE_EVENT_EXTRA_COLUMNS = {
     entryLocalExtreme: 'INTEGER',
     postSignal1s: 'REAL',
     postSignal3s: 'REAL',
+    paper: 'INTEGER',
 } as const;
 
 /**
@@ -596,6 +604,7 @@ const EXECUTION_QUALITY_EXTRA_COLUMNS = {
     submitToValidatedMs: 'INTEGER',
     decisionToValidatedMs: 'INTEGER',
     repriceApplied: 'INTEGER',
+    paper: 'INTEGER',
 } as const;
 
 const EDGE_ATTRIBUTION_EXTRA_COLUMNS = {
@@ -631,6 +640,7 @@ const EDGE_ATTRIBUTION_EXTRA_COLUMNS = {
     hasDecisionSnapshot: 'INTEGER',
     hasHorizon1m: 'INTEGER',
     hasHorizon5m: 'INTEGER',
+    paper: 'INTEGER',
 } as const;
 
 /**
@@ -676,7 +686,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 entrySpreadBps, entryFlowCombined, entryFlowStrength, entryFlowRegime,
                 postMid1s, postSpread1s, postFlowCombined1s, postFlowStrength1s, postFlowRegime1s,
                 postMid3s, postSpread3s, postFlowCombined3s, postFlowStrength3s, postFlowRegime3s,
-                entryMid, entrySignalStrength, entryLocalExtreme, postSignal1s, postSignal3s
+                entryMid, entrySignalStrength, entryLocalExtreme, postSignal1s, postSignal3s,
+                paper
             ) VALUES (
                 @id, @ts, @pairKey, @strategy, @action, @side,
                 @intentPrice, @intentSizeBase, @intentSizeQuote,
@@ -689,7 +700,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 @entrySpreadBps, @entryFlowCombined, @entryFlowStrength, @entryFlowRegime,
                 @postMid1s, @postSpread1s, @postFlowCombined1s, @postFlowStrength1s, @postFlowRegime1s,
                 @postMid3s, @postSpread3s, @postFlowCombined3s, @postFlowStrength3s, @postFlowRegime3s,
-                @entryMid, @entrySignalStrength, @entryLocalExtreme, @postSignal1s, @postSignal3s
+                @entryMid, @entrySignalStrength, @entryLocalExtreme, @postSignal1s, @postSignal3s,
+                @paper
             )
         `),
         insertExecutionQualityEvent: db.prepare(`
@@ -708,7 +720,7 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 decisionTs, submitTs, submitResponseTs, validatedTs,
                 submitResultEngine, submitError,
                 decisionToSubmitMs, submitToValidatedMs, decisionToValidatedMs,
-                repriceApplied
+                repriceApplied, paper
             ) VALUES (
                 @id, @ts, @eventId, @txHash, @pairKeyCanonical, @pairAliases,
                 @side, @strategy, @regime, @source, @venue,
@@ -724,7 +736,7 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 @decisionTs, @submitTs, @submitResponseTs, @validatedTs,
                 @submitResultEngine, @submitError,
                 @decisionToSubmitMs, @submitToValidatedMs, @decisionToValidatedMs,
-                @repriceApplied
+                @repriceApplied, @paper
             )
         `),
         updateExecutionQualityHorizons: db.prepare(`
@@ -746,7 +758,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 executionEdgeBpsVsMid, executionEdgeBpsVsBbo,
                 driftBps1m, driftBps5m,
                 pnlExecQuote, pnlDriftQuote1m, pnlTotalQuote1m, pnlDriftQuote5m, pnlTotalQuote5m,
-                hasDecisionSnapshot, hasHorizon1m, hasHorizon5m
+                hasDecisionSnapshot, hasHorizon1m, hasHorizon5m,
+                paper
             ) VALUES (
                 @id, @ts, @eventId, @txHash, @pairKeyCanonical, @pairAliases,
                 @side, @strategy, @regime, @source,
@@ -757,7 +770,8 @@ function createPreparedStatements(db: DatabaseType): PreparedStatements {
                 @executionEdgeBpsVsMid, @executionEdgeBpsVsBbo,
                 @driftBps1m, @driftBps5m,
                 @pnlExecQuote, @pnlDriftQuote1m, @pnlTotalQuote1m, @pnlDriftQuote5m, @pnlTotalQuote5m,
-                @hasDecisionSnapshot, @hasHorizon1m, @hasHorizon5m
+                @hasDecisionSnapshot, @hasHorizon1m, @hasHorizon5m,
+                @paper
             )
         `),
         updateEdgeAttributionHorizons: db.prepare(`
@@ -966,6 +980,7 @@ export function insertTradeEvent(event: TradeEventRecord): string | null {
             entryLocalExtreme: event.entryLocalExtreme,
             postSignal1s: event.postSignal1s,
             postSignal3s: event.postSignal3s,
+            paper: event.paper ?? null,
         });
         return event.id;
     } catch (err) {
@@ -1034,6 +1049,7 @@ export function insertExecutionQualityEvent(event: ExecutionQualityEventRecord):
             submitToValidatedMs: event.submitToValidatedMs,
             decisionToValidatedMs: event.decisionToValidatedMs,
             repriceApplied: event.repriceApplied ?? null,
+            paper: event.paper ?? null,
         });
         if (result.changes === 0) {
             return null;
@@ -1106,6 +1122,7 @@ export function insertEdgeAttributionEvent(event: EdgeAttributionEventRecord): s
             hasDecisionSnapshot: event.hasDecisionSnapshot,
             hasHorizon1m: event.hasHorizon1m,
             hasHorizon5m: event.hasHorizon5m,
+            paper: event.paper ?? null,
         });
         if (result.changes === 0) {
             return null;
@@ -1308,6 +1325,7 @@ export function insertBatch(events: TradeEventRecord[], snapshot?: MarketSnapsho
                     entryLocalExtreme: event.entryLocalExtreme,
                     postSignal1s: event.postSignal1s,
                     postSignal3s: event.postSignal3s,
+                    paper: event.paper ?? null,
                 });
             }
             if (snapshot) {
@@ -1380,6 +1398,8 @@ export interface QueryFilters {
     sinceMs?: number;
     strategy?: string;
     regime?: FlowRegime;
+    /** Filter by paper mode: true = paper trades only, false = live trades only, undefined = all */
+    paperMode?: boolean;
 }
 
 export interface ExecutionQualityQueryFilters {
@@ -1388,6 +1408,8 @@ export interface ExecutionQualityQueryFilters {
     strategy?: string;
     side?: 'buy' | 'sell';
     source?: 'bot' | 'manual' | 'unknown';
+    /** Filter by paper mode: true = paper trades only, false = live trades only, undefined = all */
+    paperMode?: boolean;
 }
 
 export interface EdgeAttributionQueryFilters {
@@ -1396,6 +1418,8 @@ export interface EdgeAttributionQueryFilters {
     strategy?: string;
     side?: 'buy' | 'sell';
     source?: 'bot' | 'manual' | 'unknown';
+    /** Filter by paper mode: true = paper trades only, false = live trades only, undefined = all */
+    paperMode?: boolean;
 }
 
 function appendPairFilter(sql: string, params: any[], pairKey: string | undefined, column: string = 'pairKey'): string {
@@ -1408,6 +1432,18 @@ function appendPairFilter(sql: string, params: any[], pairKey: string | undefine
     const placeholders = aliases.map(() => '?').join(', ');
     params.push(...aliases);
     return `${sql} AND ${column} IN (${placeholders})`;
+}
+
+/**
+ * Append paper-mode filter to SQL query.
+ * true  → paper trades only (paper = 1 OR paper IS NULL for legacy rows)
+ * false → live trades only  (paper = 0)
+ * undefined → no filter
+ */
+function appendPaperFilter(sql: string, paperMode: boolean | undefined): string {
+    if (paperMode === true) return `${sql} AND (paper = 1 OR paper IS NULL)`;
+    if (paperMode === false) return `${sql} AND paper = 0`;
+    return sql;
 }
 
 /**
@@ -1427,6 +1463,7 @@ export function queryTradeEvents(filters: QueryFilters = {}): TradeEventRecord[]
         sql += ' AND strategy = ?';
         params.push(filters.strategy);
     }
+    sql = appendPaperFilter(sql, filters.paperMode);
 
     sql += ' ORDER BY ts DESC';
 
@@ -1460,6 +1497,7 @@ export function queryExecutionQualityEvents(filters: ExecutionQualityQueryFilter
         sql += ' AND source = ?';
         params.push(filters.source);
     }
+    sql = appendPaperFilter(sql, filters.paperMode);
 
     sql += ' ORDER BY ts DESC';
     try {
@@ -1492,6 +1530,7 @@ export function queryEdgeAttributionEvents(filters: EdgeAttributionQueryFilters 
         sql += ' AND source = ?';
         params.push(filters.source);
     }
+    sql = appendPaperFilter(sql, filters.paperMode);
 
     sql += ' ORDER BY ts DESC';
     try {

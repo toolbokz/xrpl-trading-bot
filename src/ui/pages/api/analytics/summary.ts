@@ -4,6 +4,7 @@ import { withApiRouteContext } from '../../../lib/localApi/withApiRouteContext';
 import { feedbackEngine, AnalyticsResponse, AnalyticsSummary, RegimeStats, StrategyStats, DrawdownPoint, ProfitFactorPoint } from '../../../../analytics/feedbackEngine';
 import { canonicalizePairKey } from '../../../../xrpl/currency';
 import { buildAnalyticsCacheKey, getCachedAnalytics, setCachedAnalytics, getAnalyticsCacheTtlMs } from './_cache';
+import { loadConfig } from '../../../../config';
 
 export const config = {
     api: { bodyParser: false },
@@ -51,7 +52,7 @@ function handler(req: LocalRequest, res: NextApiResponse<AnalyticsApiResponse | 
         // Parse query parameters
         const { pair, sinceMs } = req.query;
 
-        const filters: { pairKey?: string; sinceMs?: number } = {};
+        const filters: { pairKey?: string; sinceMs?: number; paperMode?: boolean } = {};
 
         if (typeof pair === 'string' && pair.trim()) {
             filters.pairKey = pair.trim();
@@ -64,10 +65,14 @@ function handler(req: LocalRequest, res: NextApiResponse<AnalyticsApiResponse | 
             }
         }
 
+        const paperMode = loadConfig().paperTrading;
+        filters.paperMode = paperMode;
+
         const canonicalPair = filters.pairKey ? canonicalizePairKey(filters.pairKey) : null;
         const cacheKey = buildAnalyticsCacheKey('summary', {
             pairKey: canonicalPair,
             sinceMs: filters.sinceMs ?? null,
+            paperMode,
         });
 
         const cached = getCachedAnalytics<Omit<AnalyticsApiResponse, 'requestId' | 'timestamp'>>(cacheKey);

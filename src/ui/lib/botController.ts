@@ -69,8 +69,8 @@ class BotController {
             return;
         }
 
-        // Block cloud platforms
-        if (config.cloudCheck.isCloud) {
+        // Block cloud platforms (unless explicitly locked to localhost)
+        if (config.cloudCheck.isCloud && !config.forceLocalOnly) {
             throw new LocalOnlyError(
                 `Cloud execution blocked (${config.cloudCheck.platform}). ` +
                 'This bot is restricted to local machines only.'
